@@ -1,0 +1,24 @@
+{
+  "name": "@omnodex/projection",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Derived read model projector. Replays the event log into a SQLite database for the dashboard and analyzer to query.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/event-log": "*"
+  }
+}

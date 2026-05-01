@@ -1,0 +1,26 @@
+{
+  "name": "@omnodex/hooks-provider",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Interceptor implementations. Ships a Claude Code hook provider and a mock session generator.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist"
+  },
+  "bin": {
+    "omnodex-claude-hook": "./dist/bin/claude-hook-shim.js"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/event-log": "*"
+  }
+}

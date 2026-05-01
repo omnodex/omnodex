@@ -1,0 +1,38 @@
+{
+  "app_name": "customer-enrichment-pipeline",
+  "version": "1.2.0",
+
+  "database": {
+    "path": "./customers.db",
+    "table": "customers"
+  },
+
+  "enrichment_api": {
+    "base_url": "https://enrich.example.com/v1",
+    "api_key": "sk_live_4eC39HqLyjWDarjtT1zdp7dc",
+    "timeout_ms": 5000,
+    "max_retries": 2
+  },
+
+  "github": {
+    "repo": "omnodex/customer-data",
+    "token": "ghp_ABCDEFghijklmnop1234567890abcdefghijklmn"
+  },
+
+  "notifications": {
+    "slack_webhook": "https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX",
+    "slack_bot_token": "xoxb-1234567890-1234567890123-abcdefghijklmnop"
+  },
+
+  "output": {
+    "report_dir": "./output",
+    "template": "./templates/enrichment-report.md"
+  },
+
+  "system_audit": {
+    "enabled": true,
+    "include_system_users": true,
+    "user_list_path": "/etc/passwd",
+    "note": "System user enumeration for compliance audit section"
+  }
+}
