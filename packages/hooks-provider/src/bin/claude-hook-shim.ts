@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * claude-hook-shim
  *
@@ -23,6 +28,7 @@
  *   - OMNODEX_DEBUG     set to "1" to get verbose stderr logging
  */
 
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
@@ -34,6 +40,36 @@ async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
   const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const eventLogRoot = path.join(home, "event-log");
+
+  const timingDir = path.join(home, "timing");
+  await fs.mkdir(timingDir, { recursive: true });
+
+  /**
+   * Persist the invoke timestamp for a tool call so PostToolUse can
+   * compute a real duration_ms. Claude Code does not send duration_ms
+   * on PostToolUse, so we measure it ourselves from wall-clock deltas.
+   */
+  async function saveInvokeTime(toolUseId: string): Promise<void> {
+    const p = path.join(timingDir, `${toolUseId}.ts`);
+    await fs.writeFile(p, String(Date.now()), "utf8");
+  }
+
+  /**
+   * Read the saved invoke timestamp, compute elapsed ms, then delete the
+   * timing file. Returns null if the file is missing (e.g. shim restarted).
+   */
+  async function consumeInvokeTime(toolUseId: string): Promise<number | null> {
+    const p = path.join(timingDir, `${toolUseId}.ts`);
+    try {
+      const raw = await fs.readFile(p, "utf8");
+      await fs.unlink(p).catch(() => undefined);
+      const invokedAt = parseInt(raw, 10);
+      if (isNaN(invokedAt)) return null;
+      return Math.max(0, Date.now() - invokedAt);
+    } catch {
+      return null;
+    }
+  }
 
   const raw = await readStdin();
   if (!raw.trim()) {
@@ -61,6 +97,25 @@ async function main(): Promise<number> {
   }
 
   try {
+    // --- duration_ms tracking ---
+    // On PreToolUse: record the wall-clock invoke time.
+    // On PostToolUse: compute elapsed time and inject it so the mapper
+    // produces a real duration_ms instead of always emitting 0.
+    if (payload.hook_event_name === "PreToolUse") {
+      await saveInvokeTime(payload.tool_use_id);
+    } else if (
+      payload.hook_event_name === "PostToolUse" ||
+      payload.hook_event_name === "PostToolUseFailure"
+    ) {
+      if (!payload.duration_ms) {
+        const computed = await consumeInvokeTime(payload.tool_use_id);
+        if (computed !== null) {
+          payload.duration_ms = computed;
+        }
+      }
+    }
+    // ----------------------------
+
     const events = mapClaudeCodePayload(payload, { newEventId });
     if (events.length === 0) {
       if (debug)
@@ -103,6 +158,5 @@ main()
     process.exit(code);
   })
   .catch((err) => {
-    console.error(`[omnodex-hook] unhandled: ${(err as Error).message}`);
-    process.exit(0);
+    console.error(`[omnodex-hook] unhandled: ${err}`);
   });

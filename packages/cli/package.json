@@ -13,12 +13,18 @@
     "clean": "rm -rf dist",
     "start": "node dist/index.js",
     "spike": "node dist/index.js spike",
-    "dashboard": "node dist/index.js dashboard"
+    "dashboard": "node dist/index.js dashboard",
+    "test": "node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@omnodex/shared": "*",
+    "@omnodex/analyzer": "*",
+    "@omnodex/antigravity-provider": "*",
+    "@omnodex/codex-provider": "*",
     "@omnodex/event-log": "*",
+    "@omnodex/hooks-provider": "*",
+    "@omnodex/license-client": "*",
+    "@omnodex/mcp-proxy": "*",
     "@omnodex/projection": "*",
-    "@omnodex/hooks-provider": "*"
+    "@omnodex/shared": "*"
   }
 }

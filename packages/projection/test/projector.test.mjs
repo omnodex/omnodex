@@ -33,6 +33,7 @@ test("projector applies mock session to in-memory store", async () => {
   assert.equal(session.file_read_count, 2);
   assert.equal(session.file_write_count, 1);
   assert.equal(session.risk_score, 90);
+  assert.ok(session.last_event_at, "last_event_at should be set");
   // mcp_servers should reflect the MCP servers seen in tool.invoked events.
   // The mock has postgres, http-api, and filesystem calls.
   assert.deepEqual(
@@ -107,7 +108,7 @@ test("projector derives mcp_servers from tool.invoked events when SessionStart p
       event_id: "e1",
       event_type: "session.started",
       user: "unknown",
-      project_path: "/home/brian/project",
+      project_path: "/home/case/project",
       mcp_servers: [],
     };
     // A builtin tool call — should NOT appear in mcp_servers.
@@ -160,4 +161,5 @@ test("projector derives mcp_servers from tool.invoked events when SessionStart p
     "mcp_servers should contain only non-builtin servers, without duplicates",
   );
   assert.equal(session.tool_call_count, 4);
+  assert.ok(session.last_event_at, "last_event_at should be set");
 });

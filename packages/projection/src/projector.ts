@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * Projector. Pure function from a stream of events to read model state.
  * The projector never reads the event log directly; callers drive it via
@@ -18,7 +23,7 @@ import type {
   ToolInvokedEvent,
   TraceEvent,
 } from "@omnodex/shared";
-import type { ReadModelStore } from "./read-model.js";
+import type { ReadModelStore, SessionRow } from "./read-model.js";
 
 const SEVERITY_SCORE: Record<string, number> = {
   LOW: 5,
@@ -36,6 +41,47 @@ export class Projector {
     for await (const event of events as AsyncIterable<TraceEvent>) {
       await this.apply(event);
     }
+  }
+
+  /**
+   * The source root this projector is associated with.
+   * Set via setSourceRoot() before applying events from a specific root.
+   * Null means single-root mode (backwards compatible).
+   */
+  private sourceRoot: string | null = null;
+
+  /** Set the source root for subsequent apply() calls. */
+  setSourceRoot(root: string | null): void {
+    this.sourceRoot = root;
+  }
+
+  /**
+   * Ensure a session row exists before inserting child rows that reference it.
+   * Some interceptors (e.g. Antigravity) do not have a SessionStart hook, so
+   * the first event for a session may be a tool.invoked. This creates a
+   * minimal session row on-demand to satisfy the FK constraint. If a
+   * session.started event arrives later, upsertSession overwrites the stub.
+   */
+  private async ensureSession(sessionId: string, occurredAt: string, interceptor: string): Promise<void> {
+    const existing = await this.store.getSession(sessionId);
+    if (existing) return;
+    await this.store.upsertSession({
+      session_id: sessionId,
+      user: "unknown",
+      project_path: "",
+      mcp_servers: [],
+      interceptor: interceptor as SessionRow["interceptor"],
+      started_at: occurredAt,
+      ended_at: null,
+      duration_ms: null,
+      status: "in_progress",
+      tool_call_count: 0,
+      file_read_count: 0,
+      file_write_count: 0,
+      risk_score: 0,
+      last_event_at: occurredAt,
+      source_root: this.sourceRoot,
+    });
   }
 
   /** Apply a single event to the store. Idempotent within a single session replay. */
@@ -71,6 +117,7 @@ export class Projector {
       user: event.user,
       project_path: event.project_path,
       mcp_servers: event.mcp_servers,
+      interceptor: event.interceptor,
       started_at: event.occurred_at,
       ended_at: null,
       duration_ms: null,
@@ -79,6 +126,8 @@ export class Projector {
       file_read_count: 0,
       file_write_count: 0,
       risk_score: 0,
+      last_event_at: event.occurred_at,
+      source_root: this.sourceRoot,
     });
   }
 
@@ -91,6 +140,7 @@ export class Projector {
   }
 
   private async onToolInvoked(event: ToolInvokedEvent): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
     await this.store.insertToolCall({
       tool_call_id: event.tool_call_id,
       session_id: event.session_id,
@@ -115,9 +165,11 @@ export class Projector {
     if (event.mcp_server !== "builtin") {
       await this.store.addMcpServer(event.session_id, event.mcp_server);
     }
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
   private async onToolCompleted(event: ToolCompletedEvent): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
     await this.store.patchToolCall(event.tool_call_id, {
       ended_at: event.occurred_at,
       duration_ms: event.duration_ms,
@@ -125,9 +177,11 @@ export class Projector {
       response_bytes: event.response_bytes,
       error_message: event.error_message ?? null,
     });
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
   private async onFileRead(event: FileReadEvent): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
     await this.store.insertFileEvent({
       session_id: event.session_id,
       direction: "read",
@@ -140,9 +194,11 @@ export class Projector {
       "file_read_count",
       1,
     );
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
   private async onFileWritten(event: FileWrittenEvent): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
     await this.store.insertFileEvent({
       session_id: event.session_id,
       direction: "write",
@@ -155,9 +211,11 @@ export class Projector {
       "file_write_count",
       1,
     );
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
   private async onRiskDetected(event: RiskDetectedEvent): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
     await this.store.insertRiskEvent({
       session_id: event.session_id,
       related_event_id: event.related_event_id,
@@ -171,5 +229,6 @@ export class Projector {
     if (score) {
       await this.store.addToRiskScore(event.session_id, score);
     }
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 }

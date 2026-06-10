@@ -18,7 +18,7 @@ function makeOptions() {
 
 const BASE = {
   session_id: "sess-1",
-  cwd: "/home/brian/repo",
+  cwd: "/home/case/repo",
   permission_mode: "default",
 };
 
@@ -27,7 +27,7 @@ test("SessionStart maps to a single session.started event", () => {
     {
       ...BASE,
       hook_event_name: "SessionStart",
-      user: "brian",
+      user: "case",
       mcp_servers: ["filesystem", "postgres"],
     },
     makeOptions(),
@@ -37,8 +37,8 @@ test("SessionStart maps to a single session.started event", () => {
   assert.equal(ev.event_type, "session.started");
   assert.equal(ev.interceptor, "claude-code-hook");
   assert.equal(ev.session_id, "sess-1");
-  assert.equal(ev.user, "brian");
-  assert.equal(ev.project_path, "/home/brian/repo");
+  assert.equal(ev.user, "case");
+  assert.equal(ev.project_path, "/home/case/repo");
   assert.deepEqual(ev.mcp_servers, ["filesystem", "postgres"]);
   assert.equal(ev.event_id, "evt-1");
   assert.equal(ev.schema_version, 1);
@@ -168,7 +168,7 @@ test("PostToolUse on Grep emits tool.completed and file.read using glob as path"
       tool_input: {
         pattern: "never",
         glob: "**/*.md",
-        path: "/home/brian/source/omnodex/scratch",  // directory root — must be ignored
+        path: "/home/case/source/omnodex/scratch",  // directory root — must be ignored
         output_mode: "count",
       },
       tool_response: { "communication-style.md": 2, "preferences.md": 1 },
@@ -255,4 +255,51 @@ test("PostToolUseFailure emits tool.completed with status=error and error_messag
   assert.equal(ev.error_message, "command failed with exit code 1");
   assert.equal(ev.duration_ms, 8);
   assert.equal(ev.response_bytes, 0);
+});
+
+test("PostToolUse on Edit uses new_string for file.written byte count, not JSON patch size", () => {
+  const newString = "const x = 42;\nconst y = x + 1;\n";
+  const events = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PostToolUse",
+      tool_name: "Edit",
+      tool_use_id: "call-edit-1",
+      tool_input: {
+        file_path: "/src/util.ts",
+        old_string: "const x = 1;",
+        new_string: newString,
+      },
+      // tool_response is a patch-style object -- its JSON size must NOT be used
+      tool_response: { ok: true, replacements: 1 },
+    },
+    makeOptions(),
+  );
+  assert.equal(events.length, 2);
+  assert.equal(events[1].event_type, "file.written");
+  assert.equal(events[1].path, "/src/util.ts");
+  assert.equal(
+    events[1].bytes,
+    Buffer.byteLength(newString, "utf8"),
+    "bytes should reflect new_string length, not JSON response size",
+  );
+});
+
+test("PostToolUse on Edit with no new_string falls back to response size", () => {
+  // Edge case: if new_string is missing, fall back to estimating response bytes.
+  const events = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PostToolUse",
+      tool_name: "Edit",
+      tool_use_id: "call-edit-2",
+      tool_input: { file_path: "/src/util.ts" }, // no new_string
+      tool_response: "patched",
+    },
+    makeOptions(),
+  );
+  assert.equal(events.length, 2);
+  assert.equal(events[1].event_type, "file.written");
+  // response is "patched" => JSON.stringify => '"patched"' => 8 bytes
+  assert.ok(events[1].bytes > 0, "fallback should produce non-zero bytes from response");
 });

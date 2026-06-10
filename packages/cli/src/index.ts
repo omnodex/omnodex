@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * @omnodex/cli
  *
@@ -12,11 +17,13 @@
  *   omnodex spike            run a simulated session through the full pipeline
  *   omnodex replay           rebuild the SQLite read model by replaying the event log
  *   omnodex report           print a summary of sessions in the read model
+ *   omnodex mcp-proxy        manage the MCP proxy interceptor (start/install/status)
  *
  * All data is written under $OMNODEX_HOME, defaulting to ~/.omnodex.
  */
 
 import * as os from "node:os";
+import * as readline from "node:readline/promises";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { EventLog, newEventId } from "@omnodex/event-log";
@@ -30,9 +37,22 @@ import {
   ClaudeCodeInterceptor,
   MockInterceptor,
 } from "@omnodex/hooks-provider";
-import { startDashboardServer } from "./dashboard-server.js";
-import { detectRisks } from "./detector.js";
+import {
+  CODEX_HOOK_SHIM_PATH,
+  CodexInterceptor,
+} from "@omnodex/codex-provider";
+import {
+  ANTIGRAVITY_HOOK_SHIM_PATH,
+  AntigravityInterceptor,
+} from "@omnodex/antigravity-provider";
+import { MCPProxy, loadProxyConfig } from "@omnodex/mcp-proxy";
+import { DashboardServer } from "./dashboard-server.js";
+import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
+import { resolveRoots, parseRootsFlag } from "./config.js";
+import { detectRisks } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
+import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
+// ValidateResult type available if needed for future use
 
 interface Paths {
   home: string;
@@ -156,15 +176,16 @@ async function cmdClear(args: string[]): Promise<void> {
   await log.init();
 
   // 1. Delete the session's JSONL file.
-  const sessionFile = log.sessionFilePath(sessionId);
+  // sessionId is guaranteed defined here: we returned above if both sessionId and wipeAll were falsy,
+  // and again if wipeAll+confirmed, so reaching this point means sessionId is set.
+  const sessionFile = log.sessionFilePath(sessionId!);
   await fs.rm(sessionFile, { force: true });
 
   // 2. Rewrite the event log index without this session.
   const indexPath = path.join(paths.eventLogRoot, "index.jsonl");
   const raw = await fs.readFile(indexPath, "utf8").catch(() => "");
   const kept = raw
-    .split("
-")
+    .split("\n")
     .filter((line) => {
       if (!line.trim()) return false;
       try {
@@ -174,10 +195,8 @@ async function cmdClear(args: string[]): Promise<void> {
         return true; // keep malformed lines as-is
       }
     })
-    .join("
-");
-  await fs.writeFile(indexPath, kept ? kept + "
-" : "", "utf8");
+    .join("\n");
+  await fs.writeFile(indexPath, kept ? kept + "\n" : "", "utf8");
   await log.close();
 
   // 3. Rebuild the read model from remaining sessions.
@@ -294,93 +313,713 @@ async function* iterateLog(log: EventLog): AsyncGenerator<TraceEvent> {
 }
 
 async function cmdDashboard(args: string[]): Promise<void> {
-  const paths = resolvePaths();
-  const port = parseInt(args[0] ?? "7890", 10);
-  const skipDetect = args.includes("--no-detect");
+  // Parse --roots flag before consuming positional args.
+  const { roots: cliRoots, rest: remainingArgs } = parseRootsFlag(args);
+  const port = parseInt(remainingArgs.find((a) => !a.startsWith("--")) ?? "7890", 10);
+  const skipDetect = remainingArgs.includes("--no-detect");
 
-  // Run risk detection before replaying (unless --no-detect).
-  const log = new EventLog({ root: paths.eventLogRoot });
-  await log.init();
+  // --- Resolve all roots (default home + env + config + CLI) ---
+  const resolved = await resolveRoots(cliRoots);
+  console.log(`[dashboard] roots: ${resolved.all.join(", ")}`);
 
+  // Create an EventLog per root.
+  const logs: Array<{ rootPath: string; log: EventLog }> = [];
+  for (const rootPath of resolved.all) {
+    const log = new EventLog({ root: path.join(rootPath, "event-log") });
+    await log.init();
+    logs.push({ rootPath, log });
+  }
+
+  // --- Historical processing (batch) ---
+  // Run batch detection on any sessions that completed before the dashboard
+  // was opened. The streaming loop will handle everything from this point on.
   if (!skipDetect) {
-    const sessionIds = await log.listSessions();
     let detected = 0;
-    for (const sessionId of sessionIds) {
-      const events = await log.readSession(sessionId);
-      if (events.length === 0) continue;
-      const result = detectRisks(events, newEventId);
-      if (result.newEvents.length > 0) {
-        await log.appendMany(result.newEvents);
-        detected += result.newEvents.length;
+    for (const { log } of logs) {
+      const sessionIds = await log.listSessions();
+      for (const sessionId of sessionIds) {
+        const events = await log.readSession(sessionId);
+        if (events.length === 0) continue;
+        const result = detectRisks(events, newEventId);
+        if (result.newEvents.length > 0) {
+          await log.appendMany(result.newEvents);
+          detected += result.newEvents.length;
+        }
       }
     }
     if (detected > 0) {
-      console.log(`[dashboard] auto-detected ${detected} new risk event(s)`);
+      console.log(`[dashboard] historical detection: ${detected} risk event(s) added`);
     }
   }
 
-  // Rebuild the read model by replaying the full log (including any new risk events).
-  const store = await openStore(paths);
+  // Rebuild the read model from the full log across all roots (includes any
+  // newly appended risk events from the historical detection pass above).
+  // Use the primary root for the SQLite database location.
+  const primaryPaths = {
+    home: resolved.primary,
+    eventLogRoot: path.join(resolved.primary, "event-log"),
+    dbPath: path.join(resolved.primary, "traces.db"),
+  };
+  const store = await openStore(primaryPaths);
   const projector = new Projector(store);
-  await projector.replay(iterateLog(log));
 
+  // Replay all roots into the same read model. Tag each root so the
+  // projector stamps source_root on session rows.
+  await store.reset();
+  for (const { rootPath, log } of logs) {
+    projector.setSourceRoot(rootPath);
+    for await (const event of iterateLog(log)) {
+      await projector.apply(event);
+    }
+  }
+
+  // --- Start server ---
   const assetsDir = new URL(".", import.meta.url).pathname;
-  startDashboardServer({ store, port, assetsDir });
+  const server = new DashboardServer({ store, port, assetsDir });
+
+  // Validate license and show tier info
+  const licenseResult = await validateLicense();
+  const tierLabel = licenseResult.license.tier.toUpperCase();
+  const licenseSource = licenseResult.source === "defaults" ? " (no token)" : ` (${licenseResult.source})`;
+  console.log(`[dashboard] license: ${tierLabel}${licenseSource}`);
+  if (licenseResult.license.tier !== "free") {
+    console.log(`[dashboard] features: ${licenseResult.license.features.filter((f: string) => !["community_rules", "local_dashboard", "local_event_log"].includes(f)).join(", ")}`);
+  }
 
   console.log(`[dashboard] open http://localhost:${port} in your browser`);
-  console.log(`[dashboard] press Ctrl+C to stop`);
+  console.log(`[dashboard] streaming detection active -- press Ctrl+C to stop`);
 
-  // Keep process alive
-  await new Promise(() => {});
+  // --- Start streaming detect loop ---
+  // Tails each root\'s session files, projects new events incrementally, runs
+  // the rule engine on tool.invoked events, and pushes updates to SSE clients.
+  const streamingRoots: StreamingRoot[] = logs.map(({ rootPath, log }) => ({
+    rootPath,
+    log,
+  }));
+  const { stop } = startStreamingLoop(streamingRoots, store, projector, server);
+
+  // --- Shutdown handling ---
+  await new Promise<void>((resolve) => {
+    const shutdown = (): void => {
+      stop();
+      // Close all event logs.
+      for (const { log } of logs) {
+        log.close().catch(() => {});
+      }
+      server.close();
+      resolve();
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
 }
 
-async function cmdInit(args: string[]): Promise<void> {
-  const projectPath = path.resolve(args[0] ?? process.cwd());
+const VALID_TARGETS = ["claude-code", "codex", "antigravity"] as const;
+type InstallTarget = typeof VALID_TARGETS[number];
+
+function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] } | null {
+  const targetArg = args.find((a) => !a.startsWith("--"));
+  if (!targetArg || !VALID_TARGETS.includes(targetArg as InstallTarget)) {
+    const validList = VALID_TARGETS.join(", ");
+    console.error(
+      targetArg
+        ? `[omnodex] unknown target '${targetArg}'. Valid targets: ${validList}`
+        : `[omnodex] target required. Valid targets: ${validList}`,
+    );
+    console.error(`\n  omnodex install <target> [project]`);
+    console.error(`  omnodex uninstall [target] [project]\n`);
+    process.exitCode = 1;
+    return null;
+  }
+  return {
+    target: targetArg as InstallTarget,
+    rest: args.filter((a) => a !== targetArg),
+  };
+}
+
+async function cmdInstall(args: string[]): Promise<void> {
+  const parsed = resolveTarget(args);
+  if (!parsed) return;
+  const { target, rest } = parsed;
+
+  switch (target) {
+    case "claude-code":
+      await installClaudeCode(rest);
+      return;
+    case "codex":
+      await installCodex(rest);
+      return;
+    case "antigravity":
+      await installAntigravity(rest);
+      return;
+  }
+}
+
+async function installClaudeCode(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const paths = resolvePaths();
   const debug = args.includes("--debug");
   const useProjectSettings = args.includes("--project-settings");
 
+  const targetFile = useProjectSettings ? "settings.json" : "settings.local.json";
+  const alternateFile = useProjectSettings ? "settings.local.json" : "settings.json";
+
+  // Warn if Omnodex hooks already exist in the alternate settings file.
+  // Claude Code merges settings.json and settings.local.json; duplicate hooks
+  // cause every event to be processed twice and produce double risk findings.
+  const nodePath = process.execPath;
+  const alternateInterceptor = new ClaudeCodeInterceptor({
+    projectPath,
+    shimPath: CLAUDE_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+    settingsFile: alternateFile,
+    debug,
+    nodePath,
+  });
+  if (await alternateInterceptor.isInstalled()) {
+    console.warn(
+      `[install] WARNING: Omnodex hooks already present in ` +
+      `${alternateInterceptor.settingsFilePath()}`,
+    );
+    console.warn(
+      `[install]          Hooks in both files will produce duplicate events.`,
+    );
+    console.warn(
+      `[install]          Run \`omnodex uninstall claude-code --${useProjectSettings ? "" : "project-"}settings ${projectPath}\` to remove them from the alternate file first.`,
+    );
+  }
+
   const interceptor = new ClaudeCodeInterceptor({
     projectPath,
     shimPath: CLAUDE_HOOK_SHIM_PATH,
     omnodexHome: paths.home,
-    settingsFile: useProjectSettings ? "settings.json" : "settings.local.json",
+    settingsFile: targetFile,
     debug,
+    nodePath,
   });
   await interceptor.install();
-  console.log(`[init] installed Omnodex hooks into`);
-  console.log(`       ${interceptor.settingsFilePath()}`);
-  console.log(`[init] shim:         ${CLAUDE_HOOK_SHIM_PATH}`);
-  console.log(`[init] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] installed Claude Code hooks into`);
+  console.log(`          ${interceptor.settingsFilePath()}`);
+  console.log(`[install] shim:         ${CLAUDE_HOOK_SHIM_PATH}`);
+  console.log(`[install] node:         ${nodePath}`);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] note: re-run \`omnodex install claude-code\` after changing Node versions (e.g. nvm use)`);
   console.log(
-    `[init] run \`omnodex uninit ${projectPath}\` to remove them again`,
+    `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
 }
 
-async function cmdUninit(args: string[]): Promise<void> {
-  const projectPath = path.resolve(args[0] ?? process.cwd());
+async function installCodex(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const paths = resolvePaths();
-  const useProjectSettings = args.includes("--project-settings");
+  const debug = args.includes("--debug");
 
-  const interceptor = new ClaudeCodeInterceptor({
+  const nodePath = process.execPath;
+  const interceptor = new CodexInterceptor({
     projectPath,
-    shimPath: CLAUDE_HOOK_SHIM_PATH,
+    shimPath: CODEX_HOOK_SHIM_PATH,
     omnodexHome: paths.home,
-    settingsFile: useProjectSettings ? "settings.json" : "settings.local.json",
+    debug,
+    nodePath,
   });
-  await interceptor.uninstall();
-  console.log(`[uninit] removed Omnodex hooks from`);
-  console.log(`         ${interceptor.settingsFilePath()}`);
+  await interceptor.install();
+  console.log(`[install] installed Codex hooks into`);
+  console.log(`          ${interceptor.hooksFilePath()}`);
+  console.log(`[install] shim:         ${CODEX_HOOK_SHIM_PATH}`);
+  console.log(`[install] node:         ${nodePath}`);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] note: ensure hooks = true in ~/.codex/config.toml`);
+  console.log(`[install] note: re-run \`omnodex install codex\` after changing Node versions (e.g. nvm use)`);
+  console.log(
+    `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
+  );
+}
+
+async function installAntigravity(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
+  const paths = resolvePaths();
+  const debug = args.includes("--debug");
+  const wantHooks = args.includes("--hooks");
+  const wantMcp = args.includes("--mcp");
+
+  // Default: hooks only (backward compat). If either flag is explicit, do only what was asked.
+  const doHooks = wantHooks || !wantMcp;
+  const doMcp = wantMcp;
+
+  const nodePath = process.execPath;
+
+  if (doHooks) {
+    const interceptor = new AntigravityInterceptor({
+      projectPath,
+      shimPath: ANTIGRAVITY_HOOK_SHIM_PATH,
+      omnodexHome: paths.home,
+      debug,
+      nodePath,
+    });
+    await interceptor.install();
+    console.log(`[install] installed Antigravity hooks into`);
+    console.log(`          ${interceptor.hooksFilePath()}`);
+    console.log(`[install] shim:         ${ANTIGRAVITY_HOOK_SHIM_PATH}`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+    console.log(`[install] note: re-run \`omnodex install antigravity\` after changing Node versions (e.g. nvm use)`);
+    console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
+  }
+
+  if (doMcp) {
+    await installAntigravityMcp(projectPath, paths.home, nodePath);
+  }
+
+  console.log(
+    `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
+  );
+}
+
+/**
+ * Write the Omnodex MCP proxy server entry into the project's
+ * .agents/mcp_config.json. Uses absolute paths so agy/Desktop can
+ * resolve the command regardless of cwd.
+ *
+ * The launch-proxy.js script handles version-manager resolution and
+ * locating the actual omnodex-mcp-proxy binary.
+ */
+async function installAntigravityMcp(
+  projectPath: string,
+  omnodexHome: string,
+  nodePath: string,
+): Promise<void> {
+  // Locate launch-proxy.js: check plugin install dirs, then fall back
+  // to the omnodex-plugins source tree.
+  const candidates = [
+    // agy plugin install location (observed)
+    path.join(os.homedir(), ".gemini", "config", "plugins", "omnodex-antigravity", "bin", "launch-proxy.js"),
+    // agy docs location
+    path.join(os.homedir(), ".gemini", "antigravity-cli", "plugins", "omnodex-antigravity", "bin", "launch-proxy.js"),
+  ];
+
+  let launchProxyPath: string | null = null;
+  for (const candidate of candidates) {
+    try {
+      await fs.access(candidate);
+      launchProxyPath = candidate;
+      break;
+    } catch { /* not found */ }
+  }
+
+  if (!launchProxyPath) {
+    console.warn(`[install] WARNING: could not find launch-proxy.js in plugin dirs.`);
+    console.warn(`[install]          Install the plugin first: unzip omnodex-antigravity.plugin,`);
+    console.warn(`[install]          then \`agy plugin install <dir>\``);
+    console.warn(`[install]          After installing, re-run with --mcp to configure the proxy.`);
+    return;
+  }
+
+  const mcpConfigPath = path.join(projectPath, ".agents", "mcp_config.json");
+  const agentsDir = path.dirname(mcpConfigPath);
+  await fs.mkdir(agentsDir, { recursive: true });
+
+  // Read existing config if present.
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = await fs.readFile(mcpConfigPath, "utf8");
+    if (raw.trim()) existing = JSON.parse(raw);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+
+  const mcpServers = (existing.mcpServers ?? {}) as Record<string, unknown>;
+  mcpServers["omnodex"] = {
+    command: nodePath,
+    args: [launchProxyPath],
+    env: {
+      OMNODEX_HOME: omnodexHome,
+    },
+  };
+
+  const next = { ...existing, mcpServers };
+  await fs.writeFile(mcpConfigPath, JSON.stringify(next, null, 2) + "\n", "utf8");
+
+  console.log(`[install] wrote MCP proxy config to`);
+  console.log(`          ${mcpConfigPath}`);
+  console.log(`[install] proxy launcher: ${launchProxyPath}`);
+}
+
+async function cmdUninstall(args: string[]): Promise<void> {
+  const projectPath = path.resolve(
+    args.find((a) => !a.startsWith("--") && !VALID_TARGETS.includes(a as InstallTarget)) ?? process.cwd(),
+  );
+  const paths = resolvePaths();
+  const confirmed = args.includes("--confirm");
+
+  // Determine which targets to uninstall
+  const targetArg = args.find((a) => VALID_TARGETS.includes(a as InstallTarget)) as InstallTarget | undefined;
+
+  interface InstalledHook {
+    target: InstallTarget;
+    label: string;
+    path: string;
+    uninstall: () => Promise<void>;
+  }
+
+  const installed: InstalledHook[] = [];
+
+  // Check Claude Code
+  for (const settingsFile of ["settings.local.json", "settings.json"] as const) {
+    const interceptor = new ClaudeCodeInterceptor({
+      projectPath,
+      shimPath: CLAUDE_HOOK_SHIM_PATH,
+      omnodexHome: paths.home,
+      settingsFile,
+    });
+    if (await interceptor.isInstalled()) {
+      installed.push({
+        target: "claude-code",
+        label: `Claude Code (${settingsFile})`,
+        path: interceptor.settingsFilePath(),
+        uninstall: () => interceptor.uninstall(),
+      });
+    }
+  }
+
+  // Check Codex
+  const codexInterceptor = new CodexInterceptor({
+    projectPath,
+    shimPath: CODEX_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const codexHooksPath = codexInterceptor.hooksFilePath();
+    await fs.access(codexHooksPath);
+    const content = await fs.readFile(codexHooksPath, "utf8");
+    if (content.includes("omnodex")) {
+      installed.push({
+        target: "codex",
+        label: "Codex",
+        path: codexHooksPath,
+        uninstall: () => codexInterceptor.uninstall(),
+      });
+    }
+  } catch { /* not installed */ }
+
+  // Check Antigravity
+  const antigravityInterceptor = new AntigravityInterceptor({
+    projectPath,
+    shimPath: ANTIGRAVITY_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const agHooksPath = antigravityInterceptor.hooksFilePath();
+    await fs.access(agHooksPath);
+    const content = await fs.readFile(agHooksPath, "utf8");
+    if (content.includes("omnodex")) {
+      installed.push({
+        target: "antigravity",
+        label: "Antigravity",
+        path: agHooksPath,
+        uninstall: () => antigravityInterceptor.uninstall(),
+      });
+    }
+  } catch { /* not installed */ }
+
+  // Filter to target if specified
+  const toRemove = targetArg
+    ? installed.filter((h) => h.target === targetArg)
+    : installed;
+
+  if (toRemove.length === 0) {
+    if (targetArg) {
+      console.log(`[uninstall] no ${targetArg} hooks found in ${projectPath}`);
+    } else {
+      console.log(`[uninstall] no Omnodex hooks found in ${projectPath}`);
+    }
+    return;
+  }
+
+  // Show what will be removed and require confirmation
+  console.log(`[uninstall] the following Omnodex hooks will be removed:\n`);
+  for (const hook of toRemove) {
+    console.log(`  ${hook.label}`);
+    console.log(`    ${hook.path}\n`);
+  }
+
+  if (!confirmed) {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = await rl.question("Proceed? (Y/n) ");
+    rl.close();
+    if (answer.trim() !== "Y") {
+      console.log("[uninstall] cancelled");
+      return;
+    }
+  }
+
+  for (const hook of toRemove) {
+    await hook.uninstall();
+    console.log(`[uninstall] removed ${hook.label} hooks from ${hook.path}`);
+  }
+}
+
+async function cmdStatus(_args: string[]): Promise<void> {
+  const projectPath = path.resolve(_args.find((a) => !a.startsWith("--")) ?? process.cwd());
+  const paths = resolvePaths();
+
+  console.log(`[status] project:      ${projectPath}`);
+  console.log(`[status] OMNODEX_HOME: ${paths.home}\n`);
+
+  let anyInstalled = false;
+
+  // Check Claude Code
+  for (const settingsFile of ["settings.local.json", "settings.json"] as const) {
+    const interceptor = new ClaudeCodeInterceptor({
+      projectPath,
+      shimPath: CLAUDE_HOOK_SHIM_PATH,
+      omnodexHome: paths.home,
+      settingsFile,
+    });
+    if (await interceptor.isInstalled()) {
+      console.log(`  Claude Code (${settingsFile}): installed`);
+      console.log(`    ${interceptor.settingsFilePath()}`);
+      anyInstalled = true;
+    }
+  }
+
+  // Check Codex
+  const codexInterceptor = new CodexInterceptor({
+    projectPath,
+    shimPath: CODEX_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const codexHooksPath = codexInterceptor.hooksFilePath();
+    await fs.access(codexHooksPath);
+    const content = await fs.readFile(codexHooksPath, "utf8");
+    if (content.includes("omnodex")) {
+      console.log(`  Codex: installed`);
+      console.log(`    ${codexHooksPath}`);
+      anyInstalled = true;
+    }
+  } catch { /* not installed */ }
+
+  // Check Antigravity
+  const antigravityInterceptor = new AntigravityInterceptor({
+    projectPath,
+    shimPath: ANTIGRAVITY_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const agHooksPath = antigravityInterceptor.hooksFilePath();
+    await fs.access(agHooksPath);
+    const content = await fs.readFile(agHooksPath, "utf8");
+    if (content.includes("omnodex")) {
+      console.log(`  Antigravity: installed`);
+      console.log(`    ${agHooksPath}`);
+      anyInstalled = true;
+    }
+  } catch { /* not installed */ }
+
+  if (!anyInstalled) {
+    console.log(`  No Omnodex hooks installed in this project.`);
+    console.log(`\n  Run \`omnodex install <target>\` to get started.`);
+    console.log(`  Targets: ${VALID_TARGETS.join(", ")}`);
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// mcp-proxy subcommands
+// ---------------------------------------------------------------------------
+
+async function cmdMcpProxy(args: string[]): Promise<void> {
+  const [sub, ...rest] = args;
+  switch (sub) {
+    case "start":
+      await cmdMcpProxyStart(rest);
+      return;
+    case "install":
+      await cmdMcpProxyInstall(rest);
+      return;
+    case "status":
+      await cmdMcpProxyStatus(rest);
+      return;
+    default:
+      console.log(`omnodex mcp-proxy <subcommand>
+
+subcommands:
+  start [--config path]   start the MCP proxy server on stdin/stdout.
+                          Used by Cowork / Codex plugin mcp.json configs.
+                          Defaults to \${OMNODEX_HOME}/omnodex-proxy.json.
+  install                 create a template omnodex-proxy.json in
+                          \${OMNODEX_HOME} if one does not already exist.
+  status                  show configured upstream servers and proxy state.
+`);
+      if (sub !== undefined && sub !== "help" && sub !== "--help") {
+        console.error(`[mcp-proxy] unknown subcommand '${sub}'`);
+        process.exitCode = 1;
+      }
+  }
+}
+
+async function cmdMcpProxyStart(args: string[]): Promise<void> {
+  const configFlagIdx = args.indexOf("--config");
+  const configPath =
+    configFlagIdx !== -1 ? args[configFlagIdx + 1] : undefined;
+
+  const config = await loadProxyConfig(configPath);
+  const paths = resolvePaths();
+
+  const log = new EventLog({ root: path.join(paths.home, "event-log") });
+  await log.init();
+
+  const proxy = new MCPProxy(config, { projectPath: process.cwd() });
+  const emit = log.append.bind(log);
+  const stop = await proxy.start(emit);
+
+  async function shutdown(): Promise<void> {
+    await stop();
+    await log.close();
+  }
+  process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
+  process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
+}
+
+async function cmdMcpProxyInstall(_args: string[]): Promise<void> {
+  const paths = resolvePaths();
+  const cfgPath = path.join(paths.home, "omnodex-proxy.json");
+
+  let exists = false;
+  try {
+    await fs.access(cfgPath);
+    exists = true;
+  } catch {
+    // file does not exist
+  }
+
+  if (exists) {
+    console.log(`[mcp-proxy] config already exists: ${cfgPath}`);
+    console.log(`[mcp-proxy] run 'omnodex mcp-proxy status' to inspect it.`);
+    return;
+  }
+
+  await fs.mkdir(paths.home, { recursive: true });
+
+  const template = {
+    version: 1,
+    redact_parameters: false,
+    upstream_servers: [
+      {
+        name: "filesystem",
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-filesystem", "/"],
+        _comment:
+          "Replace with your actual MCP servers. Each entry here replaces a " +
+          "direct MCP server entry in your agent config -- point your agent at " +
+          "omnodex-mcp-proxy instead and list the real servers here.",
+      },
+    ],
+  };
+  await fs.writeFile(cfgPath, JSON.stringify(template, null, 2) + "\n", "utf8");
+
+  console.log(`[mcp-proxy] created template config: ${cfgPath}`);
+  console.log();
+  console.log(`Next steps:`);
+  console.log(`  1. Edit ${cfgPath} to list your upstream MCP servers.`);
+  console.log(`  2. In your agent MCP config, replace each upstream entry with:`);
+  console.log(`       { "command": "omnodex-mcp-proxy", "args": [] }`);
+  console.log(`  3. Run 'omnodex mcp-proxy status' to verify the config.`);
+  console.log();
+  console.log(`[omnodex] Parameters are logged locally by default.`);
+  console.log(`          Set redact_parameters: true in the config to disable.`);
+}
+
+async function cmdMcpProxyStatus(_args: string[]): Promise<void> {
+  const paths = resolvePaths();
+
+  let config;
+  let cfgPath = path.join(paths.home, "omnodex-proxy.json");
+  try {
+    config = await loadProxyConfig(cfgPath);
+  } catch {
+    cfgPath = path.join(process.cwd(), "omnodex-proxy.json");
+    try {
+      config = await loadProxyConfig(cfgPath);
+    } catch {
+      console.log(`[mcp-proxy] no config found.`);
+      console.log(`            run 'omnodex mcp-proxy install' to create one.`);
+      return;
+    }
+  }
+
+  console.log(`[mcp-proxy] config:            ${cfgPath}`);
+  console.log(`[mcp-proxy] redact_parameters: ${config.redact_parameters}`);
+  console.log(`[mcp-proxy] upstream servers (${config.upstream_servers.length}):`);
+  for (const srv of config.upstream_servers) {
+    const prefix = srv.name_override
+      ? `${srv.name} → ${srv.name_override}`
+      : srv.name;
+    if (srv.transport === "stdio") {
+      const cmd = [srv.command, ...(srv.args ?? [])].join(" ");
+      console.log(`              ${prefix}  [stdio]  ${cmd}`);
+    } else {
+      console.log(`              ${prefix}  [http]   ${srv.url}`);
+    }
+    if (srv.redact_parameters !== undefined) {
+      console.log(
+        `                redact_parameters: ${srv.redact_parameters} (overrides global)`,
+      );
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// license subcommand
+// ---------------------------------------------------------------------------
+
+async function cmdLicense(args: string[]): Promise<void> {
+  const [sub] = args;
+
+  if (sub === "clear") {
+    await clearLicenseCache();
+    console.log("[license] cache cleared");
+    return;
+  }
+
+  console.log("[license] validating...");
+  const result = await validateLicense();
+  console.log(`[license] source: ${result.source}`);
+  console.log(`[license] tier:   ${result.license.tier}`);
+  console.log(`[license] features:`);
+  for (const f of result.license.features) {
+    console.log(`  - ${f}`);
+  }
+  if (result.license.rule_decryption_key) {
+    console.log(`[license] rule key: present (not shown)`);
+  }
+  if (result.license.sync_endpoint) {
+    console.log(`[license] sync:   ${result.license.sync_endpoint}`);
+  }
+  console.log(`[license] ttl:    ${result.license.ttl_seconds}s`);
+
+  if (result.source === "defaults") {
+    console.log("");
+    console.log("  No API token configured. Set OMNODEX_API_TOKEN or pass --token.");
+    console.log("  Free tier features are active by default.");
+  } else if (result.source === "cache_stale") {
+    console.log("");
+    console.log("  WARNING: using stale cached license (network unreachable).");
+  }
 }
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
-    case "init":
-      await cmdInit(rest);
+    case "install":
+      await cmdInstall(rest);
       return;
-    case "uninit":
-      await cmdUninit(rest);
+    case "uninstall":
+      await cmdUninstall(rest);
+      return;
+    case "status":
+      await cmdStatus(rest);
       return;
     case "spike":
       await cmdSpike(rest);
@@ -400,6 +1039,12 @@ async function main(): Promise<void> {
     case "dashboard":
       await cmdDashboard(rest);
       return;
+    case "mcp-proxy":
+      await cmdMcpProxy(rest);
+      return;
+    case "license":
+      await cmdLicense(rest);
+      return;
     case undefined:
     case "help":
     case "--help":
@@ -407,15 +1052,52 @@ async function main(): Promise<void> {
       console.log(`omnodex
 
 commands:
-  init [project]     install Claude Code hooks into the given project
-                     (defaults to cwd). Flags:
-                       --debug               enable verbose shim logging
-                       --project-settings    edit settings.json instead of
+  install <target> [project]
+                     install Omnodex hooks for an AI agent platform.
+                     Targets: claude-code, codex, antigravity
+                     Defaults to cwd if project is omitted.
+                     Flags:
+                       --debug               verbose shim logging
+                       --project-settings    (claude-code only) edit
+                                             settings.json instead of
                                              settings.local.json
-  uninit [project]   remove Omnodex-managed Claude Code hooks
+                       --hooks               (antigravity) hooks only
+                       --mcp                 (antigravity) MCP proxy only
+                                             (writes .agents/mcp_config.json)
+                                             Combine: --hooks --mcp for both.
+                                             Default (no flags): hooks only.
+  uninstall [target] [project]
+                     remove Omnodex hooks. If target is omitted, removes
+                     all hooks found in the project. Requires --confirm.
+  status [project]   show which Omnodex hooks are installed in a project.
+  license            show current license tier and features.
+                     Subcommands: clear (remove cached license).
+  mcp-proxy <sub>   manage the MCP proxy interceptor.
+                     Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       run a simulated session through the full pipeline.
                      Optional name sets the session ID (sess_<name>); if
                      omitted a unique timestamp-based ID is generated so
                      successive runs each create a distinct session.
   detect [session]   scan event log for risk patterns and append
-                     ris
+                     risk.detected events. Runs on all sessions if no
+                     session id is given.
+  replay             rebuild the SQLite read model from the event log.
+  report             print a summary of sessions in the read model.
+  dashboard [port]   start the local dashboard (default port 7890).
+                     Streaming detection is active while the dashboard
+                     runs -- risks are detected and pushed to the browser
+                     in real time via SSE.  Flags:
+                       --no-detect  skip the historical detection pass
+  clear              delete all event log data and the read model.
+`);
+      return;
+    default:
+      console.error(`[omnodex] unknown command '${command}'. Run 'omnodex help' for usage.`);
+      process.exitCode = 1;
+  }
+}
+
+main().catch((err: unknown) => {
+  console.error(err);
+  process.exit(1);
+});

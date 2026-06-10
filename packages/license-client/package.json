@@ -1,0 +1,23 @@
+{
+  "name": "@omnodex/license-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "License validation client for Omnodex. Calls the cloud API, caches the response, and falls back gracefully when offline.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*"
+  }
+}

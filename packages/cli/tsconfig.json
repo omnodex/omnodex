@@ -5,11 +5,33 @@
     "outDir": "dist",
     "composite": true
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*"
+  ],
   "references": [
-    { "path": "../shared" },
-    { "path": "../event-log" },
-    { "path": "../projection" },
-    { "path": "../hooks-provider" }
+    {
+      "path": "../shared"
+    },
+    {
+      "path": "../event-log"
+    },
+    {
+      "path": "../projection"
+    },
+    {
+      "path": "../hooks-provider"
+    },
+    {
+      "path": "../analyzer"
+    },
+    {
+      "path": "../codex-provider"
+    },
+    {
+      "path": "../antigravity-provider"
+    },
+    {
+      "path": "../mcp-proxy"
+    }
   ]
 }

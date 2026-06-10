@@ -1,0 +1,24 @@
+{
+  "name": "@omnodex/analyzer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Rule engine for Omnodex. Evaluates declarative risk rules against trace events and emits risk.detected findings.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs test/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/event-log": "*"
+  }
+}

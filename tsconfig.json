@@ -1,10 +1,26 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/shared" },
-    { "path": "./packages/event-log" },
-    { "path": "./packages/projection" },
-    { "path": "./packages/hooks-provider" },
-    { "path": "./packages/cli" }
+    {
+      "path": "./packages/shared"
+    },
+    {
+      "path": "./packages/event-log"
+    },
+    {
+      "path": "./packages/projection"
+    },
+    {
+      "path": "./packages/hooks-provider"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./packages/codex-provider"
+    },
+    {
+      "path": "./packages/mcp-proxy"
+    }
   ]
 }

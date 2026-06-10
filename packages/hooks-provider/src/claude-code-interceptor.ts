@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * ClaudeCodeInterceptor
  *
@@ -46,6 +51,13 @@ export interface ClaudeCodeInterceptorOptions {
   timeoutSeconds?: number;
   /** Enable debug logging in the shim (sets OMNODEX_DEBUG=1). */
   debug?: boolean;
+  /**
+   * Absolute path to the Node.js binary to use in hook commands.
+   * Defaults to process.execPath at install time. Needed because
+   * non-interactive shells (e.g. Codex WSL agent) may not have
+   * nvm/fnm/volta in PATH.
+   */
+  nodePath?: string;
 }
 
 /**
@@ -170,6 +182,22 @@ export class ClaudeCodeInterceptor implements Interceptor {
     await this.writeSettings(settingsPath, next);
   }
 
+  /**
+   * Returns true if any Omnodex-managed handlers are currently present in
+   * the target settings file. Useful for detecting duplicate installations
+   * across settings.json and settings.local.json before running install().
+   */
+  async isInstalled(): Promise<boolean> {
+    const settingsPath = this.settingsFilePath();
+    const existing = await this.readSettings(settingsPath);
+    if (!existing.hooks) return false;
+    return Object.values(existing.hooks).some((groups) =>
+      (groups ?? []).some((g) =>
+        (g.hooks ?? []).some((h) => h[OMNODEX_TAG] === true),
+      ),
+    );
+  }
+
   private makeMatcherGroup(): HookMatcherGroup {
     return {
       matcher: "*",
@@ -193,7 +221,8 @@ export class ClaudeCodeInterceptor implements Interceptor {
     const envPrefix =
       `OMNODEX_HOME=${shellQuote(this.options.omnodexHome)}` +
       (this.options.debug ? ` OMNODEX_DEBUG=1` : "");
-    return `${envPrefix} node ${shellQuote(this.options.shimPath)}`;
+    const nodeBin = this.options.nodePath ?? "node";
+    return `${envPrefix} ${shellQuote(nodeBin)} ${shellQuote(this.options.shimPath)}`;
   }
 
   private async readSettings(settingsPath: string): Promise<SettingsFile> {
@@ -211,8 +240,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
     settingsPath: string,
     settings: SettingsFile,
   ): Promise<void> {
-    const serialized = JSON.stringify(settings, null, 2) + "
-";
+    const serialized = JSON.stringify(settings, null, 2) + "\n";
     await fs.writeFile(settingsPath, serialized, "utf8");
   }
 }

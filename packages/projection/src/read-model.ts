@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * Read model types. These are the projected shapes that the dashboard and
  * analyzer query against. They are derived from the event log and are
@@ -9,13 +14,15 @@
  * the read model can change freely because it is always regenerable.
  */
 
-import type { RiskSeverity } from "@omnodex/shared";
+import type { InterceptorKind, RiskSeverity } from "@omnodex/shared";
 
 export interface SessionRow {
   session_id: string;
   user: string;
   project_path: string;
   mcp_servers: string[];
+  /** Which interceptor produced the session.started event. */
+  interceptor: InterceptorKind;
   started_at: string;
   ended_at: string | null;
   duration_ms: number | null;
@@ -24,6 +31,10 @@ export interface SessionRow {
   file_read_count: number;
   file_write_count: number;
   risk_score: number;
+  /** ISO 8601 timestamp of the most recent event in this session. */
+  last_event_at: string;
+  /** Root directory this session was read from (multi-root aggregation). */
+  source_root: string | null;
 }
 
 export interface ToolCallRow {

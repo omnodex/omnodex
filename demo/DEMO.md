@@ -8,7 +8,7 @@ An AI agent runs a routine data pipeline. The user never asks for anything risky
 
 ## Prerequisites
 
-- Node 22.5.0+
+- Node 24+
 - Claude Code installed (for the live session option)
 - Omnodex built (`npm install && npx tsc -b` from the repo root)
 
@@ -35,7 +35,7 @@ For a real end-to-end test against a live Claude Code session.
 ./demo/setup.sh
 ```
 
-This builds Omnodex, clears prior data, and installs hooks into the demo project.
+This builds Omnodex, seeds the demo SQLite database from `seed.sql`, clears prior event data, and installs hooks into the demo project.
 
 ### 2. Start the mock API server (Terminal 1)
 

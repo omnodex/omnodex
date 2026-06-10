@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
   },
   "bin": {
     "omnodex-claude-hook": "./dist/bin/claude-hook-shim.js"

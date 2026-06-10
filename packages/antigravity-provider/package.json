@@ -1,0 +1,27 @@
+{
+  "name": "@omnodex/antigravity-provider",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Omnodex interceptor for Google Antigravity (CLI, Desktop, IDE) via the Antigravity hooks system.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "bin": {
+    "omnodex-antigravity-hook": "./dist/bin/antigravity-hook-shim.js"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/event-log": "*"
+  }
+}

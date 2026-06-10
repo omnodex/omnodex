@@ -1,0 +1,29 @@
+{
+  "name": "@omnodex/mcp-proxy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Omnodex MCP proxy interceptor: sits between any MCP-capable agent and its upstream MCP servers, logging TraceEvents to the local event log.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/config.test.mjs test/event-emitter.test.mjs test/upstream-client.test.mjs"
+  },
+  "bin": {
+    "omnodex-mcp-proxy": "./dist/bin/omnodex-mcp-proxy.js"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/event-log": "*",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.25.0"
+  }
+}

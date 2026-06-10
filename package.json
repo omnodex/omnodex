@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "description": "Security and observability for AI agent execution.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/omnodex/omnodex.git"
+  },
+  "homepage": "https://omnodex.com",
+  "bugs": {
+    "url": "https://github.com/omnodex/omnodex/issues"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -14,9 +22,9 @@
   },
   "devDependencies": {
     "typescript": "^5.5.4",
-    "@types/node": "^22.5.0"
+    "@types/node": "^24.0.0"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=24.0.0"
   }
 }

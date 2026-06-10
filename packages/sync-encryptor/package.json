@@ -1,0 +1,26 @@
+{
+  "name": "@omnodex/sync-encryptor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Zero-knowledge sync blob encryption for the Omnodex hosted dashboard. Derives keys client-side via Argon2id; encrypts projection data with AES-256-GCM; pushes ciphertext to cloud. The server never holds plaintext or key material.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/projection": "*",
+    "@omnodex/event-log": "*",
+    "hash-wasm": "^4.11.0"
+  }
+}

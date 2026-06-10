@@ -1,0 +1,37 @@
+# CI - runs on pushes to main and pull requests.
+# Gated by the CI_ENABLED repository variable so the workflow can be
+# committed while the repo is still private without burning Actions minutes.
+# To activate: Settings > Variables > Actions > New variable > CI_ENABLED = true
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    if: vars.CI_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - run: npm install
+
+      - name: Build (tsc)
+        run: npx tsc -b
+
+      - name: Unit tests
+        run: |
+          shopt -s globstar
+          node --test $(find packages/*/test -name '*.test.mjs' ! -name '*.integration.test.mjs')

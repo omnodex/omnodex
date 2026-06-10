@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * Mock interceptor. Produces a deterministic-enough multi-MCP Claude Code
  * session for testing. The shape mirrors a realistic scenario: PostgreSQL
@@ -44,8 +49,8 @@ export class MockInterceptor implements Interceptor {
   constructor(options: MockInterceptorOptions = {}) {
     this.sessionId =
       options.sessionId ?? `sess_demo_${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
-    this.user = options.user ?? "brian@omnodex.local";
-    this.projectPath = options.projectPath ?? "/home/brian/projects/demo";
+    this.user = options.user ?? "case@omnodex.local";
+    this.projectPath = options.projectPath ?? "/home/case/projects/demo";
     this.stepDelayMs = options.stepDelayMs ?? 0;
   }
 
@@ -164,7 +169,7 @@ function buildMultiMcpSession(opts: BuildOptions): TraceEvent[] {
     tool_call_id: templateCallId,
     tool_name: "read_file",
     mcp_server: "filesystem",
-    parameters: { path: "/home/brian/projects/demo/templates/customers.csv" },
+    parameters: { path: "/home/case/projects/demo/templates/customers.csv" },
   });
   events.push({
     ...base(at(3100)),
@@ -177,7 +182,7 @@ function buildMultiMcpSession(opts: BuildOptions): TraceEvent[] {
   events.push({
     ...base(at(3100)),
     event_type: "file.read",
-    path: "/home/brian/projects/demo/templates/customers.csv",
+    path: "/home/case/projects/demo/templates/customers.csv",
     bytes: 220,
   });
 
@@ -214,7 +219,7 @@ function buildMultiMcpSession(opts: BuildOptions): TraceEvent[] {
     tool_call_id: writeCallId,
     tool_name: "write_file",
     mcp_server: "filesystem",
-    parameters: { path: "/home/brian/projects/demo/out/enriched.csv" },
+    parameters: { path: "/home/case/projects/demo/out/enriched.csv" },
   });
   events.push({
     ...base(at(4120)),
@@ -227,7 +232,7 @@ function buildMultiMcpSession(opts: BuildOptions): TraceEvent[] {
   events.push({
     ...base(at(4120)),
     event_type: "file.written",
-    path: "/home/brian/projects/demo/out/enriched.csv",
+    path: "/home/case/projects/demo/out/enriched.csv",
     bytes: 4480,
   });
 

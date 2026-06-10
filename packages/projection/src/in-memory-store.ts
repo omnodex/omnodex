@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * In-memory ReadModelStore. Zero dependencies. Used by tests and by the
  * default CLI wiring when no persistent store is configured.
@@ -88,7 +93,9 @@ export class InMemoryReadModelStore implements ReadModelStore {
   }
 
   async listSessions(): Promise<SessionRow[]> {
-    return [...this.sessions.values()].map((r) => ({ ...r }));
+    return [...this.sessions.values()]
+      .sort((a, b) => (b.last_event_at || '').localeCompare(a.last_event_at || ''))
+      .map((r) => ({ ...r }));
   }
 
   async listToolCalls(sessionId: string): Promise<ToolCallRow[]> {

@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * Claude Code hook payload schema (as verified against the live docs
  * at https://code.claude.com/docs/en/hooks on 2026-04-11) plus a pure
@@ -190,6 +195,7 @@ export function mapClaudeCodePayload(
         tool_name: payload.tool_name,
         mcp_server: mcpServerFor(payload.tool_name),
         parameters: payload.tool_input,
+        cwd: payload.cwd,
       };
       return [event];
     }
@@ -239,7 +245,7 @@ export function mapClaudeCodePayload(
  * Built-in tools do not belong to an MCP, but downstream queries are much
  * cleaner if they all carry a non-empty mcp_server field. The real MCP
  * attribution for third-party tools comes from Claude Code config and
- * will be populated in the Week 3 enrichment step.
+ * is derived from the tool name for Claude Code built-in tools.
  */
 function mcpServerFor(toolName: string): string {
   // Claude Code encodes MCP-provided tools as "mcp__<server>__<tool>".
@@ -337,8 +343,10 @@ function responseBytesHeuristic(
   toolInput: Record<string, unknown>,
   toolResponse: unknown,
 ): number {
-  // For writes, the input carries the bytes actually written.
-  const content = toolInput.content;
+  // For Write, the written content lives in "content".
+  // For Edit / NotebookEdit, the replacement lives in "new_string".
+  // Fall back to the JSON size of the tool response for anything else.
+  const content = toolInput.content ?? toolInput.new_string;
   if (typeof content === "string") {
     return Buffer.byteLength(content, "utf8");
   }

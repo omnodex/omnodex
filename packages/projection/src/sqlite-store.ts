@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * SQLite-backed ReadModelStore using Node 22's built-in node:sqlite module.
  * The projector replays the event log into this store; nothing else writes
@@ -34,6 +39,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   user TEXT NOT NULL,
   project_path TEXT NOT NULL,
   mcp_servers_json TEXT NOT NULL,
+  interceptor TEXT NOT NULL DEFAULT 'unknown',
   started_at TEXT NOT NULL,
   ended_at TEXT,
   duration_ms INTEGER,
@@ -41,7 +47,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   tool_call_count INTEGER NOT NULL DEFAULT 0,
   file_read_count INTEGER NOT NULL DEFAULT 0,
   file_write_count INTEGER NOT NULL DEFAULT 0,
-  risk_score INTEGER NOT NULL DEFAULT 0
+  risk_score INTEGER NOT NULL DEFAULT 0,
+  last_event_at TEXT NOT NULL DEFAULT '',
+  source_root TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -81,6 +89,9 @@ CREATE TABLE IF NOT EXISTS risk_events (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_file_events_session ON file_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_risk_events_session ON risk_events(session_id);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_last_event ON sessions(last_event_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_interceptor ON sessions(interceptor, last_event_at);
 `;
 
 export class SqliteReadModelStore implements ReadModelStore {
@@ -97,6 +108,26 @@ export class SqliteReadModelStore implements ReadModelStore {
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.db.exec(SCHEMA_SQL);
+    this.migrate();
+  }
+
+  /**
+   * Forward-only migrations for existing databases. Each migration checks
+   * whether the change has already been applied before running. New databases
+   * get the full schema from SCHEMA_SQL and these are no-ops.
+   */
+  private migrate(): void {
+    const db = this.requireDb();
+
+    // Migration 1: add source_root column (2026-06-04, FS-005 Level 1).
+    // SCHEMA_SQL includes the column for new DBs. Existing DBs need ALTER TABLE.
+    const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
+    const hasSourceRoot = cols.some((c) => c.name === "source_root");
+    if (!hasSourceRoot) {
+      db.exec("ALTER TABLE sessions ADD COLUMN source_root TEXT");
+    }
+    // Index depends on source_root existing, so always create after migration.
+    db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_source_root ON sessions(source_root, last_event_at)");
   }
 
   async reset(): Promise<void> {
@@ -114,22 +145,26 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO sessions
-        (session_id, user, project_path, mcp_servers_json, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
         user = excluded.user,
         project_path = excluded.project_path,
         mcp_servers_json = excluded.mcp_servers_json,
+        interceptor = excluded.interceptor,
         started_at = excluded.started_at,
         ended_at = excluded.ended_at,
         duration_ms = excluded.duration_ms,
-        status = excluded.status`,
+        status = excluded.status,
+        last_event_at = excluded.last_event_at,
+        source_root = excluded.source_root`,
     );
     stmt.run(
       row.session_id,
       row.user,
       row.project_path,
       JSON.stringify(row.mcp_servers),
+      row.interceptor,
       row.started_at,
       row.ended_at,
       row.duration_ms,
@@ -138,6 +173,8 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.file_read_count,
       row.file_write_count,
       row.risk_score,
+      row.last_event_at,
+      row.source_root,
     );
   }
 
@@ -276,7 +313,7 @@ export class SqliteReadModelStore implements ReadModelStore {
 
   async listSessions(): Promise<SessionRow[]> {
     const db = this.requireDb();
-    const stmt = db.prepare(`SELECT * FROM sessions ORDER BY started_at`);
+    const stmt = db.prepare(`SELECT * FROM sessions ORDER BY last_event_at DESC, started_at DESC`);
     return (stmt.all() as unknown as SessionRowRaw[]).map(toSessionRow);
   }
 
@@ -327,6 +364,7 @@ interface SessionRowRaw {
   user: string;
   project_path: string;
   mcp_servers_json: string;
+  interceptor: string;
   started_at: string;
   ended_at: string | null;
   duration_ms: number | null;
@@ -335,6 +373,8 @@ interface SessionRowRaw {
   file_read_count: number;
   file_write_count: number;
   risk_score: number;
+  last_event_at: string;
+  source_root: string | null;
 }
 
 interface ToolCallRowRaw {
@@ -367,6 +407,7 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     user: raw.user,
     project_path: raw.project_path,
     mcp_servers: JSON.parse(raw.mcp_servers_json) as string[],
+    interceptor: raw.interceptor as SessionRow["interceptor"],
     started_at: raw.started_at,
     ended_at: raw.ended_at,
     duration_ms: raw.duration_ms,
@@ -375,6 +416,8 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     file_read_count: raw.file_read_count,
     file_write_count: raw.file_write_count,
     risk_score: raw.risk_score,
+    last_event_at: raw.last_event_at,
+    source_root: raw.source_root,
   };
 }
 
@@ -388,7 +431,7 @@ function toToolCallRow(raw: ToolCallRowRaw): ToolCallRow {
     started_at: raw.started_at,
     ended_at: raw.ended_at,
     duration_ms: raw.duration_ms,
-    status: raw.status as ToolCallRow["status"],
+        status: raw.status as ToolCallRow["status"],
     response_bytes: raw.response_bytes,
     error_message: raw.error_message,
   };

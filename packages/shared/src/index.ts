@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * @omnodex/shared
  *
@@ -20,10 +25,26 @@ export type RiskSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 /** Logical category of the interception source that emitted an event. */
 export type InterceptorKind =
   | "claude-code-hook"
+  | "codex-hook"
+  | "antigravity-hook"
   | "cowork-desktop"
   | "mcp-proxy"
   | "mock"
   | "analyzer";
+
+/**
+ * The agent runtime platform. Distinct from InterceptorKind: interceptor
+ * identifies the mechanism (hook, proxy), platform identifies the runtime
+ * (cowork, codex, claude-code). Enables filtering by agent runtime
+ * independently of interception method.
+ */
+export type PlatformKind =
+  | "claude-code"
+  | "codex"
+  | "cowork"
+  | "web"
+  | "antigravity"
+  | "copilot";
 
 /** Fields present on every trace event, regardless of type. */
 export interface BaseEvent {
@@ -39,6 +60,12 @@ export interface BaseEvent {
   recorded_at: string;
   /** Which interceptor produced this event. */
   interceptor: InterceptorKind;
+  /**
+   * The agent runtime platform. Optional for backwards compatibility
+   * with existing event logs. When absent, consumers may infer platform
+   * from the interceptor field.
+   */
+  platform?: PlatformKind;
 }
 
 export interface SessionStartedEvent extends BaseEvent {
@@ -66,6 +93,13 @@ export interface ToolInvokedEvent extends BaseEvent {
   mcp_server: string;
   /** Parameters as a JSON-serializable object. May be redacted upstream. */
   parameters: Record<string, unknown>;
+  /**
+   * Working directory of the agent session at the time of this tool call.
+   * Populated from the hook payload (all major agents include cwd).
+   * Used by cwd_boundary rules to detect file access outside the project.
+   * Optional for backwards compatibility with existing event logs.
+   */
+  cwd?: string;
 }
 
 export interface ToolCompletedEvent extends BaseEvent {
@@ -106,6 +140,119 @@ export interface RiskDetectedEvent extends BaseEvent {
   rule_id: string;
 }
 
+
+// ---------------------------------------------------------------------------
+// Cloud API types (used by license-client, sync-encryptor, feature-extractor)
+// ---------------------------------------------------------------------------
+
+/** Sent by the local CLI to validate a subscription and retrieve tier info. */
+export interface LicenseValidateRequest {
+  api_token: string;
+  client_version: string;
+  interceptor_kind: InterceptorKind;
+}
+
+/** Returned by the cloud license endpoint. Cache locally for ttl_seconds. */
+export interface LicenseValidateResponse {
+  customer_id: string;
+  tier: "free" | "hosted" | "pro" | "enterprise";
+  /** Enabled feature flags for this subscription. */
+  features: string[];
+  /** AES-256-GCM key for decrypting advanced rule definitions (Pro+). */
+  rule_decryption_key?: string;
+  /** Presigned R2 URL for sync blob access (Hosted+). */
+  sync_endpoint?: string;
+  /** How long the caller may cache this response, in seconds. */
+  ttl_seconds: number;
+  /**
+   * Customer-specific HMAC salt for hashing tool names and MCP server
+   * names in feature batches. Server-issued for controlled rotation.
+   * Hex-encoded, 32 bytes.
+   */
+  hmac_salt?: string;
+}
+
+/**
+ * Anonymized, aggregated feature batch submitted by Pro+ customers.
+ * Never contains raw event content -- only counts, hashes, and scores.
+ */
+export interface FeatureBatch {
+  batch_id: string;
+  customer_id: string;
+  /** HMAC-SHA256 of the raw session_id. */
+  session_hash: string;
+  timestamp: string;
+  metrics: {
+    event_count: number;
+    tool_call_count: number;
+    unique_tool_count: number;
+    unique_mcp_server_count: number;
+    duration_ms: number;
+    /** Risk score computed locally before submission. */
+    risk_score: number;
+  };
+  timing: {
+    mean_tool_duration_ms: number;
+    median_tool_duration_ms: number;
+    p95_tool_duration_ms: number;
+  };
+  risk_summary: {
+    by_severity: Record<RiskSeverity, number>;
+    by_category: Record<string, number>;
+    rule_ids_fired: string[];
+  };
+  hashed_identifiers: {
+    /** HMAC-SHA256 of each tool name. */
+    tool_names: string[];
+    /** HMAC-SHA256 of each MCP server name. */
+    mcp_servers: string[];
+  };
+}
+
+/**
+ * Zero-knowledge encrypted sync payload. The cloud never holds the
+ * decryption key -- the passphrase-derived key stays client-side.
+ */
+export interface SyncPackage {
+  blob_id: string;
+  customer_id: string;
+  /** AES-256-GCM ciphertext of the serialized session data. */
+  encrypted_payload: ArrayBuffer;
+  /** Initialisation vector, fresh per sync operation. */
+  iv: Uint8Array;
+  /** Argon2id KDF salt stored alongside the blob. */
+  kdf_salt: Uint8Array;
+  payload_bytes: number;
+  sessions_included: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Cloud event types (emitted by local packages after a cloud operation)
+// ---------------------------------------------------------------------------
+
+export interface SyncPushedEvent extends BaseEvent {
+  event_type: "sync.pushed";
+  payload_bytes: number;
+  /** SHA-256 hex digest of the ciphertext, for tamper detection. */
+  ciphertext_hash: string;
+  sessions_included: string[];
+  cloud_receipt_id: string;
+}
+
+export interface FeatureExtractedEvent extends BaseEvent {
+  event_type: "feature.extracted";
+  batch_id: string;
+  /** SHA-256 hex digest of the batch JSON. */
+  feature_hash: string;
+  cloud_receipt_id: string;
+}
+
+export interface RuleUpdatedEvent extends BaseEvent {
+  event_type: "rule.updated";
+  rules_updated: string[];
+  source: "cloud" | "local";
+}
+
 /** Discriminated union of every event type accepted by the event log. */
 export type TraceEvent =
   | SessionStartedEvent
@@ -114,7 +261,10 @@ export type TraceEvent =
   | ToolCompletedEvent
   | FileReadEvent
   | FileWrittenEvent
-  | RiskDetectedEvent;
+  | RiskDetectedEvent
+  | SyncPushedEvent
+  | FeatureExtractedEvent
+  | RuleUpdatedEvent;
 
 export type EventType = TraceEvent["event_type"];
 
@@ -122,7 +272,7 @@ export type EventType = TraceEvent["event_type"];
  * The Interceptor interface. Every interception source is a factory that
  * returns an object conforming to this interface. The event log and
  * downstream packages only ever see this shape, so a Claude Code
- * hook-backed interceptor and a future Cowork desktop interceptor are
+ * hook-backed interceptor and a desktop interceptor are
  * interchangeable from the pipeline's point of view.
  *
  * Interceptors are async-only by design. They fire-and-forget events onto

@@ -70,7 +70,7 @@ test("shim writes SessionStart and PostToolUse events to the event log", async (
       session_id,
       cwd: "/tmp/repo",
       hook_event_name: "SessionStart",
-      user: "brian",
+      user: "case",
       mcp_servers: ["filesystem"],
     },
     env,
@@ -112,7 +112,7 @@ test("shim writes SessionStart and PostToolUse events to the event log", async (
 
   assert.equal(events[0].event_type, "session.started");
   assert.equal(events[0].interceptor, "claude-code-hook");
-  assert.equal(events[0].user, "brian");
+  assert.equal(events[0].user, "case");
 
   assert.equal(events[1].event_type, "tool.completed");
   assert.equal(events[1].tool_call_id, "tu-1");
@@ -149,6 +149,55 @@ test("shim exits 0 and stays silent on malformed stdin", async () => {
     });
     assert.equal(res.code, 0, "malformed input must not block Claude");
     assert.equal(res.stdout, "");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta when payload omits it", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-dur-"));
+  try {
+    const session_id = "sess-duration-test";
+    const env = { OMNODEX_HOME: home };
+
+    // PreToolUse -- no duration_ms in payload (normal Claude Code behaviour)
+    await runShim(
+      {
+        session_id,
+        cwd: "/tmp/repo",
+        hook_event_name: "PreToolUse",
+        tool_name: "Bash",
+        tool_use_id: "tu-dur-1",
+        tool_input: { command: "echo hello" },
+      },
+      env,
+    );
+
+    // Small artificial delay so the delta is measurable
+    await new Promise((r) => setTimeout(r, 20));
+
+    // PostToolUse -- no duration_ms either
+    await runShim(
+      {
+        session_id,
+        cwd: "/tmp/repo",
+        hook_event_name: "PostToolUse",
+        tool_name: "Bash",
+        tool_use_id: "tu-dur-1",
+        tool_input: { command: "echo hello" },
+        tool_response: "hello\n",
+        // intentionally omit duration_ms
+      },
+      env,
+    );
+
+    const events = await readSessionLog(home, session_id);
+    const completed = events.find((e) => e.event_type === "tool.completed");
+    assert.ok(completed, "expected a tool.completed event");
+    assert.ok(
+      completed.duration_ms > 0,
+      `duration_ms should be > 0 (got ${completed.duration_ms})`,
+    );
   } finally {
     await rm(home, { recursive: true, force: true });
   }

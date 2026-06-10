@@ -1,4 +1,9 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 /**
  * @omnodex/event-log
  *
@@ -61,8 +66,7 @@ export class EventLog {
     // Populate knownSessions from the existing index so we do not
     // re-register sessions on restart.
     const indexRaw = await fs.readFile(this.indexPath, "utf8").catch(() => "");
-    for (const line of indexRaw.split("
-")) {
+    for (const line of indexRaw.split("\n")) {
       if (!line.trim()) continue;
       try {
         const { session_id } = JSON.parse(line) as { session_id?: string };
@@ -83,8 +87,7 @@ export class EventLog {
       await this.registerSession(event.session_id);
     }
     const stream = this.openStreamFor(event.session_id);
-    const line = JSON.stringify(event) + "
-";
+    const line = JSON.stringify(event) + "\n";
     await new Promise<void>((resolve, reject) => {
       stream.write(line, (err) => (err ? reject(err) : resolve()));
     });
@@ -124,8 +127,7 @@ export class EventLog {
   async listSessions(): Promise<string[]> {
     const raw = await fs.readFile(this.indexPath, "utf8").catch(() => "");
     const out: string[] = [];
-    for (const line of raw.split("
-")) {
+    for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
       try {
         const { session_id } = JSON.parse(line) as { session_id?: string };
@@ -151,6 +153,62 @@ export class EventLog {
     );
   }
 
+  /**
+   * Tail a session file, yielding new events as they are appended.
+   *
+   * Polls the file every `pollMs` milliseconds (default 200 ms). If the
+   * file does not yet exist, keeps polling until it appears. Stops cleanly
+   * when `signal` is aborted.
+   *
+   * Events that were already in the file at the time of the first poll are
+   * yielded first (offset starts at 0), so callers should pre-seed their
+   * own deduplication state from the existing log before calling tail() if
+   * they want to skip historical events.
+   */
+  async *tail(
+    sessionId: string,
+    signal?: AbortSignal,
+    pollMs = 200,
+  ): AsyncGenerator<TraceEvent> {
+    const filePath = this.sessionFilePath(sessionId);
+    let offset = 0;
+    let partial = "";
+
+    while (!signal?.aborted) {
+      let newBytes: string | null = null;
+      try {
+        const stat = await fs.stat(filePath);
+        if (stat.size > offset) {
+          const buf = Buffer.alloc(stat.size - offset);
+          const fh = await fs.open(filePath, "r");
+          await fh.read(buf, 0, buf.length, offset);
+          await fh.close();
+          offset = stat.size;
+          newBytes = buf.toString("utf8");
+        }
+      } catch {
+        // File not yet created or a transient read error -- keep waiting.
+      }
+
+      if (newBytes) {
+        partial += newBytes;
+        const lines = partial.split("\n");
+        partial = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            yield JSON.parse(line) as TraceEvent;
+          } catch {
+            // Skip malformed lines (e.g. a partial write from a concurrent
+            // producer on the last line of the file).
+          }
+        }
+      } else {
+        await sleep(pollMs);
+      }
+    }
+  }
+
   /** Absolute path to the per-session JSONL file. */
   sessionFilePath(sessionId: string): string {
     return path.join(this.sessionsDir, `${sanitize(sessionId)}.jsonl`);
@@ -173,8 +231,7 @@ export class EventLog {
       session_id: sessionId,
       registered_at: new Date().toISOString(),
       file: path.relative(this.root, this.sessionFilePath(sessionId)),
-    }) + "
-";
+    }) + "\n";
     await fs.appendFile(this.indexPath, entry, { encoding: "utf8" });
   }
 
@@ -195,8 +252,7 @@ export class EventLog {
 
 function parseJsonl(raw: string): TraceEvent[] {
   const out: TraceEvent[] = [];
-  const lines = raw.split("
-");
+  const lines = raw.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line || !line.trim()) continue;
@@ -208,7 +264,7 @@ function parseJsonl(raw: string): TraceEvent[] {
       // prefer resilience over strictness.
       if (i !== lines.length - 1) {
         // Non-trailing parse failures are still swallowed in v0; we log
-        // them in a later milestone.
+        // them in a future version.
       }
     }
   }
@@ -217,6 +273,10 @@ function parseJsonl(raw: string): TraceEvent[] {
 
 function sanitize(sessionId: string): string {
   return sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function isNoEnt(err: unknown): boolean {

@@ -1,0 +1,25 @@
+{
+  "name": "@omnodex/feature-extractor",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Privacy-preserving feature extraction for Omnodex Pro tier. Reads the local SQLite read model, produces anonymized FeatureBatch objects with HMAC-SHA256 hashed identifiers, and submits to the cloud API. Raw tool names, file paths, credentials, and conversation content never leave the machine.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*",
+    "@omnodex/projection": "*",
+    "@omnodex/event-log": "*"
+  }
+}
