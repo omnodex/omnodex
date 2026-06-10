@@ -10,7 +10,8 @@
   },
   "scripts": {
     "build": "tsc -b && cp src/dashboard.html dist/dashboard.html",
-    "clean": "rm -rf dist",
+    "bundle": "npm run build && node bundle.config.mjs",
+    "clean": "rm -rf dist bundle/omnodex-bundle.cjs bundle/omnodex.cjs bundle/dashboard.html",
     "start": "node dist/index.js",
     "spike": "node dist/index.js spike",
     "dashboard": "node dist/index.js dashboard",
@@ -26,5 +27,8 @@
     "@omnodex/mcp-proxy": "*",
     "@omnodex/projection": "*",
     "@omnodex/shared": "*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
   }
 }
