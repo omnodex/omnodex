@@ -37,10 +37,10 @@ await build({
 });
 
 // CJS launcher with shebang
-writeFileSync("bundle/omnodex.cjs", `#!/usr/bin/env node
-require("./omnodex-bundle.cjs");
-`);
-chmodSync("bundle/omnodex.cjs", 0o755);
+import { mkdirSync } from "fs";
+mkdirSync("bundle/bin", { recursive: true });
+writeFileSync("bundle/bin/omnodex", `#!/usr/bin/env node\nrequire("../omnodex-bundle.cjs");\n`);
+chmodSync("bundle/bin/omnodex", 0o755);
 
 // Copy dashboard.html into the bundle directory
 import { copyFileSync } from "fs";
