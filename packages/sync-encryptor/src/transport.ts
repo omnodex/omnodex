@@ -10,7 +10,15 @@
  * Pluggable transport for pushing encrypted sync blobs to the cloud.
  * The default HttpSyncTransport calls the Omnodex cloud API; tests and
  * offline mode can substitute a mock or file-backed implementation.
+ *
+ * Wire format: the blob is uploaded as a single `application/octet-stream`
+ * body -- a v1 self-describing envelope (magic | version | salt | iv |
+ * ciphertext, see envelope.ts). The salt and IV travel inside the blob so
+ * the cloud stores opaque bytes and the browser dashboard can decrypt from
+ * the pulled blob alone. Session IDs ride in the X-Omnodex-Sessions header.
  */
+
+import { encodeEnvelope } from "./envelope.js";
 
 export interface SyncPushRequest {
   /** Opaque customer identifier. */
@@ -64,14 +72,11 @@ export class HttpSyncTransport implements SyncTransport {
 
   async push(req: SyncPushRequest): Promise<SyncPushResponse> {
     const url = this.baseUrl + "/api/v1/sync/push";
-    const body = JSON.stringify({
-      customer_id: req.customer_id,
-      encrypted_payload: base64Encode(req.encrypted_payload),
-      iv: base64Encode(req.iv),
-      kdf_salt: base64Encode(req.kdf_salt),
-      payload_bytes: req.payload_bytes,
-      sessions_included: req.sessions_included,
-    });
+
+    // Pack salt + IV + ciphertext into a self-describing v1 envelope.
+    // customer_id is derived server-side from the bearer token; payload_bytes
+    // is recomputed server-side from the stored body.
+    const envelope = encodeEnvelope(req.kdf_salt, req.iv, req.encrypted_payload);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -80,10 +85,14 @@ export class HttpSyncTransport implements SyncTransport {
       const res = await fetch(url, {
         method: "PUT",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/octet-stream",
           "Authorization": "Bearer " + this.apiToken,
+          "X-Omnodex-Sessions": JSON.stringify(req.sessions_included),
         },
-        body,
+        // BodyInit typings don't accept a Uint8Array view; encodeEnvelope
+        // returns a fresh full-size buffer, so its ArrayBuffer is exactly
+        // the envelope bytes.
+        body: envelope.buffer as ArrayBuffer,
         signal: controller.signal,
       });
 
@@ -100,8 +109,4 @@ export class HttpSyncTransport implements SyncTransport {
       clearTimeout(timer);
     }
   }
-}
-
-function base64Encode(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("base64");
 }
