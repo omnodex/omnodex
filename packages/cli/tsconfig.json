@@ -32,6 +32,9 @@
     },
     {
       "path": "../mcp-proxy"
+    },
+    {
+      "path": "../license-client"
     }
   ]
 }
