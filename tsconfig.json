@@ -21,6 +21,21 @@
     },
     {
       "path": "./packages/mcp-proxy"
+    },
+    {
+      "path": "./packages/analyzer"
+    },
+    {
+      "path": "./packages/antigravity-provider"
+    },
+    {
+      "path": "./packages/license-client"
+    },
+    {
+      "path": "./packages/sync-encryptor"
+    },
+    {
+      "path": "./packages/feature-extractor"
     }
   ]
 }

@@ -47,6 +47,20 @@ function makeMockServer() {
   };
 }
 
+/**
+ * Poll until predicate() is true or the timeout elapses. Used instead of a
+ * fixed delay when waiting for the async file-tail to project appended events,
+ * so the test is deterministic rather than racing a hard-coded sleep.
+ */
+async function waitFor(predicate, timeoutMs = 2000, intervalMs = 10) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return false;
+}
+
 function base(sessionId, eventId, seq) {
   return {
     schema_version: 1,
@@ -241,8 +255,14 @@ test("tailSession: projects new events and runs detection", async () => {
   const sensitiveEvent = sensitiveToolInvoked("sess_ts2", 1);
   await log.append(sensitiveEvent);
 
-  // Wait for the tail to pick it up and run detection, then abort
-  await new Promise((r) => setTimeout(r, 150));
+  // Wait for the tail to pick it up and run detection, then abort.
+  // Poll for the expected broadcasts instead of a fixed delay so the test
+  // does not race the async file-tail under load (CI, slow disks, etc.).
+  await waitFor(
+    () =>
+      server.messages.some((m) => m.type === "tool_call.inserted") &&
+      server.messages.some((m) => m.type === "risk_event.inserted"),
+  );
   ctrl.abort();
   await tailPromise;
 
