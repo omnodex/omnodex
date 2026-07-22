@@ -1,5 +1,7 @@
 # Omnodex
 
+[![CI](https://github.com/omnodex/omnodex/actions/workflows/ci.yml/badge.svg)](https://github.com/omnodex/omnodex/actions/workflows/ci.yml)
+
 **Security and observability for AI agent execution.** Omnodex captures every tool call, credential use, file access, and third-party connection made by an AI agent - and surfaces it for human review.
 
 Core pipeline: **Intercept -> Trace -> Analyze -> Report.** Zero token overhead to the agent session.
