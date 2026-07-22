@@ -119,7 +119,7 @@ export class SqliteReadModelStore implements ReadModelStore {
   private migrate(): void {
     const db = this.requireDb();
 
-    // Migration 1: add source_root column (2026-06-04, FS-005 Level 1).
+    // Migration 1: add source_root column (2026-06-04).
     // SCHEMA_SQL includes the column for new DBs. Existing DBs need ALTER TABLE.
     const cols = db.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>;
     const hasSourceRoot = cols.some((c) => c.name === "source_root");

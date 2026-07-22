@@ -1,4 +1,4 @@
-// T027 validation: full sync-encryptor pipeline
+// Validation: full sync-encryptor pipeline
 //
 // Tests the complete zero-knowledge sync flow: serialize read model,
 // encrypt with Argon2id-derived key, push to mock transport, emit audit

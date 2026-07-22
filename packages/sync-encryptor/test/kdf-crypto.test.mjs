@@ -1,4 +1,4 @@
-// T025 validation: Argon2id KDF + AES-256-GCM pipeline
+// Validation: Argon2id KDF + AES-256-GCM pipeline
 //
 // Validates that the full zero-knowledge sync encryption pipeline works in
 // Node.js 22 using Argon2id (hash-wasm) for key derivation and the built-in
@@ -8,7 +8,7 @@
 //
 // hash-wasm is the same WASM bundle used for browser-side KDF in the hosted
 // dashboard. The deriveKey() function here is the intended final implementation
-// for packages/sync-encryptor (T027) -- not a stand-in.
+// for packages/sync-encryptor -- not a stand-in.
 //
 // Argon2id parameters chosen for the local CLI context:
 //   memorySize: 64 MB  -- OWASP 2023 minimum for interactive login
@@ -16,7 +16,7 @@
 //   parallelism: 1     -- single-threaded; matches browser and CF Worker constraints
 //   hashLength: 32     -- 256 bits for AES-256-GCM
 //
-// For browser dashboard use (T028), memorySize may be tuned down to 16-32 MB
+// For browser dashboard use, memorySize may be tuned down to 16-32 MB
 // depending on observed latency on low-end hardware. Same interface, just a
 // lower m_cost constant.
 //
@@ -31,7 +31,7 @@ const { subtle } = webcrypto;
 const getRandomValues = (arr) => webcrypto.getRandomValues(arr);
 
 // ---------------------------------------------------------------------------
-// KDF + AES-256-GCM helpers (intended final API for T027 sync-encryptor)
+// KDF + AES-256-GCM helpers (intended final API for sync-encryptor)
 // ---------------------------------------------------------------------------
 
 const KDF_PARAMS = {
@@ -112,7 +112,7 @@ async function exportKeyBytes(key) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("Argon2id KDF + AES-256-GCM pipeline (T025)", () => {
+describe("Argon2id KDF + AES-256-GCM pipeline", () => {
   it("deriveKey is deterministic: same passphrase + salt -> same key bytes", async () => {
     const salt = randomSalt();
     const b1 = await exportKeyBytes(await deriveKey("correct-horse-battery-staple", salt));
@@ -183,7 +183,7 @@ describe("Argon2id KDF + AES-256-GCM pipeline (T025)", () => {
     const ms = (performance.now() - t0).toFixed(1);
     console.log(`    Argon2id (64MB, 3 iter, parallelism=1): ${ms}ms`);
     // Not an assertion -- logged so we can document expected latency and
-    // decide if we need to tune m_cost down for the browser dashboard (T028).
+    // decide if we need to tune m_cost down for the browser dashboard.
     assert.ok(true);
   });
 });

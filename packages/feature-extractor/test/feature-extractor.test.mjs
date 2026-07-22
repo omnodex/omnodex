@@ -1,4 +1,4 @@
-// T038 validation: feature-extractor pipeline
+// Validation: feature-extractor pipeline
 //
 // Tests the full privacy-preserving feature extraction flow: read from
 // the read model, produce anonymized FeatureBatch with HMAC-hashed

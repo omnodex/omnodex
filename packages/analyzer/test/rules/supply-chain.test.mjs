@@ -239,7 +239,7 @@ test("DEP_CONFUSION: does NOT fire for curl to a file (no pipe to shell)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// RULE_SUPPLY_CHAIN_HOOK_CONFIG_WRITE (T092)
+// RULE_SUPPLY_CHAIN_HOOK_CONFIG_WRITE
 // ---------------------------------------------------------------------------
 
 import {
@@ -289,7 +289,7 @@ test("HOOK_CONFIG_WRITE: does NOT fire for unrelated file with hook content", ()
 });
 
 // ---------------------------------------------------------------------------
-// RULE_SUPPLY_CHAIN_MCP_URL_MUTATION (T093)
+// RULE_SUPPLY_CHAIN_MCP_URL_MUTATION
 // ---------------------------------------------------------------------------
 
 const mcpUrlEngine = new RuleEngine([RULE_SUPPLY_CHAIN_MCP_URL_MUTATION]);
