@@ -12,6 +12,17 @@ export { deriveKey, encrypt, decrypt, sha256Hex, randomSalt, randomIv, KDF_PARAM
 export { serializeReadModel, encodePayload } from "./serializer.js";
 export type { SyncPayload } from "./serializer.js";
 
+export {
+  encodeEnvelope,
+  decodeEnvelope,
+  ENVELOPE_MAGIC,
+  ENVELOPE_VERSION,
+  SALT_LEN,
+  IV_LEN,
+  HEADER_LEN,
+} from "./envelope.js";
+export type { DecodedEnvelope } from "./envelope.js";
+
 export { HttpSyncTransport } from "./transport.js";
 export type {
   SyncTransport,
