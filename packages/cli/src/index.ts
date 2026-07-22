@@ -52,6 +52,7 @@ import { resolveRoots, parseRootsFlag } from "./config.js";
 import { detectRisks } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
+import { SyncEncryptor, HttpSyncTransport } from "@omnodex/sync-encryptor";
 // ValidateResult type available if needed for future use
 
 interface Paths {
@@ -1009,6 +1010,88 @@ async function cmdLicense(args: string[]): Promise<void> {
   }
 }
 
+/** Read a `--flag value` pair from args. */
+function readFlagValue(args: string[], name: string): string | undefined {
+  const i = args.indexOf(name);
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+}
+
+/**
+ * Encrypt the local read model and push it to the cloud (Hosted tier+).
+ *
+ *   omnodex sync [--token <omx_...>] [--passphrase <phrase>]
+ *                [--api <url>] [--sessions id1,id2]
+ *
+ * Token/passphrase/api also read from OMNODEX_API_TOKEN,
+ * OMNODEX_SYNC_PASSPHRASE, OMNODEX_API_URL. The passphrase encrypts data
+ * client-side and is never sent to the server.
+ */
+async function cmdSync(args: string[]): Promise<void> {
+  const apiToken = readFlagValue(args, "--token") ?? process.env.OMNODEX_API_TOKEN ?? "";
+  const apiUrl = readFlagValue(args, "--api") ?? process.env.OMNODEX_API_URL ?? "https://api.omnodex.com";
+  const passphrase = readFlagValue(args, "--passphrase") ?? process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
+
+  if (!apiToken) {
+    console.error("[sync] no API token. Set OMNODEX_API_TOKEN or pass --token <omx_...>.");
+    process.exitCode = 1;
+    return;
+  }
+  if (!passphrase) {
+    console.error("[sync] no passphrase. Set OMNODEX_SYNC_PASSPHRASE or pass --passphrase <phrase>.");
+    console.error("        It encrypts your data client-side and is never sent to the server.");
+    process.exitCode = 1;
+    return;
+  }
+
+  // Validate the license + tier before doing any work.
+  const license = await validateLicense({ apiBaseUrl: apiUrl, apiToken });
+  const { customer_id, tier, features } = license.license;
+  if (!features.includes("encrypted_sync")) {
+    console.error(`[sync] tier "${tier}" does not include encrypted sync. Upgrade to Hosted or above.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const paths = resolvePaths();
+  const log = new EventLog({ root: paths.eventLogRoot });
+  await log.init();
+  const store = await openStore(paths);
+  // Rebuild the read model so we sync current data (replay is idempotent).
+  await new Projector(store).replay(iterateLog(log));
+
+  // Reuse a persisted KDF salt across syncs (it is also embedded in each blob).
+  const saltPath = path.join(paths.home, "sync-salt.bin");
+  let kdfSalt: Uint8Array | undefined;
+  try {
+    kdfSalt = new Uint8Array(await fs.readFile(saltPath));
+  } catch {
+    // first sync: SyncEncryptor generates a fresh salt
+  }
+
+  const sessionsFlag = readFlagValue(args, "--sessions");
+  const sessionIds = sessionsFlag
+    ? sessionsFlag.split(",").map((s) => s.trim()).filter(Boolean)
+    : undefined;
+
+  const transport = new HttpSyncTransport({ baseUrl: apiUrl, apiToken });
+  const encryptor = new SyncEncryptor({
+    passphrase,
+    customerId: customer_id,
+    transport,
+    store,
+    eventLog: log,
+    kdfSalt,
+  });
+
+  console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
+  const result = await encryptor.sync(sessionIds);
+  await fs.writeFile(saltPath, result.kdfSalt);
+  console.log(
+    `[sync] done. blob=${result.blobId} sessions=${result.sessionsIncluded.length} bytes=${result.payloadBytes}`,
+  );
+  await store.close();
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
@@ -1045,6 +1128,9 @@ async function main(): Promise<void> {
     case "license":
       await cmdLicense(rest);
       return;
+    case "sync":
+      await cmdSync(rest);
+      return;
     case undefined:
     case "help":
     case "--help":
@@ -1072,6 +1158,9 @@ commands:
   status [project]   show which Omnodex hooks are installed in a project.
   license            show current license tier and features.
                      Subcommands: clear (remove cached license).
+  sync               encrypt the local read model and push it to the cloud.
+                     Requires OMNODEX_API_TOKEN + OMNODEX_SYNC_PASSPHRASE
+                     (or --token/--passphrase). Hosted tier or above.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       run a simulated session through the full pipeline.

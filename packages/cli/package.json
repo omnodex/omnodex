@@ -26,7 +26,8 @@
     "@omnodex/license-client": "*",
     "@omnodex/mcp-proxy": "*",
     "@omnodex/projection": "*",
-    "@omnodex/shared": "*"
+    "@omnodex/shared": "*",
+    "@omnodex/sync-encryptor": "*"
   },
   "devDependencies": {
     "esbuild": "^0.28.0"

@@ -35,6 +35,9 @@
     },
     {
       "path": "../license-client"
+    },
+    {
+      "path": "../sync-encryptor"
     }
   ]
 }
