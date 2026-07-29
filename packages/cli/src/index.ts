@@ -52,7 +52,13 @@ import { resolveRoots, parseRootsFlag } from "./config.js";
 import { detectRisks } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
-import { SyncEncryptor, HttpSyncTransport } from "@omnodex/sync-encryptor";
+import {
+  SyncEncryptor,
+  HttpSyncTransport,
+  StreamingTransport,
+  deriveStreamingKey,
+  computeKeyId,
+} from "@omnodex/sync-encryptor";
 // ValidateResult type available if needed for future use
 
 interface Paths {
@@ -387,28 +393,63 @@ async function cmdDashboard(args: string[]): Promise<void> {
     console.log(`[dashboard] features: ${licenseResult.license.features.filter((f: string) => !["community_rules", "local_dashboard", "local_event_log"].includes(f)).join(", ")}`);
   }
 
+  // --- Cloud streaming setup (auto-enabled when credentials are configured) ---
+  let cloudTransport: StreamingTransport | null = null;
+  const streamApiToken = process.env.OMNODEX_API_TOKEN ?? "";
+  const streamPassphrase = process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
+  const streamApiUrl = process.env.OMNODEX_API_URL ?? "https://api.omnodex.com";
+
+  if (streamApiToken && streamPassphrase) {
+    const features = licenseResult.license.features;
+    if (features.includes("live_streaming")) {
+      try {
+        const customerId = licenseResult.license.customer_id;
+        console.log("[dashboard] deriving streaming key...");
+        const streamKey = await deriveStreamingKey(streamPassphrase, customerId);
+        const keyId = await computeKeyId(streamKey);
+        cloudTransport = new StreamingTransport({
+          apiBase: streamApiUrl,
+          apiToken: streamApiToken,
+          keyId,
+          streamingKey: streamKey,
+        });
+        console.log(`[dashboard] cloud streaming enabled (key_id=${keyId})`);
+      } catch (err) {
+        console.warn("[dashboard] cloud streaming setup failed:", err);
+      }
+    } else {
+      console.log("[dashboard] cloud streaming not available on current tier");
+    }
+  } else {
+    console.log("[dashboard] cloud streaming disabled (no API token/passphrase)");
+  }
+
   console.log(`[dashboard] open http://localhost:${port} in your browser`);
   console.log(`[dashboard] streaming detection active -- press Ctrl+C to stop`);
 
   // --- Start streaming detect loop ---
-  // Tails each root\'s session files, projects new events incrementally, runs
+  // Tails each root's session files, projects new events incrementally, runs
   // the rule engine on tool.invoked events, and pushes updates to SSE clients.
   const streamingRoots: StreamingRoot[] = logs.map(({ rootPath, log }) => ({
     rootPath,
     log,
   }));
-  const { stop } = startStreamingLoop(streamingRoots, store, projector, server);
+  const { stop } = startStreamingLoop(streamingRoots, store, projector, server, cloudTransport);
 
   // --- Shutdown handling ---
   await new Promise<void>((resolve) => {
     const shutdown = (): void => {
       stop();
-      // Close all event logs.
-      for (const { log } of logs) {
-        log.close().catch(() => {});
-      }
-      server.close();
-      resolve();
+      // Flush any buffered cloud events before shutting down.
+      const transportFlush = cloudTransport?.stop().catch(() => {}) ?? Promise.resolve();
+      transportFlush.finally(() => {
+        // Close all event logs.
+        for (const { log } of logs) {
+          log.close().catch(() => {});
+        }
+        server.close();
+        resolve();
+      });
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);

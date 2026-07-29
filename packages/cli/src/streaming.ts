@@ -36,6 +36,7 @@ import { RuleEngine, RuleRegistry } from "@omnodex/analyzer";
 import type { RiskDetectedEvent, TraceEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 import type { DashboardServer } from "./dashboard-server.js";
+import type { StreamingTransport } from "@omnodex/sync-encryptor";
 
 // ---------------------------------------------------------------------------
 // broadcastProjection
@@ -130,6 +131,7 @@ export async function tailSession(
   outerSignal: AbortSignal,
   replayHistory = false,
   sourceRoot: string | null = null,
+  cloudTransport: StreamingTransport | null = null,
 ): Promise<void> {
   // Create a child AbortController so we can stop the tail when the outer
   // signal fires.
@@ -173,6 +175,7 @@ export async function tailSession(
       // Project the event into the read model and broadcast the update.
       await projector.apply(event);
       await broadcastProjection(event, store, server);
+      cloudTransport?.push(event).catch(() => {}); // fire-and-forget
 
       // Detection: only tool.invoked events carry the parameter data that
       // the rule conditions operate on.
@@ -207,6 +210,7 @@ export async function tailSession(
           await log.append(riskEvent);
           await projector.apply(riskEvent);
           await broadcastProjection(riskEvent, store, server);
+          cloudTransport?.push(riskEvent).catch(() => {}); // fire-and-forget
         }
       }
     }
@@ -250,6 +254,7 @@ export function startStreamingLoop(
   store: ReadModelStore,
   projector: Projector,
   server: DashboardServer,
+  cloudTransport: StreamingTransport | null = null,
 ): { stop: () => void } {
   // Normalise: single EventLog → one-element roots array.
   const roots: StreamingRoot[] = Array.isArray(logOrRoots)
@@ -276,7 +281,7 @@ export function startStreamingLoop(
     // NOTE: setSourceRoot is per-apply, but since tailSession is per-session
     // and each session belongs to exactly one root, we set it before launching.
     // The projector's sourceRoot is set before each apply inside tailSession.
-    tailSession(sessionId, log, store, projector, server, engine, ctrl.signal, replayHistory, rootPath).catch(
+    tailSession(sessionId, log, store, projector, server, engine, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
       (err: unknown) => {
         console.error(`[stream] tail error for ${sessionId} (${rootPath}):`, err);
       },

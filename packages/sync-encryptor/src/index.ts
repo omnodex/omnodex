@@ -30,3 +30,6 @@ export type {
   SyncPushResponse,
   HttpSyncTransportOptions,
 } from "./transport.js";
+
+export { StreamingTransport } from "./streaming-transport.js";
+export type { StreamingTransportOptions } from "./streaming-transport.js";
