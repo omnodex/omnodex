@@ -103,3 +103,89 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
+
+
+// ---------------------------------------------------------------------------
+// Streaming key derivation (HKDF from Argon2id master key)
+// ---------------------------------------------------------------------------
+
+/** Fixed salt for the Argon2id step of streaming key derivation. */
+const STREAMING_FIXED_SALT = new TextEncoder().encode('omnodex-stream-v1');
+
+/** HKDF info string for streaming key extraction. */
+const STREAMING_INFO = new TextEncoder().encode('omnodex-stream-aes256gcm-v1');
+
+/**
+ * HKDF-SHA256: extract-then-expand per RFC 5869.
+ * Works in both Node.js (webcrypto) and browser (globalThis.crypto).
+ */
+async function hkdfDerive(
+  ikm: Uint8Array,
+  salt: Uint8Array,
+  info: Uint8Array,
+  length: number,
+): Promise<Uint8Array> {
+  const baseKey = await subtle.importKey(
+    "raw",
+    ikm,
+    "HKDF",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await subtle.deriveBits(
+    { name: "HKDF", hash: "SHA-256", salt, info },
+    baseKey,
+    length * 8,
+  );
+  return new Uint8Array(bits);
+}
+
+/**
+ * Derive a 256-bit AES-GCM streaming key from passphrase + customer ID.
+ *
+ * Two-stage derivation avoids running expensive Argon2id per event:
+ *   1. Argon2id(passphrase, fixed_salt) → master key material (slow, once)
+ *   2. HKDF-SHA256(master, SHA256(customerId), info) → streaming key (fast)
+ *
+ * Both CLI and browser derive the same key independently.
+ */
+export async function deriveStreamingKey(
+  passphrase: string,
+  customerId: string,
+): Promise<AesGcmKey> {
+  // Stage 1: Argon2id with fixed salt → raw key material
+  const masterBytes = await argon2id({
+    password: passphrase,
+    salt: STREAMING_FIXED_SALT,
+    ...KDF_PARAMS,
+  });
+
+  // Stage 2: HKDF-SHA256 with customer-specific salt
+  const customerSalt = new Uint8Array(
+    await subtle.digest("SHA-256", new TextEncoder().encode(customerId)),
+  );
+  const streamKeyBytes = await hkdfDerive(
+    masterBytes as Uint8Array,
+    customerSalt,
+    STREAMING_INFO,
+    32,
+  );
+
+  return subtle.importKey(
+    "raw",
+    streamKeyBytes,
+    { name: "AES-GCM", length: 256 },
+    true, // extractable — needed for computeKeyId
+    ["encrypt", "decrypt"],
+  );
+}
+
+/**
+ * Compute the key_id for a streaming key: first 8 hex chars of SHA-256.
+ * Used by CLI (in event push) and browser (to detect key mismatch).
+ */
+export async function computeKeyId(key: AesGcmKey): Promise<string> {
+  const raw = await subtle.exportKey("raw", key);
+  const hash = await sha256Hex(new Uint8Array(raw));
+  return hash.slice(0, 8);
+}

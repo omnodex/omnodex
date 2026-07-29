@@ -63,6 +63,8 @@ omnodex dashboard
 
 The dashboard shows a connection graph, credential ledger, risk events, and a full event timeline with click-through detail. It updates in real time via SSE - risks are detected and pushed to the browser as each tool call arrives.
 
+**Cloud streaming:** If you have an Omnodex Cloud account, the dashboard can push events to the hosted dashboard at `dashboard.omnodex.com` in real time. Set `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` as environment variables and events are encrypted end-to-end (AES-256-GCM) and streamed to your cloud dashboard automatically. No raw data ever leaves your machine unencrypted.
+
 **Multi-source aggregation:** If you run multiple agent surfaces simultaneously (e.g. Cowork on Windows + Claude Code in WSL), the dashboard can tail all of them at once. Configure additional roots in `~/.omnodex/config.json`:
 
 ```json
@@ -348,7 +350,7 @@ node --test \
 cd packages/codex-provider && node --test test/**/*.test.mjs
 ```
 
-297 tests across 31 test files. One pre-existing timing flake in the CLI streaming suite (`tailSession`) that only manifests in the combined run due to resource contention - it passes reliably when run in isolation.
+One pre-existing timing flake in the CLI streaming suite (`tailSession`) that only manifests in the combined run due to resource contention - it passes reliably when run in isolation.
 
 ---
 
@@ -370,13 +372,14 @@ packages/
   event-log/               Append-only JSONL event log (source of truth)
   projection/              Projector + ReadModelStore (in-memory and SQLite)
   analyzer/                Rule engine: RuleDefinition, RuleEngine, RuleRegistry,
-                           19 community rules across 8 categories, detectRisks()
+                           community rules across multiple categories, detectRisks()
   hooks-provider/          ClaudeCodeInterceptor + MockInterceptor + claude-hook-shim
   codex-provider/          CodexInterceptor + codex-hook-shim
   antigravity-provider/    AntigravityInterceptor + antigravity-hook-shim
   mcp-proxy/               MCP proxy interceptor (sits between agent and upstream
                            MCP servers)
-  sync-encryptor/          Zero-knowledge AES-256-GCM sync encryption (Argon2id KDF)
+  sync-encryptor/          Zero-knowledge AES-256-GCM sync encryption (Argon2id KDF),
+                           streaming key derivation (HKDF), StreamingTransport
   feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
   cli/                     omnodex CLI: install, uninstall, status, spike,
