@@ -65,7 +65,17 @@ The dashboard shows a connection graph, credential ledger, risk events, and a fu
 
 **Cloud streaming:** If you have an Omnodex Cloud account, the dashboard can push events to the hosted dashboard at `dashboard.omnodex.com` in real time. Set `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` as environment variables and events are encrypted end-to-end (AES-256-GCM) and streamed to your cloud dashboard automatically. No raw data ever leaves your machine unencrypted.
 
-**Multi-source aggregation:** If you run multiple agent surfaces simultaneously (e.g. Cowork on Windows + Claude Code in WSL), the dashboard can tail all of them at once. Configure additional roots in `~/.omnodex/config.json`:
+**Multi-machine sync:** When you run `omnodex sync` from multiple machines, each machine is identified automatically by a stable ID derived from its hostname. The hosted dashboard fetches and decrypts blobs from all machines, merging them into a single unified view with a machine selector dropdown. No extra configuration is needed — just run `omnodex sync` on each machine with the same API token and passphrase. To give a machine a human-readable name, add a label to `~/.omnodex/config.json`:
+
+```json
+{
+  "machine": {
+    "label": "Work Laptop"
+  }
+}
+```
+
+**Multi-source aggregation (local):** If you run multiple agent surfaces simultaneously on the same machine (e.g. Cowork on Windows + Claude Code in WSL), the local dashboard can tail all of them at once. Configure additional roots in `~/.omnodex/config.json`:
 
 ```json
 {
