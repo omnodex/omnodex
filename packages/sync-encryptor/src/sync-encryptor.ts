@@ -47,6 +47,10 @@ export interface SyncEncryptorOptions {
    * sync and returned for the caller to persist.
    */
   kdfSalt?: Uint8Array;
+  /** Stable machine identifier (SHA-256 prefix of hostname). */
+  machineId: string;
+  /** Optional human-readable machine label. */
+  machineLabel?: string;
 }
 
 export interface SyncResult {
@@ -60,6 +64,8 @@ export interface SyncResult {
   payloadBytes: number;
   /** The KDF salt used. Persist this for subsequent syncs. */
   kdfSalt: Uint8Array;
+  /** Machine identifier included in this sync. */
+  machineId: string;
 }
 
 export class SyncEncryptor {
@@ -69,6 +75,8 @@ export class SyncEncryptor {
   private readonly store: ReadModelStore;
   private readonly eventLog: EventLog;
   private readonly interceptorKind: InterceptorKind;
+  private readonly machineId: string;
+  private readonly machineLabel: string | undefined;
   private kdfSalt: Uint8Array;
 
   constructor(options: SyncEncryptorOptions) {
@@ -78,6 +86,8 @@ export class SyncEncryptor {
     this.store = options.store;
     this.eventLog = options.eventLog;
     this.interceptorKind = options.interceptorKind ?? "analyzer";
+    this.machineId = options.machineId;
+    this.machineLabel = options.machineLabel;
     this.kdfSalt = options.kdfSalt ?? randomSalt();
   }
 
@@ -107,6 +117,8 @@ export class SyncEncryptor {
       kdf_salt: this.kdfSalt,
       payload_bytes: plaintext.length,
       sessions_included: payload.session_ids,
+      machine_id: this.machineId,
+      machine_label: this.machineLabel,
     });
 
     // 5. Emit audit event
@@ -123,6 +135,8 @@ export class SyncEncryptor {
       ciphertext_hash: ciphertextHash,
       sessions_included: payload.session_ids,
       cloud_receipt_id: response.blob_id,
+      machine_id: this.machineId,
+      machine_label: this.machineLabel,
     };
     await this.eventLog.append(auditEvent);
 
@@ -132,6 +146,7 @@ export class SyncEncryptor {
       sessionsIncluded: payload.session_ids,
       payloadBytes: plaintext.length,
       kdfSalt: this.kdfSalt,
+      machineId: this.machineId,
     };
   }
 

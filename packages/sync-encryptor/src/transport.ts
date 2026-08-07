@@ -33,6 +33,10 @@ export interface SyncPushRequest {
   payload_bytes: number;
   /** Session IDs covered by this sync. */
   sessions_included: string[];
+  /** Stable machine identifier (SHA-256 prefix of hostname). */
+  machine_id: string;
+  /** Optional human-readable machine label. */
+  machine_label?: string;
 }
 
 export interface SyncPushResponse {
@@ -88,6 +92,8 @@ export class HttpSyncTransport implements SyncTransport {
           "Content-Type": "application/octet-stream",
           "Authorization": "Bearer " + this.apiToken,
           "X-Omnodex-Sessions": JSON.stringify(req.sessions_included),
+          "X-Omnodex-Machine-Id": req.machine_id,
+          ...(req.machine_label ? { "X-Omnodex-Machine-Label": req.machine_label } : {}),
         },
         // BodyInit typings don't accept a Uint8Array view; encodeEnvelope
         // returns a fresh full-size buffer, so its ArrayBuffer is exactly

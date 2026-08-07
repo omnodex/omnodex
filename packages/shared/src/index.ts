@@ -224,6 +224,10 @@ export interface SyncPackage {
   kdf_salt: Uint8Array;
   payload_bytes: number;
   sessions_included: string[];
+  /** Stable identifier for the source machine (SHA-256 of hostname). */
+  machine_id: string;
+  /** Optional human-readable label (e.g. "Work Laptop"). */
+  machine_label?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,6 +241,10 @@ export interface SyncPushedEvent extends BaseEvent {
   ciphertext_hash: string;
   sessions_included: string[];
   cloud_receipt_id: string;
+  /** Source machine identifier. */
+  machine_id: string;
+  /** Optional human-readable machine label. */
+  machine_label?: string;
 }
 
 export interface FeatureExtractedEvent extends BaseEvent {
