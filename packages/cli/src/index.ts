@@ -58,6 +58,8 @@ import {
   StreamingTransport,
   deriveStreamingKey,
   computeKeyId,
+  computeMachineId,
+  readMachineLabel,
 } from "@omnodex/sync-encryptor";
 // ValidateResult type available if needed for future use
 
@@ -1114,6 +1116,9 @@ async function cmdSync(args: string[]): Promise<void> {
     ? sessionsFlag.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
+  const machineId = computeMachineId();
+  const machineLabel = await readMachineLabel(paths.home);
+
   const transport = new HttpSyncTransport({ baseUrl: apiUrl, apiToken });
   const encryptor = new SyncEncryptor({
     passphrase,
@@ -1122,13 +1127,15 @@ async function cmdSync(args: string[]): Promise<void> {
     store,
     eventLog: log,
     kdfSalt,
+    machineId,
+    machineLabel,
   });
 
   console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
   const result = await encryptor.sync(sessionIds);
   await fs.writeFile(saltPath, result.kdfSalt);
   console.log(
-    `[sync] done. blob=${result.blobId} sessions=${result.sessionsIncluded.length} bytes=${result.payloadBytes}`,
+    `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.payloadBytes}`,
   );
   await store.close();
 }
