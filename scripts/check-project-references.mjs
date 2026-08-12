@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // check-project-references.mjs
 //
-// CI guard (ENG-171): asserts every package's `@omnodex/*` runtime dependency
+// CI guard: asserts every package's `@omnodex/*` runtime dependency
 // has a matching `tsconfig.json` project reference. Without a reference, a
 // clean `tsc -b` build can fail with TS2307 ("Cannot find module") because
 // the dependency's `.d.ts` output was never built first -- the failure only

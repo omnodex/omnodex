@@ -6,3 +6,6 @@ coverage/
 *.db
 *.db-journal
 .DS_Store
+
+# Generated hook configs (machine-specific, created by omnodex install)
+demo/project/.claude/settings.local.json
