@@ -94,7 +94,10 @@ async function main(): Promise<number> {
     // Codex does not send duration_ms, so we measure it ourselves.
     if (payload.hook_event_name === "PreToolUse") {
       await saveInvokeTime(payload.tool_use_id);
-    } else if (payload.hook_event_name === "PostToolUse") {
+    } else if (
+      payload.hook_event_name === "PostToolUse" ||
+      payload.hook_event_name === "PostToolUseFailure"
+    ) {
       if (!payload.duration_ms) {
         const computed = await consumeInvokeTime(payload.tool_use_id);
         if (computed !== null) {

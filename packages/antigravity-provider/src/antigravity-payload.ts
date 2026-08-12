@@ -12,9 +12,9 @@
  * Antigravity payload schema uses camelCase fields and nests tool data under
  * a `toolCall` object.
  *
- * Supported events: PreToolUse, PostToolUse, Stop.
- * (Antigravity has no SessionStart hook event; PreInvocation/PostInvocation
- * are model-level hooks we do not subscribe to.)
+ * Supported events: PreInvocation, PostInvocation, PreToolUse, PostToolUse, Stop.
+ * PreInvocation fills the session-start gap (Antigravity has no SessionStart).
+ * PostInvocation provides an additional session-end signal.
  *
  * Key differences from Codex:
  *   - Config directory is `.agents/` (not `.codex/`).
@@ -33,6 +33,7 @@
 
 import type {
   SessionEndedEvent,
+  SessionStartedEvent,
   ToolCompletedEvent,
   ToolInvokedEvent,
   TraceEvent,
@@ -44,6 +45,8 @@ import { SCHEMA_VERSION } from "@omnodex/shared";
 // ---------------------------------------------------------------------------
 
 export type AntigravityHookEventName =
+  | "PreInvocation"
+  | "PostInvocation"
   | "PreToolUse"
   | "PostToolUse"
   | "Stop";
@@ -62,6 +65,16 @@ export interface AntigravityCommonFields {
 // ---------------------------------------------------------------------------
 // Per-event payload types (matching Antigravity's actual stdin schema)
 // ---------------------------------------------------------------------------
+
+export interface AntigravityPreInvocationPayload extends AntigravityCommonFields {
+  executionNum: number;
+}
+
+export interface AntigravityPostInvocationPayload extends AntigravityCommonFields {
+  executionNum: number;
+  terminationReason?: string;
+  error?: string;
+}
 
 export interface AntigravityPreToolUsePayload extends AntigravityCommonFields {
   toolCall: {
@@ -84,6 +97,8 @@ export interface AntigravityStopPayload extends AntigravityCommonFields {
 }
 
 export type AntigravityHookPayload =
+  | AntigravityPreInvocationPayload
+  | AntigravityPostInvocationPayload
   | AntigravityPreToolUsePayload
   | AntigravityPostToolUsePayload
   | AntigravityStopPayload;
@@ -118,9 +133,11 @@ export interface PostToolUseCorrelation {
  *   1. Every event has `interceptor = "antigravity-hook"`.
  *   2. `occurred_at` is the mapper clock because Antigravity does not
  *      publish per-event timestamps in its payload.
- *   3. PreToolUse emits `tool.invoked`.
- *   4. PostToolUse emits `tool.completed` (tool name provided via correlation).
- *   5. Stop maps to `session.ended`.
+ *   3. PreInvocation emits `session.started` (fills the session-start gap).
+ *   4. PostInvocation emits `session.ended`.
+ *   5. PreToolUse emits `tool.invoked`.
+ *   6. PostToolUse emits `tool.completed` (tool name provided via correlation).
+ *   7. Stop also maps to `session.ended` (duplicates are harmless).
  */
 export function mapAntigravityPayload(
   eventName: AntigravityHookEventName,
@@ -140,6 +157,31 @@ export function mapAntigravityPayload(
   };
 
   switch (eventName) {
+    case "PreInvocation": {
+      const p = payload as AntigravityPreInvocationPayload;
+      const event: SessionStartedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "session.started",
+        user: "antigravity",
+        project_path: p.workspacePaths?.[0] ?? "unknown",
+        mcp_servers: [],
+      };
+      return [event];
+    }
+
+    case "PostInvocation": {
+      const p = payload as AntigravityPostInvocationPayload;
+      const event: SessionEndedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "session.ended",
+        duration_ms: 0,
+        status: p.error ? "errored" : "completed" as const,
+      };
+      return [event];
+    }
+
     case "PreToolUse": {
       const p = payload as AntigravityPreToolUsePayload;
       const toolName = p.toolCall?.name ?? "unknown";

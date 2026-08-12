@@ -8,14 +8,16 @@
  * Codex hook payload schema (from https://developers.openai.com/codex/hooks,
  * captured 2026-05-14) plus a pure mapper from payloads to TraceEvents.
  *
- * Coverage notes (Codex hooks are "Work in progress" as of 2026-05-14):
+ * Coverage notes (updated 2026-08-12):
  *
- *   - PreToolUse/PostToolUse only fire for Bash today. Apply_patch (file
- *     writes), MCP tools, WebSearch, and unified_exec are NOT intercepted.
- *   - No PostToolUseFailure event in Codex.
- *   - Stop is the closest analog to Claude Code's SessionEnd.
+ *   - PreToolUse only fires for Bash/shell tool calls. File edits (apply_patch),
+ *     MCP tools, WebSearch, and unified_exec are NOT interceptable via hooks.
+ *   - SessionEnd fires when the session terminates (maps to session.ended).
+ *   - PostToolUseFailure fires on tool errors (maps to tool.completed status=error).
+ *   - Stop also maps to session.ended (Codex fires both; duplicates are harmless).
  *   - UserPromptSubmit fires before each user turn. No TraceEvent type exists
  *     for it yet, so the mapper returns [] and the shim discards it cleanly.
+ *   - Hooks are enabled by default in recent versions (no config.toml toggle needed).
  *
  * When Codex expands hook coverage, add the new tool names to the appropriate
  * sets below and add file.read / file.written mapping in maybeFilesystemEvent.
@@ -38,8 +40,10 @@ import { SCHEMA_VERSION } from "@omnodex/shared";
 
 export type CodexHookEventName =
   | "SessionStart"
+  | "SessionEnd"
   | "PreToolUse"
   | "PostToolUse"
+  | "PostToolUseFailure"
   | "UserPromptSubmit"
   | "Stop";
 
@@ -57,6 +61,13 @@ export interface CodexSessionStartPayload extends CodexHookBase {
   hook_event_name: "SessionStart";
   /** "startup" for a fresh session, "resume" for a resumed one. */
   source?: "startup" | "resume";
+}
+
+export interface CodexSessionEndPayload extends CodexHookBase {
+  hook_event_name: "SessionEnd";
+  /** How the session ended. */
+  reason?: "completed" | "errored" | "interrupted";
+  duration_ms?: number;
 }
 
 export interface CodexPreToolUsePayload extends CodexHookBase {
@@ -81,6 +92,17 @@ export interface CodexPostToolUsePayload extends CodexHookBase {
   duration_ms?: number;
 }
 
+export interface CodexPostToolUseFailurePayload extends CodexHookBase {
+  hook_event_name: "PostToolUseFailure";
+  turn_id?: string;
+  tool_name: string;
+  tool_use_id: string;
+  tool_input: Record<string, unknown>;
+  error: string;
+  is_interrupt?: boolean;
+  duration_ms?: number;
+}
+
 export interface CodexUserPromptSubmitPayload extends CodexHookBase {
   hook_event_name: "UserPromptSubmit";
   turn_id?: string;
@@ -97,8 +119,10 @@ export interface CodexStopPayload extends CodexHookBase {
 
 export type CodexHookPayload =
   | CodexSessionStartPayload
+  | CodexSessionEndPayload
   | CodexPreToolUsePayload
   | CodexPostToolUsePayload
+  | CodexPostToolUseFailurePayload
   | CodexUserPromptSubmitPayload
   | CodexStopPayload;
 
@@ -191,6 +215,33 @@ export function mapCodexPayload(
       return [completed];
       // TODO: add file.read / file.written here when Codex expands
       // hook coverage to apply_patch and other file tools.
+    }
+
+    case "SessionEnd": {
+      const p = payload as CodexSessionEndPayload;
+      const event: SessionEndedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "session.ended",
+        duration_ms: p.duration_ms ?? 0,
+        status: p.reason ?? "completed",
+      };
+      return [event];
+    }
+
+    case "PostToolUseFailure": {
+      const p = payload as CodexPostToolUseFailurePayload;
+      const completed: ToolCompletedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "tool.completed",
+        tool_call_id: p.tool_use_id,
+        duration_ms: p.duration_ms ?? 0,
+        status: "error",
+        response_bytes: 0,
+        error_message: p.error,
+      };
+      return [completed];
     }
 
     case "Stop": {

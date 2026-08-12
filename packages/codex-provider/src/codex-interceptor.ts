@@ -14,17 +14,23 @@
  * Events subscribed:
  *
  *   SessionStart
- *   PreToolUse   (matcher "*")
- *   PostToolUse  (matcher "*")
+ *   SessionEnd
+ *   PreToolUse       (matcher "*")
+ *   PostToolUse      (matcher "*")
+ *   PostToolUseFailure (matcher "*")
+ *   UserPromptSubmit
  *   Stop
  *
- * Note: Codex hooks require the user to have `hooks = true` set in
- * their `~/.codex/config.toml` (or the project-local equivalent). The
+ * Note: Codex hooks are enabled by default in recent versions. Older
+ * versions may require `hooks = true` in `~/.codex/config.toml` (or the project-local equivalent). The
  * interceptor cannot set this flag automatically because config.toml uses
  * TOML format and is outside our managed JSON scope.
  *
  * Note: Codex does not support `async: true` on hook handlers. All hooks
  * run synchronously. The shim is designed to be fast (<50ms typical).
+ *
+ * Note: PreToolUse only fires for Bash/shell tool calls. File edits,
+ * MCP calls, and web search are not yet interceptable via hooks.
  */
 
 import { promises as fs } from "node:fs";
@@ -80,8 +86,11 @@ const OMNODEX_TAG = "omnodex-managed";
 
 const EVENT_NAMES = [
   "SessionStart",
+  "SessionEnd",
   "PreToolUse",
   "PostToolUse",
+  "PostToolUseFailure",
+  "UserPromptSubmit",
   "Stop",
 ] as const;
 

@@ -14,7 +14,7 @@
  *
  * Contract (matching Antigravity 2.0 hook spec):
  *
- *   - argv[2]:  event name ("PreToolUse" | "PostToolUse" | "Stop")
+ *   - argv[2]:  event name ("PreInvocation" | "PostInvocation" | "PreToolUse" | "PostToolUse" | "Stop")
  *   - stdin:    JSON payload (one object per invocation)
  *   - stdout:   JSON response (PreToolUse: decision, PostToolUse/Stop: {})
  *   - stderr:   diagnostics only
@@ -64,7 +64,7 @@ async function main(): Promise<number> {
 
   // Event name from CLI argument (set by the interceptor per-event command).
   const eventName = process.argv[2] as AntigravityHookEventName | undefined;
-  if (!eventName || !["PreToolUse", "PostToolUse", "Stop"].includes(eventName)) {
+  if (!eventName || !["PreInvocation", "PostInvocation", "PreToolUse", "PostToolUse", "Stop"].includes(eventName)) {
     console.error(
       `[omnodex-antigravity] unknown or missing event name: ${eventName}`,
     );
