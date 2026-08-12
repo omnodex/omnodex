@@ -240,4 +240,4 @@ npm test               # 49 unit + integration tests
 ```
 
 Tests use Node's built-in test runner (`node:test`). Integration tests in
-`test/upstream-client.test.mjs` spawn a real mock MCP server subproces
+`test/upstream-client.test.mjs` spawn a real mock MCP server subprocess and verify end-to-end request routing, parameter logging, and error handling.
