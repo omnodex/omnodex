@@ -16,9 +16,12 @@
  *
  *   SessionStart
  *   SessionEnd
- *   PreToolUse  (matcher "*")
- *   PostToolUse (matcher "*")
- *   PostToolUseFailure (matcher "*")
+ *   PreToolUse          (matcher "*")
+ *   PostToolUse         (matcher "*")
+ *   PostToolUseFailure  (matcher "*")
+ *   SubagentStart
+ *   SubagentStop
+ *   UserPromptSubmit
  *
  * All handlers are registered with `async: true` so the agent's
  * execution path is never blocked.
@@ -94,6 +97,9 @@ const EVENT_NAMES = [
   "PreToolUse",
   "PostToolUse",
   "PostToolUseFailure",
+  "SubagentStart",
+  "SubagentStop",
+  "UserPromptSubmit",
 ] as const;
 
 export class ClaudeCodeInterceptor implements Interceptor {
