@@ -13,8 +13,10 @@
  *
  * Events subscribed:
  *
- *   PreToolUse   (matcher "*")
- *   PostToolUse  (matcher "*")
+ *   PreInvocation  (session lifecycle)
+ *   PostInvocation (session lifecycle)
+ *   PreToolUse     (matcher "*")
+ *   PostToolUse    (matcher "*")
  *   Stop
  *
  * Antigravity 2.0 hooks.json uses a named-hook format where each top-level
@@ -106,8 +108,8 @@ const HOOK_NAME = "omnodex";
 /** Events that use matcher groups (PreToolUse, PostToolUse). */
 const TOOL_EVENTS = ["PreToolUse", "PostToolUse"] as const;
 
-/** Events that use flat handler lists (Stop). */
-const FLAT_EVENTS = ["Stop"] as const;
+/** Events that use flat handler lists (Stop, PreInvocation, PostInvocation). */
+const FLAT_EVENTS = ["Stop", "PreInvocation", "PostInvocation"] as const;
 
 export class AntigravityInterceptor implements Interceptor {
   readonly name = "antigravity-hooks";
