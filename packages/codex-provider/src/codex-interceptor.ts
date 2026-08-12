@@ -15,11 +15,14 @@
  *
  *   SessionStart
  *   SessionEnd
- *   PreToolUse       (matcher "*")
- *   PostToolUse      (matcher "*")
- *   PostToolUseFailure (matcher "*")
+ *   PreToolUse          (matcher "*")
+ *   PostToolUse         (matcher "*")
+ *   PostToolUseFailure  (matcher "*")
  *   UserPromptSubmit
  *   Stop
+ *   SubagentStart
+ *   SubagentStop
+ *   PermissionRequest
  *
  * Note: Codex hooks are enabled by default in recent versions. Older
  * versions may require `hooks = true` in `~/.codex/config.toml` (or the project-local equivalent). The
@@ -92,6 +95,9 @@ const EVENT_NAMES = [
   "PostToolUseFailure",
   "UserPromptSubmit",
   "Stop",
+  "SubagentStart",
+  "SubagentStop",
+  "PermissionRequest",
 ] as const;
 
 export class CodexInterceptor implements Interceptor {

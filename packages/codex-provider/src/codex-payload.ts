@@ -17,6 +17,10 @@
  *   - Stop also maps to session.ended (Codex fires both; duplicates are harmless).
  *   - UserPromptSubmit fires before each user turn. No TraceEvent type exists
  *     for it yet, so the mapper returns [] and the shim discards it cleanly.
+ *   - SubagentStart/SubagentStop fire on subagent lifecycle (added 2026-07).
+ *     No TraceEvent type yet; mapper returns [].
+ *   - PermissionRequest fires when the agent requests user permission for an
+ *     action. No TraceEvent type yet; mapper returns [].
  *   - Hooks are enabled by default in recent versions (no config.toml toggle needed).
  *
  * When Codex expands hook coverage, add the new tool names to the appropriate
@@ -45,7 +49,10 @@ export type CodexHookEventName =
   | "PostToolUse"
   | "PostToolUseFailure"
   | "UserPromptSubmit"
-  | "Stop";
+  | "Stop"
+  | "SubagentStart"
+  | "SubagentStop"
+  | "PermissionRequest";
 
 /** Fields present on every Codex hook invocation. */
 export interface CodexHookBase {
@@ -117,6 +124,31 @@ export interface CodexStopPayload extends CodexHookBase {
   last_assistant_message?: string | null;
 }
 
+export interface CodexSubagentStartPayload extends CodexHookBase {
+  hook_event_name: "SubagentStart";
+  /** Identifier of the subagent being spawned. */
+  subagent_id: string;
+  /** Type of subagent. */
+  subagent_type?: string;
+  prompt?: string;
+}
+
+export interface CodexSubagentStopPayload extends CodexHookBase {
+  hook_event_name: "SubagentStop";
+  subagent_id: string;
+  reason?: "completed" | "errored" | "interrupted";
+  duration_ms?: number;
+}
+
+export interface CodexPermissionRequestPayload extends CodexHookBase {
+  hook_event_name: "PermissionRequest";
+  turn_id?: string;
+  /** The tool or action requesting permission. */
+  tool_name?: string;
+  /** The permission being requested (e.g. "execute", "write"). */
+  permission_type?: string;
+}
+
 export type CodexHookPayload =
   | CodexSessionStartPayload
   | CodexSessionEndPayload
@@ -124,7 +156,10 @@ export type CodexHookPayload =
   | CodexPostToolUsePayload
   | CodexPostToolUseFailurePayload
   | CodexUserPromptSubmitPayload
-  | CodexStopPayload;
+  | CodexStopPayload
+  | CodexSubagentStartPayload
+  | CodexSubagentStopPayload
+  | CodexPermissionRequestPayload;
 
 // ---------------------------------------------------------------------------
 // Mapper options
@@ -256,7 +291,12 @@ export function mapCodexPayload(
     }
 
     case "UserPromptSubmit":
-      // No TraceEvent type for user prompts yet. Discard cleanly.
+    case "SubagentStart":
+    case "SubagentStop":
+    case "PermissionRequest":
+      // No TraceEvent types for these yet. Capture the payload so the
+      // shim does not warn, but emit nothing until the shared schema
+      // gains subagent, prompt, and permission event types.
       return [];
   }
 }

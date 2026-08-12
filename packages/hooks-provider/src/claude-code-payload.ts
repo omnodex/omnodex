@@ -30,13 +30,25 @@ import type {
 } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 
-/** The hook event names we actually subscribe to from Claude Code. */
+/**
+ * The hook event names we subscribe to from Claude Code.
+ *
+ * Core events: SessionStart, SessionEnd, PreToolUse, PostToolUse,
+ * PostToolUseFailure.
+ *
+ * Extended events (added 2026-08): SubagentStart, SubagentStop,
+ * UserPromptSubmit. These are captured for future TraceEvent mapping
+ * but currently return [] from the mapper.
+ */
 export type ClaudeCodeHookEventName =
   | "SessionStart"
   | "SessionEnd"
   | "PreToolUse"
   | "PostToolUse"
-  | "PostToolUseFailure";
+  | "PostToolUseFailure"
+  | "SubagentStart"
+  | "SubagentStop"
+  | "UserPromptSubmit";
 
 /** Shared fields Claude Code passes on every hook invocation. */
 export interface ClaudeCodeHookBase {
@@ -47,6 +59,8 @@ export interface ClaudeCodeHookBase {
   hook_event_name: ClaudeCodeHookEventName;
   agent_id?: string;
   agent_type?: string;
+  /** Prompt identifier for multi-turn tracking (added in Claude Code 2026-07). */
+  prompt_id?: string;
 }
 
 export interface ClaudeCodeSessionStartPayload extends ClaudeCodeHookBase {
@@ -91,12 +105,40 @@ export interface ClaudeCodePostToolUseFailurePayload extends ClaudeCodeHookBase 
   duration_ms?: number;
 }
 
+export interface ClaudeCodeSubagentStartPayload extends ClaudeCodeHookBase {
+  hook_event_name: "SubagentStart";
+  /** Identifier of the subagent being spawned. */
+  subagent_id: string;
+  /** Type of subagent (e.g. "task", "parallel"). */
+  subagent_type?: string;
+  /** The prompt or task description given to the subagent. */
+  prompt?: string;
+}
+
+export interface ClaudeCodeSubagentStopPayload extends ClaudeCodeHookBase {
+  hook_event_name: "SubagentStop";
+  /** Identifier of the subagent that stopped. */
+  subagent_id: string;
+  /** How the subagent terminated. */
+  reason?: "completed" | "errored" | "interrupted";
+  duration_ms?: number;
+}
+
+export interface ClaudeCodeUserPromptSubmitPayload extends ClaudeCodeHookBase {
+  hook_event_name: "UserPromptSubmit";
+  /** The user's prompt text. */
+  prompt: string;
+}
+
 export type ClaudeCodeHookPayload =
   | ClaudeCodeSessionStartPayload
   | ClaudeCodeSessionEndPayload
   | ClaudeCodePreToolUsePayload
   | ClaudeCodePostToolUsePayload
-  | ClaudeCodePostToolUseFailurePayload;
+  | ClaudeCodePostToolUseFailurePayload
+  | ClaudeCodeSubagentStartPayload
+  | ClaudeCodeSubagentStopPayload
+  | ClaudeCodeUserPromptSubmitPayload;
 
 /**
  * Single-file read tools: the tool_input carries a specific file path.
@@ -237,6 +279,14 @@ export function mapClaudeCodePayload(
       };
       return [completed];
     }
+
+    case "SubagentStart":
+    case "SubagentStop":
+    case "UserPromptSubmit":
+      // No TraceEvent types for these yet. Capture the payload so the
+      // shim does not warn, but emit nothing until the shared schema
+      // gains subagent and prompt event types.
+      return [];
   }
 }
 
