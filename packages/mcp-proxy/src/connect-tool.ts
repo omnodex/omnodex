@@ -116,9 +116,10 @@ async function encryptForTransfer(passphrase: string): Promise<{
 // ---------------------------------------------------------------------------
 
 interface ConnectResult {
-  status: "ok" | "no_credentials" | "error";
+  status: "ok" | "device_code" | "no_credentials" | "error";
   connect_url?: string;
   expires_at?: string;
+  user_code?: string;
   message: string;
 }
 
@@ -139,12 +140,8 @@ export async function handleConnect(params: {
   if (!apiUrl) apiUrl = config?.api_url ?? "https://api.omnodex.com";
 
   if (!apiToken) {
-    return {
-      status: "no_credentials",
-      message:
-        "No API token configured. The user needs to set OMNODEX_API_TOKEN " +
-        "or run \`omnodex connect --token <omx_...>\` in a terminal first.",
-    };
+    // No token: initiate device code flow
+    return initiateDeviceCodeFlow(home, passphrase, apiUrl);
   }
 
   // Auto-generate passphrase if missing
@@ -208,6 +205,162 @@ export async function handleConnect(params: {
       message: "Failed to create connection link: " + (err as Error).message,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Device code flow (fallback when no API token exists)
+// ---------------------------------------------------------------------------
+
+/** In-flight device code polling state, keyed by device_code. */
+const activePolls = new Map<string, { cancel: () => void }>();
+
+async function initiateDeviceCodeFlow(
+  home: string,
+  existingPassphrase: string,
+  apiUrl: string,
+): Promise<ConnectResult> {
+  // Auto-generate passphrase if missing
+  let passphrase = existingPassphrase;
+  if (!passphrase) {
+    passphrase = generatePassphrase();
+    await writeStreamConfig(home, {
+      api_token: "",
+      passphrase,
+      api_url: apiUrl,
+    });
+  }
+
+  try {
+    const { passphrase_enc, passphrase_iv, transfer_key } =
+      await encryptForTransfer(passphrase);
+
+    const machineId = computeMachineId();
+    const machineLabel = await readMachineLabel(home);
+
+    const body = {
+      machine_label: machineLabel,
+      machine_id: machineId,
+      passphrase_enc,
+      passphrase_iv,
+    };
+
+    const res = await fetch(apiUrl + "/api/v1/device/code", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = (err as Record<string, unknown>)?.message ?? "Device code request failed (" + res.status + ")";
+      return { status: "error", message: String(msg) };
+    }
+
+    const result = (await res.json()) as {
+      device_code: string;
+      user_code: string;
+      verification_url: string;
+      expires_in: number;
+      interval: number;
+    };
+
+    const connectUrl = result.verification_url + "#tk=" + transfer_key;
+
+    // Start background polling for authorization
+    startBackgroundPoll(
+      home,
+      apiUrl,
+      result.device_code,
+      passphrase,
+      result.interval,
+      result.expires_in,
+    );
+
+    return {
+      status: "device_code",
+      connect_url: connectUrl,
+      user_code: result.user_code,
+      expires_at: new Date(Date.now() + result.expires_in * 1000).toISOString(),
+      message:
+        "Device code flow started. The user should open the URL and enter the code " +
+        "to authorize this machine. The proxy will automatically pick up the token " +
+        "once authorized.",
+    };
+  } catch (err) {
+    return {
+      status: "error",
+      message: "Failed to start device code flow: " + (err as Error).message,
+    };
+  }
+}
+
+function startBackgroundPoll(
+  home: string,
+  apiUrl: string,
+  deviceCode: string,
+  passphrase: string,
+  interval: number,
+  expiresIn: number,
+): void {
+  // Cancel any existing poll for this device code
+  activePolls.get(deviceCode)?.cancel();
+
+  let cancelled = false;
+  const cancel = () => { cancelled = true; };
+  activePolls.set(deviceCode, { cancel });
+
+  const deadline = Date.now() + expiresIn * 1000;
+  let pollInterval = interval;
+
+  (async () => {
+    while (!cancelled && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, pollInterval * 1000));
+      if (cancelled) break;
+
+      try {
+        const res = await fetch(apiUrl + "/api/v1/device/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            device_code: deviceCode,
+            grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          }),
+        });
+
+        if (res.status === 200) {
+          const data = (await res.json()) as {
+            api_token: string;
+            customer_id: string;
+            api_url?: string;
+          };
+
+          // Store the token in stream-config.json
+          await writeStreamConfig(home, {
+            api_token: data.api_token,
+            passphrase,
+            api_url: data.api_url ?? apiUrl,
+          });
+
+          activePolls.delete(deviceCode);
+          return; // Success!
+        }
+
+        const body = await res.json().catch(() => ({ error: "unknown" }));
+        const error = (body as Record<string, unknown>)?.error;
+
+        if (error === "slow_down") {
+          pollInterval = ((body as Record<string, unknown>)?.interval as number) ?? pollInterval + 5;
+        } else if (error !== "authorization_pending") {
+          // expired_token, access_denied, or unexpected error -- stop polling
+          break;
+        }
+      } catch {
+        // Network error -- keep trying until deadline
+      }
+    }
+
+    activePolls.delete(deviceCode);
+  })();
 }
 
 // ---------------------------------------------------------------------------

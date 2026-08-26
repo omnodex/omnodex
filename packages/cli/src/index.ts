@@ -67,6 +67,7 @@ import {
   resolveCredentials,
 } from "./stream-config.js";
 import { createClaim, platformFromTarget } from "./connect.js";
+import { runDeviceAuthFlow } from "./device-auth.js";
 // ValidateResult type available if needed for future use
 
 interface Paths {
@@ -470,6 +471,72 @@ async function cmdDashboard(args: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * After install: run device code flow if no token exists, otherwise offer a
+ * claim link. Shared by all install commands.
+ */
+async function connectAfterInstall(
+  omnodexHome: string,
+  opts: { platform?: string; projectLabel?: string },
+): Promise<void> {
+  let creds = await resolveCredentials(omnodexHome);
+
+  if (!creds?.apiToken) {
+    // No token: run device code flow
+    console.log("");
+    console.log("No API token found. Let's connect to your dashboard.");
+
+    const passphrase = creds?.passphrase || generatePassphrase();
+    const apiUrl = creds?.apiUrl ?? "https://api.omnodex.com";
+
+    await updateStreamConfig(omnodexHome, {
+      api_token: "",
+      passphrase,
+      api_url: apiUrl,
+      created_at: new Date().toISOString(),
+    });
+
+    try {
+      const result = await runDeviceAuthFlow({
+        apiUrl,
+        passphrase,
+      });
+
+      await updateStreamConfig(omnodexHome, {
+        api_token: result.apiToken,
+        passphrase,
+        api_url: result.apiUrl,
+        last_used_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn(`[connect] could not complete device authorization: ${(err as Error).message}`);
+      console.warn(`[connect] you can retry with: omnodex connect`);
+    }
+    return;
+  }
+
+  // Token exists: auto-generate passphrase if needed, then offer claim link
+  if (!creds.passphrase) {
+    const newPassphrase = generatePassphrase();
+    await updateStreamConfig(omnodexHome, {
+      api_token: creds.apiToken,
+      passphrase: newPassphrase,
+      api_url: creds.apiUrl,
+      created_at: new Date().toISOString(),
+    });
+    creds.passphrase = newPassphrase;
+    console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+  }
+
+  await offerConnectionLink(omnodexHome, {
+    apiToken: creds.apiToken,
+    passphrase: creds.passphrase,
+    apiUrl: creds.apiUrl,
+    platform: opts.platform,
+    projectLabel: opts.projectLabel,
+  });
+}
+
+/**
  * Offer a one-click connection link after install or on explicit `omnodex connect`.
  *
  * Auto-generates a passphrase if one does not already exist in
@@ -535,18 +602,47 @@ async function cmdConnect(args: string[]): Promise<void> {
     flagApiUrl,
   });
 
+  // Auto-generate passphrase if missing (needed for both flows)
+  const passphrase = creds?.passphrase || generatePassphrase();
+  const apiUrl = creds?.apiUrl ?? flagApiUrl ?? "https://api.omnodex.com";
+
   if (!creds?.apiToken) {
-    console.error("[connect] no API token. Set OMNODEX_API_TOKEN or pass --token <omx_...>.");
-    process.exitCode = 1;
+    // No token: run the device code flow to bootstrap one
+    console.log("No API token found. Let\'s connect this installation to your account.");
+
+    // Save the passphrase before starting the flow
+    await updateStreamConfig(paths.home, {
+      api_token: "",
+      passphrase,
+      api_url: apiUrl,
+      created_at: new Date().toISOString(),
+    });
+
+    try {
+      const result = await runDeviceAuthFlow({
+        apiUrl,
+        passphrase,
+      });
+
+      // Store the received token in stream-config.json
+      await updateStreamConfig(paths.home, {
+        api_token: result.apiToken,
+        passphrase,
+        api_url: result.apiUrl,
+        last_used_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.error(`[connect] ${(err as Error).message}`);
+      process.exitCode = 1;
+    }
     return;
   }
 
-  // Auto-generate passphrase if missing
+  // Token exists: ensure passphrase is saved
   if (!creds.passphrase) {
-    const newPassphrase = generatePassphrase();
     await updateStreamConfig(paths.home, {
       api_token: creds.apiToken,
-      passphrase: newPassphrase,
+      passphrase,
       api_url: creds.apiUrl,
       created_at: new Date().toISOString(),
     });
@@ -558,6 +654,7 @@ async function cmdConnect(args: string[]): Promise<void> {
     }))!;
   }
 
+  // Token exists: generate a claim link (existing behavior)
   await offerConnectionLink(paths.home, {
     apiToken: creds.apiToken,
     passphrase: creds.passphrase,
@@ -660,28 +757,11 @@ async function installClaudeCode(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
 
-  // Offer a connection link if credentials are available
-  const ccCreds = await resolveCredentials(paths.home);
-  if (ccCreds?.apiToken) {
-    if (!ccCreds.passphrase) {
-      const newPassphrase = generatePassphrase();
-      await updateStreamConfig(paths.home, {
-        api_token: ccCreds.apiToken,
-        passphrase: newPassphrase,
-        api_url: ccCreds.apiUrl,
-        created_at: new Date().toISOString(),
-      });
-      ccCreds.passphrase = newPassphrase;
-      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
-    }
-    await offerConnectionLink(paths.home, {
-      apiToken: ccCreds.apiToken,
-      passphrase: ccCreds.passphrase,
-      apiUrl: ccCreds.apiUrl,
-      platform: platformFromTarget("claude-code"),
-      projectLabel: path.basename(projectPath),
-    });
-  }
+  // Connect to dashboard (device code flow if no token, claim link if token exists)
+  await connectAfterInstall(paths.home, {
+    platform: platformFromTarget("claude-code"),
+    projectLabel: path.basename(projectPath),
+  });
 }
 
 async function installCodex(args: string[]): Promise<void> {
@@ -709,28 +789,11 @@ async function installCodex(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );
 
-  // Offer a connection link if credentials are available
-  const codexCreds = await resolveCredentials(paths.home);
-  if (codexCreds?.apiToken) {
-    if (!codexCreds.passphrase) {
-      const newPassphrase = generatePassphrase();
-      await updateStreamConfig(paths.home, {
-        api_token: codexCreds.apiToken,
-        passphrase: newPassphrase,
-        api_url: codexCreds.apiUrl,
-        created_at: new Date().toISOString(),
-      });
-      codexCreds.passphrase = newPassphrase;
-      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
-    }
-    await offerConnectionLink(paths.home, {
-      apiToken: codexCreds.apiToken,
-      passphrase: codexCreds.passphrase,
-      apiUrl: codexCreds.apiUrl,
-      platform: platformFromTarget("codex"),
-      projectLabel: path.basename(projectPath),
-    });
-  }
+  // Connect to dashboard (device code flow if no token, claim link if token exists)
+  await connectAfterInstall(paths.home, {
+    platform: platformFromTarget("codex"),
+    projectLabel: path.basename(projectPath),
+  });
 }
 
 async function installAntigravity(args: string[]): Promise<void> {
@@ -772,28 +835,11 @@ async function installAntigravity(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
 
-  // Offer a connection link if credentials are available
-  const agCreds = await resolveCredentials(paths.home);
-  if (agCreds?.apiToken) {
-    if (!agCreds.passphrase) {
-      const newPassphrase = generatePassphrase();
-      await updateStreamConfig(paths.home, {
-        api_token: agCreds.apiToken,
-        passphrase: newPassphrase,
-        api_url: agCreds.apiUrl,
-        created_at: new Date().toISOString(),
-      });
-      agCreds.passphrase = newPassphrase;
-      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
-    }
-    await offerConnectionLink(paths.home, {
-      apiToken: agCreds.apiToken,
-      passphrase: agCreds.passphrase,
-      apiUrl: agCreds.apiUrl,
-      platform: platformFromTarget("antigravity"),
-      projectLabel: path.basename(projectPath),
-    });
-  }
+  // Connect to dashboard (device code flow if no token, claim link if token exists)
+  await connectAfterInstall(paths.home, {
+    platform: platformFromTarget("antigravity"),
+    projectLabel: path.basename(projectPath),
+  });
 }
 
 /**
@@ -1395,10 +1441,14 @@ commands:
   status [project]   show which Omnodex hooks are installed in a project.
   license            show current license tier and features.
                      Subcommands: clear (remove cached license).
-  connect            generate a one-click connection link to pair this
-                     machine with the cloud dashboard. Auto-generates a
-                     sync passphrase if one does not exist.
-                     Flags: --token, --passphrase, --api, --platform
+  connect            connect this machine to the cloud dashboard. If no
+                     API token exists, starts a device code flow (RFC 8628):
+                     open a URL in your browser, enter the displayed code,
+                     and the CLI receives a token automatically. If a token
+                     already exists, generates a one-click connection link.
+                     Flags: --token <omx_...>  bypass device code flow and
+                                               store the given token directly
+                            --passphrase, --api, --platform
   sync               encrypt the local read model and push it to the cloud.
                      Credentials are resolved from flags, environment
                      variables, or stream-config.json (saved by connect
