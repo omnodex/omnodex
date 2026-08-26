@@ -65,6 +65,14 @@ The dashboard shows a connection graph, credential ledger, risk events, and a fu
 
 **Cloud streaming:** If you have an Omnodex Cloud account, the dashboard can push events to the hosted dashboard at `dashboard.omnodex.com` in real time. Set `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` as environment variables and events are encrypted end-to-end (AES-256-GCM) and streamed to your cloud dashboard automatically. No raw data ever leaves your machine unencrypted.
 
+**Connecting to your dashboard:** The easiest way to link the CLI to your dashboard account is the `connect` command:
+
+```bash
+omnodex connect
+```
+
+This auto-generates a sync passphrase (if you don't already have one), creates a secure one-time connection link, and prints it. Open the link in your browser while signed in to your dashboard account. The passphrase is transferred end-to-end encrypted and never visible to the server. After connecting, `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` are configured automatically for future sessions.
+
 **Multi-machine sync:** When you run `omnodex sync` from multiple machines, each machine is identified automatically by a stable ID derived from its hostname. The hosted dashboard fetches and decrypts blobs from all machines, merging them into a single unified view with a machine selector dropdown. No extra configuration is needed — just run `omnodex sync` on each machine with the same API token and passphrase. To give a machine a human-readable name, add a label to `~/.omnodex/config.json`:
 
 ```json
@@ -310,6 +318,11 @@ omnodex install <target> [project]  install hooks for an AI agent platform
 omnodex uninstall [target] [project] remove Omnodex hooks (requires --confirm)
 omnodex status [project]            show which hooks are installed
 
+omnodex connect [--platform <name>]  generate a connection link to link this machine
+  [--label <name>]                    to your dashboard account. Auto-generates a
+                                      sync passphrase on first run. The link transfers
+                                      the passphrase securely (encrypted, zero-knowledge).
+
 omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       install   generate proxy config template
                                       status    inspect the current config
@@ -387,14 +400,15 @@ packages/
   codex-provider/          CodexInterceptor + codex-hook-shim
   antigravity-provider/    AntigravityInterceptor + antigravity-hook-shim
   mcp-proxy/               MCP proxy interceptor (sits between agent and upstream
-                           MCP servers)
+                           MCP servers). Built-in tools: omnodex_status,
+                           omnodex_connect, omnodex_connection_status
   sync-encryptor/          Zero-knowledge AES-256-GCM sync encryption (Argon2id KDF),
                            streaming key derivation (HKDF), StreamingTransport
   feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
   cli/                     omnodex CLI: install, uninstall, status, spike,
-                           detect, replay, report, dashboard, mcp-proxy, license
-                           Multi-root dashboard config (config.ts)
+                           detect, replay, report, dashboard, mcp-proxy, license,
+                           connect. Multi-root dashboard config (config.ts)
 ```
 
 ---
