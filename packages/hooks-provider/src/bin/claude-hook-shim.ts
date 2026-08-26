@@ -35,6 +35,7 @@ import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
+import { pushEventsToCloud } from "@omnodex/sync-encryptor";
 
 async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
@@ -135,6 +136,13 @@ async function main(): Promise<number> {
         `[omnodex-hook] wrote ${events.length} event(s) for ${payload.hook_event_name}`,
       );
     }
+
+    // Push to cloud in real time. pushEventsToCloud reads cached credentials
+    // and streaming key from disk, encrypts, and POSTs with a short timeout.
+    // It never throws -- errors are swallowed silently. On cache hit the
+    // typical overhead is ~50-100ms; Argon2id only runs on first use.
+    await pushEventsToCloud(events, home);
+
     return 0;
   } catch (err) {
     console.error(

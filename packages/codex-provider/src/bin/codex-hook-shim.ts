@@ -38,6 +38,7 @@ import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
 import type { CodexHookPayload } from "../codex-payload.js";
 import { mapCodexPayload } from "../codex-payload.js";
+import { pushEventsToCloud } from "@omnodex/sync-encryptor";
 
 async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
@@ -127,6 +128,11 @@ async function main(): Promise<number> {
         `[omnodex-codex] wrote ${events.length} event(s) for ${payload.hook_event_name}`,
       );
     }
+
+    // Push to cloud in real time (never throws; ~50-100ms on cache hit).
+    // Codex hooks are synchronous so keep the timeout short.
+    await pushEventsToCloud(events, home, 2000);
+
     return 0;
   } catch (err) {
     console.error(

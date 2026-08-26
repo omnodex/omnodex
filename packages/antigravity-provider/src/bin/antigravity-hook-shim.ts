@@ -47,6 +47,7 @@ import type {
   PostToolUseCorrelation,
 } from "../antigravity-payload.js";
 import { mapAntigravityPayload } from "../antigravity-payload.js";
+import { pushEventsToCloud } from "@omnodex/sync-encryptor";
 
 /** State saved during PreToolUse to correlate with the matching PostToolUse. */
 interface PreToolUseState {
@@ -155,6 +156,9 @@ async function main(): Promise<number> {
         `[omnodex-antigravity] wrote ${events.length} event(s) for ${eventName}`,
       );
     }
+
+    // Push to cloud in real time (never throws; ~50-100ms on cache hit).
+    await pushEventsToCloud(events, home);
 
     outputResponse(eventName);
     return 0;

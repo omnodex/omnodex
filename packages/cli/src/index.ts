@@ -514,18 +514,22 @@ async function connectAfterInstall(
     return;
   }
 
-  // Token exists: auto-generate passphrase if needed, then offer claim link
-  if (!creds.passphrase) {
-    const newPassphrase = generatePassphrase();
-    await updateStreamConfig(omnodexHome, {
-      api_token: creds.apiToken,
-      passphrase: newPassphrase,
-      api_url: creds.apiUrl,
-      created_at: new Date().toISOString(),
-    });
-    creds.passphrase = newPassphrase;
-    console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+  // Token and passphrase both exist: already connected, just confirm status
+  if (creds.passphrase) {
+    console.log(`[connect] already connected (use \`omnodex connect\` to manage)`);
+    return;
   }
+
+  // Token exists but no passphrase: auto-generate one and offer claim link
+  const newPassphrase = generatePassphrase();
+  await updateStreamConfig(omnodexHome, {
+    api_token: creds.apiToken,
+    passphrase: newPassphrase,
+    api_url: creds.apiUrl,
+    created_at: new Date().toISOString(),
+  });
+  creds.passphrase = newPassphrase;
+  console.log("[install] generated new sync passphrase (saved to stream-config.json)");
 
   await offerConnectionLink(omnodexHome, {
     apiToken: creds.apiToken,

@@ -14,6 +14,8 @@
  * The transfer key travels in the URL fragment (never sent to the server).
  */
 
+import * as path from "node:path";
+import * as os from "node:os";
 import { webcrypto } from "node:crypto";
 import { computeMachineId, readMachineLabel } from "@omnodex/sync-encryptor";
 
@@ -136,7 +138,7 @@ export async function createClaim(
   const machineId = computeMachineId();
   const omnodexHome =
     process.env.OMNODEX_HOME ??
-    require("node:path").join(require("node:os").homedir(), ".omnodex");
+    path.join(os.homedir(), ".omnodex");
   const machineLabel = opts.machineLabel ?? (await readMachineLabel(omnodexHome));
 
   const body = {

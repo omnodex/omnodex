@@ -35,3 +35,5 @@ export { StreamingTransport } from "./streaming-transport.js";
 
 export { computeMachineId, readMachineLabel } from "./machine-id.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
+
+export { pushEventsToCloud } from "./shim-push.js";
