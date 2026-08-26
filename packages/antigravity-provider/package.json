@@ -21,7 +21,8 @@
     "omnodex-antigravity-hook": "./dist/bin/antigravity-hook-shim.js"
   },
   "dependencies": {
+    "@omnodex/event-log": "*",
     "@omnodex/shared": "*",
-    "@omnodex/event-log": "*"
+    "@omnodex/sync-encryptor": "*"
   }
 }

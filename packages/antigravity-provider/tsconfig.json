@@ -5,9 +5,18 @@
     "outDir": "dist",
     "composite": true
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*"
+  ],
   "references": [
-    { "path": "../shared" },
-    { "path": "../event-log" }
+    {
+      "path": "../shared"
+    },
+    {
+      "path": "../event-log"
+    },
+    {
+      "path": "../sync-encryptor"
+    }
   ]
 }
