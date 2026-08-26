@@ -28,6 +28,7 @@ import { SCHEMA_VERSION, type EmitFn, type SessionStartedEvent, type SessionEnde
 import { type UpstreamClientPool } from "./upstream-client.js";
 import { callToolWithEvents } from "./event-emitter.js";
 import { type ProxyConfig } from "./config.js";
+import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -71,10 +72,42 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     inputSchema: { type: "object" as const, properties: {} },
   };
 
+  // ── Built-in connect tool ────────────────────────────────────────────────
+  const CONNECT_TOOL = {
+    name: "omnodex_connect",
+    description:
+      "Generates a one-click connection link to pair this machine's Omnodex " +
+      "stream with the cloud dashboard. Returns a URL the user can open in " +
+      "their browser to connect. Auto-generates a sync passphrase if needed.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        platform: {
+          type: "string",
+          description: "Platform identifier (default: cowork-plugin)",
+        },
+        project_label: {
+          type: "string",
+          description: "Project name for the stream label",
+        },
+      },
+    },
+  };
+
+  // ── Built-in connection status tool ─────────────────────────────────────
+  const CONNECTION_STATUS_TOOL = {
+    name: "omnodex_connection_status",
+    description:
+      "Checks whether Omnodex cloud credentials (API token + passphrase) " +
+      "are configured on this machine. Use this to determine if the stream " +
+      "is ready to connect to the dashboard.",
+    inputSchema: { type: "object" as const, properties: {} },
+  };
+
   // ── tools/list ────────────────────────────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     const tools = pool.getTools().map((t) => t.definition);
-    return { tools: [STATUS_TOOL, ...tools] };
+    return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, ...tools] };
   });
 
   // ── tools/call ────────────────────────────────────────────────────────────
@@ -99,6 +132,27 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         isError: false,
       };
     }
+    // Handle built-in omnodex_connect tool
+    if (prefixedName === "omnodex_connect") {
+      const result = await handleConnect({
+        platform: (args.platform as string) ?? undefined,
+        project_label: (args.project_label as string) ?? undefined,
+      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: result.status !== "ok",
+      };
+    }
+
+    // Handle built-in omnodex_connection_status tool
+    if (prefixedName === "omnodex_connection_status") {
+      const status = await checkConnectionStatus();
+      return {
+        content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
+        isError: false,
+      };
+    }
+
     // Use the MCP request id as correlation key when available; otherwise mint
     // a fresh UUID. The tool_call_id is what links tool.invoked to tool.completed
     // in the event log.

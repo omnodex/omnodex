@@ -18,6 +18,8 @@ export { callToolWithEvents } from "./event-emitter.js";
 export type { CallToolOptions, CallToolOutcome } from "./event-emitter.js";
 export { runProxyServer } from "./proxy-server.js";
 export type { ProxyServerOptions } from "./proxy-server.js";
+export { handleConnect, checkConnectionStatus } from "./connect-tool.js";
+export type { ConnectionStatus } from "./connect-tool.js";
 export {
   ProxyConfigSchema,
   loadProxyConfig,

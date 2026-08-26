@@ -61,6 +61,12 @@ import {
   computeMachineId,
   readMachineLabel,
 } from "@omnodex/sync-encryptor";
+import {
+  generatePassphrase,
+  updateStreamConfig,
+  resolveCredentials,
+} from "./stream-config.js";
+import { createClaim, platformFromTarget } from "./connect.js";
 // ValidateResult type available if needed for future use
 
 interface Paths {
@@ -397,9 +403,10 @@ async function cmdDashboard(args: string[]): Promise<void> {
 
   // --- Cloud streaming setup (auto-enabled when credentials are configured) ---
   let cloudTransport: StreamingTransport | null = null;
-  const streamApiToken = process.env.OMNODEX_API_TOKEN ?? "";
-  const streamPassphrase = process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
-  const streamApiUrl = process.env.OMNODEX_API_URL ?? "https://api.omnodex.com";
+  const streamCreds = await resolveCredentials(resolved.primary);
+  const streamApiToken = streamCreds?.apiToken ?? "";
+  const streamPassphrase = streamCreds?.passphrase ?? "";
+  const streamApiUrl = streamCreds?.apiUrl ?? "https://api.omnodex.com";
 
   if (streamApiToken && streamPassphrase) {
     const features = licenseResult.license.features;
@@ -455,6 +462,107 @@ async function cmdDashboard(args: string[]): Promise<void> {
     };
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Stream connection
+// ---------------------------------------------------------------------------
+
+/**
+ * Offer a one-click connection link after install or on explicit `omnodex connect`.
+ *
+ * Auto-generates a passphrase if one does not already exist in
+ * stream-config.json, encrypts it under a one-time transfer key, and
+ * creates a short-lived claim token on the cloud API. The resulting URL
+ * contains the transfer key in the fragment (never sent to the server).
+ */
+async function offerConnectionLink(
+  omnodexHome: string,
+  opts: {
+    apiToken: string;
+    passphrase: string;
+    apiUrl: string;
+    platform?: string;
+    projectLabel?: string;
+  },
+): Promise<void> {
+  try {
+    const result = await createClaim({
+      apiUrl: opts.apiUrl,
+      apiToken: opts.apiToken,
+      passphrase: opts.passphrase,
+      platform: opts.platform,
+      projectLabel: opts.projectLabel,
+    });
+    console.log("");
+    console.log(`[connect] open this link to connect your stream to the dashboard:`);
+    console.log(`          ${result.connectUrl}`);
+    console.log(`[connect] this link expires at ${result.expiresAt}`);
+
+    // Update last_used_at
+    await updateStreamConfig(omnodexHome, {
+      last_used_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn(`[connect] could not create connection link: ${(err as Error).message}`);
+    console.warn(`[connect] you can retry with: omnodex connect`);
+  }
+}
+
+/**
+ * Generate a connection link for the current machine.
+ *
+ *   omnodex connect [--token <omx_...>] [--passphrase <phrase>]
+ *                   [--api <url>] [--platform <name>]
+ *
+ * If no passphrase exists yet, one is auto-generated and saved to
+ * stream-config.json. The passphrase is encrypted under a one-time
+ * transfer key before being sent to the server.
+ */
+async function cmdConnect(args: string[]): Promise<void> {
+  const paths = resolvePaths();
+
+  const flagToken = readFlagValue(args, "--token");
+  const flagPassphrase = readFlagValue(args, "--passphrase");
+  const flagApiUrl = readFlagValue(args, "--api");
+  const flagPlatform = readFlagValue(args, "--platform");
+
+  // Resolve or generate credentials
+  let creds = await resolveCredentials(paths.home, {
+    flagToken,
+    flagPassphrase,
+    flagApiUrl,
+  });
+
+  if (!creds?.apiToken) {
+    console.error("[connect] no API token. Set OMNODEX_API_TOKEN or pass --token <omx_...>.");
+    process.exitCode = 1;
+    return;
+  }
+
+  // Auto-generate passphrase if missing
+  if (!creds.passphrase) {
+    const newPassphrase = generatePassphrase();
+    await updateStreamConfig(paths.home, {
+      api_token: creds.apiToken,
+      passphrase: newPassphrase,
+      api_url: creds.apiUrl,
+      created_at: new Date().toISOString(),
+    });
+    console.log("[connect] generated new sync passphrase (saved to stream-config.json)");
+    creds = (await resolveCredentials(paths.home, {
+      flagToken,
+      flagPassphrase,
+      flagApiUrl,
+    }))!;
+  }
+
+  await offerConnectionLink(paths.home, {
+    apiToken: creds.apiToken,
+    passphrase: creds.passphrase,
+    apiUrl: creds.apiUrl,
+    platform: flagPlatform,
   });
 }
 
@@ -551,6 +659,29 @@ async function installClaudeCode(args: string[]): Promise<void> {
   console.log(
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
+
+  // Offer a connection link if credentials are available
+  const ccCreds = await resolveCredentials(paths.home);
+  if (ccCreds?.apiToken) {
+    if (!ccCreds.passphrase) {
+      const newPassphrase = generatePassphrase();
+      await updateStreamConfig(paths.home, {
+        api_token: ccCreds.apiToken,
+        passphrase: newPassphrase,
+        api_url: ccCreds.apiUrl,
+        created_at: new Date().toISOString(),
+      });
+      ccCreds.passphrase = newPassphrase;
+      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+    }
+    await offerConnectionLink(paths.home, {
+      apiToken: ccCreds.apiToken,
+      passphrase: ccCreds.passphrase,
+      apiUrl: ccCreds.apiUrl,
+      platform: platformFromTarget("claude-code"),
+      projectLabel: path.basename(projectPath),
+    });
+  }
 }
 
 async function installCodex(args: string[]): Promise<void> {
@@ -577,6 +708,29 @@ async function installCodex(args: string[]): Promise<void> {
   console.log(
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );
+
+  // Offer a connection link if credentials are available
+  const codexCreds = await resolveCredentials(paths.home);
+  if (codexCreds?.apiToken) {
+    if (!codexCreds.passphrase) {
+      const newPassphrase = generatePassphrase();
+      await updateStreamConfig(paths.home, {
+        api_token: codexCreds.apiToken,
+        passphrase: newPassphrase,
+        api_url: codexCreds.apiUrl,
+        created_at: new Date().toISOString(),
+      });
+      codexCreds.passphrase = newPassphrase;
+      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+    }
+    await offerConnectionLink(paths.home, {
+      apiToken: codexCreds.apiToken,
+      passphrase: codexCreds.passphrase,
+      apiUrl: codexCreds.apiUrl,
+      platform: platformFromTarget("codex"),
+      projectLabel: path.basename(projectPath),
+    });
+  }
 }
 
 async function installAntigravity(args: string[]): Promise<void> {
@@ -617,6 +771,29 @@ async function installAntigravity(args: string[]): Promise<void> {
   console.log(
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
+
+  // Offer a connection link if credentials are available
+  const agCreds = await resolveCredentials(paths.home);
+  if (agCreds?.apiToken) {
+    if (!agCreds.passphrase) {
+      const newPassphrase = generatePassphrase();
+      await updateStreamConfig(paths.home, {
+        api_token: agCreds.apiToken,
+        passphrase: newPassphrase,
+        api_url: agCreds.apiUrl,
+        created_at: new Date().toISOString(),
+      });
+      agCreds.passphrase = newPassphrase;
+      console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+    }
+    await offerConnectionLink(paths.home, {
+      apiToken: agCreds.apiToken,
+      passphrase: agCreds.passphrase,
+      apiUrl: agCreds.apiUrl,
+      platform: platformFromTarget("antigravity"),
+      projectLabel: path.basename(projectPath),
+    });
+  }
 }
 
 /**
@@ -1070,18 +1247,28 @@ function readFlagValue(args: string[], name: string): string | undefined {
  * client-side and is never sent to the server.
  */
 async function cmdSync(args: string[]): Promise<void> {
-  const apiToken = readFlagValue(args, "--token") ?? process.env.OMNODEX_API_TOKEN ?? "";
-  const apiUrl = readFlagValue(args, "--api") ?? process.env.OMNODEX_API_URL ?? "https://api.omnodex.com";
-  const passphrase = readFlagValue(args, "--passphrase") ?? process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
+  const paths = resolvePaths();
+
+  // Resolve credentials: flag > env > stream-config.json
+  const creds = await resolveCredentials(paths.home, {
+    flagToken: readFlagValue(args, "--token"),
+    flagPassphrase: readFlagValue(args, "--passphrase"),
+    flagApiUrl: readFlagValue(args, "--api"),
+  });
+
+  const apiToken = creds?.apiToken ?? "";
+  const apiUrl = creds?.apiUrl ?? "https://api.omnodex.com";
+  const passphrase = creds?.passphrase ?? "";
 
   if (!apiToken) {
-    console.error("[sync] no API token. Set OMNODEX_API_TOKEN or pass --token <omx_...>.");
+    console.error("[sync] no API token. Set OMNODEX_API_TOKEN, pass --token <omx_...>,");
+    console.error("       or run `omnodex connect` to save credentials to stream-config.json.");
     process.exitCode = 1;
     return;
   }
   if (!passphrase) {
-    console.error("[sync] no passphrase. Set OMNODEX_SYNC_PASSPHRASE or pass --passphrase <phrase>.");
-    console.error("        It encrypts your data client-side and is never sent to the server.");
+    console.error("[sync] no passphrase. Set OMNODEX_SYNC_PASSPHRASE, pass --passphrase <phrase>,");
+    console.error("       or run `omnodex connect` to auto-generate one.");
     process.exitCode = 1;
     return;
   }
@@ -1095,7 +1282,6 @@ async function cmdSync(args: string[]): Promise<void> {
     return;
   }
 
-  const paths = resolvePaths();
   const log = new EventLog({ root: paths.eventLogRoot });
   await log.init();
   const store = await openStore(paths);
@@ -1176,6 +1362,9 @@ async function main(): Promise<void> {
     case "license":
       await cmdLicense(rest);
       return;
+    case "connect":
+      await cmdConnect(rest);
+      return;
     case "sync":
       await cmdSync(rest);
       return;
@@ -1206,9 +1395,14 @@ commands:
   status [project]   show which Omnodex hooks are installed in a project.
   license            show current license tier and features.
                      Subcommands: clear (remove cached license).
+  connect            generate a one-click connection link to pair this
+                     machine with the cloud dashboard. Auto-generates a
+                     sync passphrase if one does not exist.
+                     Flags: --token, --passphrase, --api, --platform
   sync               encrypt the local read model and push it to the cloud.
-                     Requires OMNODEX_API_TOKEN + OMNODEX_SYNC_PASSPHRASE
-                     (or --token/--passphrase). Hosted tier or above.
+                     Credentials are resolved from flags, environment
+                     variables, or stream-config.json (saved by connect
+                     or install). Hosted tier or above.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       run a simulated session through the full pipeline.
