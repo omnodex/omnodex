@@ -318,10 +318,12 @@ omnodex install <target> [project]  install hooks for an AI agent platform
 omnodex uninstall [target] [project] remove Omnodex hooks (requires --confirm)
 omnodex status [project]            show which hooks are installed
 
-omnodex connect [--platform <name>]  generate a connection link to link this machine
-  [--label <name>]                    to your dashboard account. Auto-generates a
-                                      sync passphrase on first run. The link transfers
-                                      the passphrase securely (encrypted, zero-knowledge).
+omnodex connect [--token <token>]     connect this machine to your dashboard account.
+  [--platform <name>]                   Without --token: starts device code flow (displays
+  [--label <name>]                      a code + URL, polls for authorization).
+                                        With --token: stores the token directly.
+                                        Auto-generates a sync passphrase on first run.
+                                        Passphrase transferred end-to-end encrypted.
 
 omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       install   generate proxy config template

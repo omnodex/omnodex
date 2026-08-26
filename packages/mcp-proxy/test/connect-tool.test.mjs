@@ -127,18 +127,59 @@ test("checkConnectionStatus env vars take precedence over config", async (t) => 
 // handleConnect
 // ---------------------------------------------------------------------------
 
-test("handleConnect returns no_credentials when no API token", async (t) => {
+test("handleConnect initiates device code flow when no API token", async (t) => {
   const home = await withTmpHome(t);
   setEnv(t, "OMNODEX_HOME", home);
   clearEnv(t, "OMNODEX_API_TOKEN");
   clearEnv(t, "OMNODEX_SYNC_PASSPHRASE");
-  clearEnv(t, "OMNODEX_API_URL");
+  setEnv(t, "OMNODEX_API_URL", "https://api.test.omnodex.com");
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  globalThis.fetch = async (url, opts) => {
+    if (String(url).includes("/device/code")) {
+      return new Response(JSON.stringify({
+        device_code: "dc_test123",
+        user_code: "ABCD-1234",
+        verification_url: "https://dashboard.omnodex.com/device",
+        expires_in: 900,
+        interval: 5,
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("not found", { status: 404 });
+  };
 
   const mod = await import(`../dist/connect-tool.js?t=${Date.now()}-5`);
   const result = await mod.handleConnect({});
 
-  assert.equal(result.status, "no_credentials");
-  assert.ok(result.message.includes("No API token"));
+  assert.equal(result.status, "device_code");
+  assert.ok(result.user_code, "should return user_code");
+  assert.ok(result.connect_url, "should return connect_url");
+
+  // Cancel background poll so the test runner can exit
+  for (const poll of mod.activePolls.values()) poll.cancel();
+  mod.activePolls.clear();
+});
+
+test("handleConnect returns error when device code request fails", async (t) => {
+  const home = await withTmpHome(t);
+  setEnv(t, "OMNODEX_HOME", home);
+  clearEnv(t, "OMNODEX_API_TOKEN");
+  clearEnv(t, "OMNODEX_SYNC_PASSPHRASE");
+  setEnv(t, "OMNODEX_API_URL", "https://api.test.omnodex.com");
+
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  globalThis.fetch = async () => {
+    return new Response(JSON.stringify({ message: "Rate limited" }), { status: 429 });
+  };
+
+  const mod = await import(`../dist/connect-tool.js?t=${Date.now()}-5b`);
+  const result = await mod.handleConnect({});
+
+  assert.equal(result.status, "error");
 });
 
 test("handleConnect creates claim and returns connect URL", async (t) => {
