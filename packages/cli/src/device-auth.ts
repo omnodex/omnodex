@@ -14,6 +14,8 @@
  * the plaintext. The transfer key travels in the URL fragment.
  */
 
+import path from "node:path";
+import os from "node:os";
 import { computeMachineId, readMachineLabel } from "@omnodex/sync-encryptor";
 import { encryptForTransfer } from "./connect.js";
 
@@ -78,7 +80,7 @@ export async function requestDeviceCode(
   const machineId = computeMachineId();
   const omnodexHome =
     process.env.OMNODEX_HOME ??
-    require("node:path").join(require("node:os").homedir(), ".omnodex");
+    path.join(os.homedir(), ".omnodex");
   const machineLabel =
     opts.machineLabel ?? (await readMachineLabel(omnodexHome));
 
