@@ -212,7 +212,11 @@ export async function handleConnect(params: {
 // ---------------------------------------------------------------------------
 
 /** In-flight device code polling state, keyed by device_code. */
+<<<<<<< HEAD
 export const activePolls = new Map<string, { cancel: () => void }>();
+=======
+const activePolls = new Map<string, { cancel: () => void }>();
+>>>>>>> 746aa9a (feat: device code authorization flow)
 
 async function initiateDeviceCodeFlow(
   home: string,
