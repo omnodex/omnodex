@@ -33,6 +33,13 @@ The primary integration. Omnodex hooks into Claude Code's native hook system - h
 npm install -g omnodex      # or: npx omnodex
 ```
 
+**Update to latest**
+
+```bash
+omnodex update              # works for both npm and source installs
+omnodex update --check      # dry-run: see what's available
+```
+
 **Enable hooks for a project**
 
 ```bash
@@ -317,6 +324,12 @@ omnodex install <target> [project]  install hooks for an AI agent platform
                                                             settings.json instead
 omnodex uninstall [target] [project] remove Omnodex hooks (requires --confirm)
 omnodex status [project]            show which hooks are installed
+                                      --all                 full installation registry
+                                                            with stale install warnings
+omnodex update                      self-update (npm: npm update -g; source: git pull
+                                      --ff-only + npm install + npm run build)
+                                      --check               dry-run, show available updates
+omnodex --version, -V               show version (source installs show branch + sha)
 
 omnodex connect [--token <token>]     connect this machine to your dashboard account.
   [--platform <name>]                   Without --token: starts device code flow (displays
@@ -408,9 +421,12 @@ packages/
                            streaming key derivation (HKDF), StreamingTransport
   feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
-  cli/                     omnodex CLI: install, uninstall, status, spike,
+  cli/                     omnodex CLI: install, uninstall, status, update, spike,
                            detect, replay, report, dashboard, mcp-proxy, license,
                            connect. Multi-root dashboard config (config.ts)
+                           Stable hook launchers (launcher-template.ts)
+                           Installation registry (registry.ts)
+                           Self-update + background check (update.ts)
 ```
 
 ---

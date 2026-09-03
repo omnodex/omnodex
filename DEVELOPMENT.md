@@ -66,9 +66,12 @@ packages/
   sync-encryptor/          Zero-knowledge AES-256-GCM sync encryption (Argon2id KDF)
   feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
-  cli/                     omnodex CLI: install, uninstall, status, spike,
-                           detect, replay, report, dashboard, mcp-proxy, license
+  cli/                     omnodex CLI: install, uninstall, status, update, spike,
+                           detect, replay, report, dashboard, mcp-proxy, license, connect, sync
                            Multi-root dashboard config (config.ts)
+                           Stable hook launchers (launcher-template.ts)
+                           Installation registry (registry.ts)
+                           Self-update + background check (update.ts)
 demo/
   project/                 Demo project with SQLite DB, config with credentials
   api-server.js            Mock enrichment API (localhost:3456)
@@ -144,3 +147,4 @@ The detector writes `risk.detected` events back into the event log. The `dashboa
 - **Grep and Glob file read counts** are invocation counts, not individual file counts. The hook layer cannot observe how many files a Grep actually opened.
 - **`duration_ms` for Codex events** is computed from wall-clock timing between PreToolUse and PostToolUse shim invocations, not from Codex itself (Codex does not send this field). Claude Code also does not send `duration_ms` in hook payloads.
 - **Duplicate events from dual settings files** can occur when both `.claude/settings.json` and `.claude/settings.local.json` have hooks registered. Use `settings.local.json` exclusively (the `omnodex install claude-code` default).
+- **Node version managers (nvm, fnm, etc.):** Switching Node versions only requires reinstalling hooks for **legacy installs** (`--legacy-shim`). The default stable launcher installs resolve Node from PATH at runtime and handle version switches automatically.

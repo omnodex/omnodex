@@ -67,6 +67,10 @@ import {
   resolveCredentials,
 } from "./stream-config.js";
 import { createClaim, platformFromTarget } from "./connect.js";
+import { writeLauncher } from "./launcher-template.js";
+import type { LauncherPlatform } from "./launcher-template.js";
+import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
+import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
 // ValidateResult type available if needed for future use
 
@@ -713,17 +717,25 @@ async function installClaudeCode(args: string[]): Promise<void> {
   const paths = resolvePaths();
   const debug = args.includes("--debug");
   const useProjectSettings = args.includes("--project-settings");
+  const useLegacy = args.includes("--legacy-shim");
 
   const targetFile = useProjectSettings ? "settings.json" : "settings.local.json";
   const alternateFile = useProjectSettings ? "settings.local.json" : "settings.json";
 
+  // Write (or refresh) the stable launcher and use it as the shim path.
+  // The launcher resolves the actual shim at runtime, so hook commands
+  // survive npm updates without re-running `omnodex install`. (FS-012)
+  const shimPath = useLegacy
+    ? CLAUDE_HOOK_SHIM_PATH
+    : await writeLauncher("claude-code");
+
   // Warn if Omnodex hooks already exist in the alternate settings file.
   // Claude Code merges settings.json and settings.local.json; duplicate hooks
   // cause every event to be processed twice and produce double risk findings.
-  const nodePath = process.execPath;
+  const nodePath = useLegacy ? process.execPath : "node";
   const alternateInterceptor = new ClaudeCodeInterceptor({
     projectPath,
-    shimPath: CLAUDE_HOOK_SHIM_PATH,
+    shimPath,
     omnodexHome: paths.home,
     settingsFile: alternateFile,
     debug,
@@ -744,7 +756,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
 
   const interceptor = new ClaudeCodeInterceptor({
     projectPath,
-    shimPath: CLAUDE_HOOK_SHIM_PATH,
+    shimPath,
     omnodexHome: paths.home,
     settingsFile: targetFile,
     debug,
@@ -753,13 +765,29 @@ async function installClaudeCode(args: string[]): Promise<void> {
   await interceptor.install();
   console.log(`[install] installed Claude Code hooks into`);
   console.log(`          ${interceptor.settingsFilePath()}`);
-  console.log(`[install] shim:         ${CLAUDE_HOOK_SHIM_PATH}`);
-  console.log(`[install] node:         ${nodePath}`);
+  if (useLegacy) {
+    console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] note: re-run \`omnodex install claude-code\` after npm updates or Node version changes`);
+  } else {
+    console.log(`[install] launcher:     ${shimPath}`);
+    console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+  }
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
-  console.log(`[install] note: re-run \`omnodex install claude-code\` after changing Node versions (e.g. nvm use)`);
   console.log(
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
+
+  // Record in the installation registry (FS-012)
+  await addInstallation({
+    target: "claude-code",
+    projectPath,
+    settingsFile: targetFile,
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
@@ -772,11 +800,16 @@ async function installCodex(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const paths = resolvePaths();
   const debug = args.includes("--debug");
+  const useLegacy = args.includes("--legacy-shim");
 
-  const nodePath = process.execPath;
+  const shimPath = useLegacy
+    ? CODEX_HOOK_SHIM_PATH
+    : await writeLauncher("codex");
+
+  const nodePath = useLegacy ? process.execPath : "node";
   const interceptor = new CodexInterceptor({
     projectPath,
-    shimPath: CODEX_HOOK_SHIM_PATH,
+    shimPath,
     omnodexHome: paths.home,
     debug,
     nodePath,
@@ -784,14 +817,30 @@ async function installCodex(args: string[]): Promise<void> {
   await interceptor.install();
   console.log(`[install] installed Codex hooks into`);
   console.log(`          ${interceptor.hooksFilePath()}`);
-  console.log(`[install] shim:         ${CODEX_HOOK_SHIM_PATH}`);
-  console.log(`[install] node:         ${nodePath}`);
+  if (useLegacy) {
+    console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] note: re-run \`omnodex install codex\` after npm updates or Node version changes`);
+  } else {
+    console.log(`[install] launcher:     ${shimPath}`);
+    console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+  }
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(`[install] note: ensure hooks = true in ~/.codex/config.toml`);
-  console.log(`[install] note: re-run \`omnodex install codex\` after changing Node versions (e.g. nvm use)`);
   console.log(
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );
+
+  // Record in the installation registry (FS-012)
+  await addInstallation({
+    target: "codex",
+    projectPath,
+    settingsFile: "hooks.json",
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
@@ -806,17 +855,22 @@ async function installAntigravity(args: string[]): Promise<void> {
   const debug = args.includes("--debug");
   const wantHooks = args.includes("--hooks");
   const wantMcp = args.includes("--mcp");
+  const useLegacy = args.includes("--legacy-shim");
 
   // Default: hooks only (backward compat). If either flag is explicit, do only what was asked.
   const doHooks = wantHooks || !wantMcp;
   const doMcp = wantMcp;
 
-  const nodePath = process.execPath;
+  const shimPath = useLegacy
+    ? ANTIGRAVITY_HOOK_SHIM_PATH
+    : await writeLauncher("antigravity");
+
+  const nodePath = useLegacy ? process.execPath : "node";
 
   if (doHooks) {
     const interceptor = new AntigravityInterceptor({
       projectPath,
-      shimPath: ANTIGRAVITY_HOOK_SHIM_PATH,
+      shimPath,
       omnodexHome: paths.home,
       debug,
       nodePath,
@@ -824,10 +878,15 @@ async function installAntigravity(args: string[]): Promise<void> {
     await interceptor.install();
     console.log(`[install] installed Antigravity hooks into`);
     console.log(`          ${interceptor.hooksFilePath()}`);
-    console.log(`[install] shim:         ${ANTIGRAVITY_HOOK_SHIM_PATH}`);
-    console.log(`[install] node:         ${nodePath}`);
+    if (useLegacy) {
+      console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+      console.log(`[install] node:         ${nodePath}`);
+      console.log(`[install] note: re-run \`omnodex install antigravity\` after npm updates or Node version changes`);
+    } else {
+      console.log(`[install] launcher:     ${shimPath}`);
+      console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+    }
     console.log(`[install] OMNODEX_HOME: ${paths.home}`);
-    console.log(`[install] note: re-run \`omnodex install antigravity\` after changing Node versions (e.g. nvm use)`);
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
   }
 
@@ -838,6 +897,17 @@ async function installAntigravity(args: string[]): Promise<void> {
   console.log(
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
+
+  // Record in the installation registry (FS-012)
+  await addInstallation({
+    target: "antigravity",
+    projectPath,
+    settingsFile: doHooks ? "hooks.json" : "mcp_config.json",
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
@@ -1025,6 +1095,7 @@ async function cmdUninstall(args: string[]): Promise<void> {
 
   for (const hook of toRemove) {
     await hook.uninstall();
+    await removeInstallation(hook.target as LauncherPlatform, projectPath);
     console.log(`[uninstall] removed ${hook.label} hooks from ${hook.path}`);
   }
 }
@@ -1032,9 +1103,42 @@ async function cmdUninstall(args: string[]): Promise<void> {
 async function cmdStatus(_args: string[]): Promise<void> {
   const projectPath = path.resolve(_args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const paths = resolvePaths();
+  const showAll = _args.includes("--all");
 
-  console.log(`[status] project:      ${projectPath}`);
-  console.log(`[status] OMNODEX_HOME: ${paths.home}\n`);
+  // Version and environment info
+  const version = getInstalledVersion();
+  console.log(`[status] omnodex:      v${version}`);
+  console.log(`[status] OMNODEX_HOME: ${paths.home}`);
+
+  if (!showAll) {
+    console.log(`[status] project:      ${projectPath}\n`);
+  }
+
+  // If --all, show the full registry instead of per-project detection
+  if (showAll) {
+    console.log("");
+    const allInstalls = await listInstallations();
+    if (allInstalls.length === 0) {
+      console.log(`  No installations registered.`);
+      console.log(`\n  Run \`omnodex install <target>\` to get started.`);
+      return;
+    }
+    console.log(`  Registered installations (${allInstalls.length}):\n`);
+    for (const inst of allInstalls) {
+      const launcherTag = inst.usesLauncher ? "launcher" : "legacy";
+      console.log(`  ${inst.target} — ${inst.projectPath}`);
+      console.log(`    installed: ${inst.installedAt}  v${inst.installedVersion}  (${launcherTag})`);
+      console.log(`    settings: ${inst.settingsFile}`);
+    }
+
+    // Warn about stale (legacy) installations
+    const stale = await findStaleInstallations();
+    if (stale.length > 0) {
+      console.log(`\n  ⚠ ${stale.length} installation(s) use legacy absolute paths and will break on npm update.`);
+      console.log(`    Re-run \`omnodex install <target> <project>\` to upgrade them to stable launchers.`);
+    }
+    return;
+  }
 
   let anyInstalled = false;
 
@@ -1062,8 +1166,8 @@ async function cmdStatus(_args: string[]): Promise<void> {
   try {
     const codexHooksPath = codexInterceptor.hooksFilePath();
     await fs.access(codexHooksPath);
-    const content = await fs.readFile(codexHooksPath, "utf8");
-    if (content.includes("omnodex")) {
+    const fileContent = await fs.readFile(codexHooksPath, "utf8");
+    if (fileContent.includes("omnodex")) {
       console.log(`  Codex: installed`);
       console.log(`    ${codexHooksPath}`);
       anyInstalled = true;
@@ -1079,8 +1183,8 @@ async function cmdStatus(_args: string[]): Promise<void> {
   try {
     const agHooksPath = antigravityInterceptor.hooksFilePath();
     await fs.access(agHooksPath);
-    const content = await fs.readFile(agHooksPath, "utf8");
-    if (content.includes("omnodex")) {
+    const fileContent = await fs.readFile(agHooksPath, "utf8");
+    if (fileContent.includes("omnodex")) {
       console.log(`  Antigravity: installed`);
       console.log(`    ${agHooksPath}`);
       anyInstalled = true;
@@ -1378,7 +1482,34 @@ async function cmdSync(args: string[]): Promise<void> {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
+  // Background update check + notification (skip for update command itself)
+  if (command !== "update") {
+    await scheduleBackgroundCheck();
+    await printUpdateNotification();
+  }
+
   switch (command) {
+    case "update":
+      await runUpdate({
+        check: rest.includes("--check"),
+        refreshLaunchers: rest.includes("--refresh-launchers"),
+      });
+      return;
+    case "--version":
+    case "-V": {
+      const method = detectInstallMethod();
+      if (method === "source") {
+        const info = getSourceInstallInfo();
+        if (info) {
+          console.log(`${getInstalledVersion()} (source: ${info.branch} @ ${info.sha}${info.dirty ? "+" : ""})`);
+        } else {
+          console.log(`${getInstalledVersion()} (source)`);
+        }
+      } else {
+        console.log(getInstalledVersion());
+      }
+      return;
+    }
     case "install":
       await cmdInstall(rest);
       return;
@@ -1425,12 +1556,18 @@ async function main(): Promise<void> {
       console.log(`omnodex
 
 commands:
+  update             check for and install updates.
+                     Flags:
+                       --check               dry run — show available update
+                       --refresh-launchers   just refresh launcher scripts
   install <target> [project]
                      install Omnodex hooks for an AI agent platform.
                      Targets: claude-code, codex, antigravity
                      Defaults to cwd if project is omitted.
                      Flags:
                        --debug               verbose shim logging
+                       --legacy-shim         use legacy absolute path (not
+                                             recommended — breaks on update)
                        --project-settings    (claude-code only) edit
                                              settings.json instead of
                                              settings.local.json
@@ -1443,6 +1580,8 @@ commands:
                      remove Omnodex hooks. If target is omitted, removes
                      all hooks found in the project. Requires --confirm.
   status [project]   show which Omnodex hooks are installed in a project.
+                     Flags:
+                       --all                 show all registered installations
   license            show current license tier and features.
                      Subcommands: clear (remove cached license).
   connect            connect this machine to the cloud dashboard. If no
