@@ -43,8 +43,8 @@ const StdioUpstreamSchema = z.object({
   cwd: z.string().optional(),
   /**
    * Override the tool name prefix exposed to the agent.
-   * If set, tools appear as "{name_override}/{tool_name}" instead of
-   * "{name}/{tool_name}". Useful when the server name is long or conflicts.
+   * If set, tools appear as "{name_override}__{tool_name}" instead of
+   * "{name}__{tool_name}". Useful when the server name is long or conflicts.
    */
   name_override: z.string().optional(),
   /**
@@ -142,6 +142,16 @@ export function shouldRedactParams(
 ): boolean {
   return server.redact_parameters ?? config.redact_parameters;
 }
+
+/**
+ * Joins the upstream prefix and the upstream tool name in the name the agent
+ * sees. Clients restrict tool names to letters, digits, "_" and "-" (the
+ * Claude API enforces ^[a-zA-Z0-9_-]{1,64}$), so the separator must stay
+ * inside that set. A "/" separator gets rewritten by some clients, which
+ * breaks per-tool approval because the approved name no longer matches the
+ * called name.
+ */
+export const TOOL_NAME_SEPARATOR = "__";
 
 /**
  * Returns the tool name prefix for an upstream server.

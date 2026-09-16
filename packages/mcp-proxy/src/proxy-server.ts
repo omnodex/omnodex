@@ -20,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -41,11 +42,13 @@ export interface ProxyServerOptions {
   sessionId: string;
   /** Human-readable project path for session.started event. */
   projectPath?: string;
+  /** Inbound transport. Defaults to stdio; tests pass an in-memory transport. */
+  transport?: Transport;
 }
 
 /**
- * Creates and starts the inbound MCP server. Returns a stop function that
- * cleanly closes the server transport and emits session.ended.
+ * Creates and starts the inbound MCP server, emitting session.started on
+ * start and session.ended once the agent disconnects.
  *
  * This function does not return until the agent disconnects (stdin closes).
  * Callers should await it in the main proxy process.
@@ -167,6 +170,9 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       });
       return {
         content: outcome.result.content as Array<{ type: string }>,
+        ...(outcome.result.structuredContent !== undefined
+          ? { structuredContent: outcome.result.structuredContent }
+          : {}),
         isError: outcome.result.isError,
       };
     } catch (err) {
@@ -181,7 +187,12 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   });
 
   // ── Transport + session lifecycle ─────────────────────────────────────────
-  const transport = new StdioServerTransport();
+  const transport = opts.transport ?? new StdioServerTransport();
+  if (!opts.transport) {
+    // StdioServerTransport does not close itself when stdin ends, so without
+    // this the session never ends when the agent closes the pipe.
+    process.stdin.once("end", () => void transport.close());
+  }
   const connectStart = Date.now();
   const sessionStart = new Date().toISOString();
 
@@ -198,7 +209,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     project_path: projectPath,
     mcp_servers: config.upstream_servers.map((s) => s.name),
   };
-  void emit(startedEvent);
+  // Awaited so session.started is always written before any later event.
+  await emit(startedEvent);
 
   // Print the parameter-logging disclosure to stderr so it appears in the
   // agent's session log (Cowork shows this in the terminal panel).
@@ -210,8 +222,13 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     );
   }
 
-  // connect() resolves when the transport closes (agent disconnects / EOF).
+  // connect() resolves as soon as the transport has started, not when it
+  // closes, so wait for the close callback before recording session.ended.
+  const closed = new Promise<void>((resolve) => {
+    server.onclose = () => resolve();
+  });
   await server.connect(transport);
+  await closed;
 
   const endedAt = new Date().toISOString();
   const endedEvent: SessionEndedEvent = {
@@ -225,5 +242,6 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     duration_ms: Date.now() - connectStart,
     status: "completed",
   };
-  void emit(endedEvent);
+  // Awaited so the event is written before the caller shuts the process down.
+  await emit(endedEvent);
 }

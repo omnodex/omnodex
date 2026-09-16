@@ -27,6 +27,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   type ProxyConfig,
   type UpstreamServer,
+  TOOL_NAME_SEPARATOR,
   resolveUpstreamEnv,
   toolNamePrefix,
 } from "./config.js";
@@ -40,7 +41,7 @@ import {
  * what the agent sees; originalName is what the upstream server expects.
  */
 export interface PrefixedTool {
-  /** Name exposed to the agent, e.g. "filesystem/read_file" */
+  /** Name exposed to the agent, e.g. "filesystem__read_file" */
   prefixedName: string;
   /** Original name on the upstream server, e.g. "read_file" */
   originalName: string;
@@ -53,7 +54,40 @@ export interface PrefixedTool {
 /** Raw result from an upstream tools/call. */
 export interface UpstreamCallResult {
   content: unknown[];
+  /**
+   * Structured result for tools that declare an outputSchema. Clients reject
+   * a result without it when the tool advertises an outputSchema, so it must
+   * be forwarded whenever the upstream provides it.
+   */
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
+}
+
+/**
+ * JSON Schema dialect that MCP clients validate tool schemas against. Schemas
+ * declaring any other "$schema" (commonly draft-07, emitted by
+ * zod-to-json-schema) are rejected by clients whose validator only supports
+ * this dialect.
+ */
+const SUPPORTED_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
+
+/**
+ * Removes a top-level "$schema" declaration that names a dialect other than
+ * JSON Schema 2020-12, so the schema is validated under the client's default
+ * dialect. The keywords MCP servers use in tool schemas (type, properties,
+ * required, items, enum, additionalProperties, description) behave the same
+ * in draft-07 and 2020-12. Returns the input unchanged when there is nothing
+ * to remove.
+ */
+export function normalizeSchemaDialect<T>(schema: T): T {
+  if (schema === null || typeof schema !== "object" || !("$schema" in schema)) {
+    return schema;
+  }
+  const { $schema, ...rest } = schema as Record<string, unknown>;
+  if (typeof $schema === "string" && $schema.replace(/#$/, "") === SUPPORTED_SCHEMA_DIALECT) {
+    return schema;
+  }
+  return rest as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,14 +116,22 @@ class UpstreamConnection {
 
     for (const tool of result.tools) {
       this.toolMap.set(tool.name, tool);
-      const prefixedName = `${this.prefix}/${tool.name}`;
+      const prefixedName = `${this.prefix}${TOOL_NAME_SEPARATOR}${tool.name}`;
+      const definition: Tool = {
+        ...tool,
+        name: prefixedName,
+        inputSchema: normalizeSchemaDialect(tool.inputSchema),
+      };
+      if (tool.outputSchema) {
+        definition.outputSchema = normalizeSchemaDialect(tool.outputSchema);
+      }
       prefixed.push({
         prefixedName,
         originalName: tool.name,
         serverName: this.server.name,
         // Return the definition with the agent-visible name so the inbound
         // server can pass it through verbatim without re-deriving the prefix.
-        definition: { ...tool, name: prefixedName },
+        definition,
       });
     }
 
@@ -111,6 +153,9 @@ class UpstreamConnection {
     });
     return {
       content: result.content as unknown[],
+      ...(result.structuredContent !== undefined
+        ? { structuredContent: result.structuredContent as Record<string, unknown> }
+        : {}),
       isError: result.isError === true,
     };
   }
@@ -209,9 +254,9 @@ export class UpstreamClientPool {
       );
     }
 
-    // Derive original name: strip the prefix and the separating slash.
+    // Derive original name: strip the prefix and the separator.
     const prefix = toolNamePrefix(conn.server);
-    const originalName = prefixedName.slice(prefix.length + 1);
+    const originalName = prefixedName.slice(prefix.length + TOOL_NAME_SEPARATOR.length);
 
     return conn.callTool(originalName, args);
   }
