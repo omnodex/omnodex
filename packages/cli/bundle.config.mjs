@@ -79,7 +79,8 @@ for (const [name, entry] of Object.entries(BIN_ENTRIES)) {
 writeFileSync(join(outDir, "bin", "omnodex"), `#!/usr/bin/env node\nrequire("../omnodex-bundle.cjs");\n`);
 chmodSync(join(outDir, "bin", "omnodex"), 0o755);
 
-copyFileSync(join(pkgDir, "dist", "dashboard.html"), join(outDir, "dashboard.html"));
+// From src/: `tsc -b` alone (as in CI) does not copy it into dist/
+copyFileSync(join(pkgDir, "src", "dashboard.html"), join(outDir, "dashboard.html"));
 copyFileSync(join(pkgDir, "publish-package.json"), join(outDir, "package.json"));
 
 console.log(`Bundle written to ${outDir}`);
