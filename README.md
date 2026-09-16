@@ -10,284 +10,119 @@ Full documentation: [docs.omnodex.com](https://docs.omnodex.com/)
 
 ---
 
-## Integrations
+## Install
 
-Omnodex supports multiple interception surfaces. Choose the one that matches how you run your agent.
+Omnodex runs on the host where your agent runs. Install from source; the current npm release (0.2.0) does not include the hook handlers or MCP proxy that the integrations load at runtime.
+
+```bash
+git clone https://github.com/omnodex/omnodex.git
+cd omnodex
+npm install
+npx tsc -b
+npm install -g ./packages/cli     # links the omnodex command to this build
+```
+
+Requires Node.js 24 or newer. On Windows, run these in PowerShell for agents that run natively on Windows (Cowork, ChatGPT Desktop), and in WSL for agents you run inside WSL. Native Windows and WSL are separate hosts with separate Omnodex data.
+
+Hooks find their handlers through `omnodex-config.json` in the Omnodex home (`~/.omnodex`, or `C:\Users\<you>\.omnodex` on Windows):
+
+```json
+{
+  "shim_paths": {
+    "claude-code": "/path/to/omnodex/packages/hooks-provider/dist/bin/claude-hook-shim.js",
+    "codex": "/path/to/omnodex/packages/codex-provider/dist/bin/codex-hook-shim.js",
+    "antigravity": "/path/to/omnodex/packages/antigravity-provider/dist/bin/antigravity-hook-shim.js"
+  }
+}
+```
+
+Full setup guides: [docs.omnodex.com](https://docs.omnodex.com/getting-started/installation/)
 
 ---
 
+## Integrations
+
+| Agent | Mechanism | Setup |
+| --- | --- | --- |
+| Claude Code (CLI and IDE extensions) | Hooks | `omnodex install claude-code` in the project |
+| OpenAI Codex (ChatGPT Desktop, CLI, IDE) | Hooks, plus the Omnodex MCP server | `omnodex install codex` in the project, and register the MCP server in Codex |
+| Cowork | MCP proxy via the Omnodex plugin | Plugin plus `omnodex-proxy.json` with `proxy_bin` |
+| Google Antigravity (CLI, Desktop, IDE) | Hooks, optionally the MCP proxy | `omnodex install antigravity [--mcp]` in the project |
+| Any other MCP client | MCP proxy | Point the client at the proxy |
+
 ### Claude Code
-
-#### CLI / Terminal
-
-The primary integration. Omnodex hooks into Claude Code's native hook system - hooks fire asynchronously outside the agent's context window, adding zero token overhead.
-
-**Prerequisites**
-
-- Node.js 24 or newer
-- Claude Code installed and authenticated
-
-**Install**
-
-```bash
-npm install -g omnodex      # or: npx omnodex
-```
-
-**Update to latest**
-
-```bash
-omnodex update              # works for both npm and source installs
-omnodex update --check      # dry-run: see what's available
-```
-
-**Enable hooks for a project**
 
 ```bash
 cd /your/project
 omnodex install claude-code
 ```
 
-This writes Omnodex hook entries into `.claude/settings.local.json`. Claude Code picks them up automatically on the next session start - no restart required.
+Writes hook entries to `.claude/settings.local.json` (or `.claude/settings.json` with `--project-settings`). Start a new Claude Code session afterwards; hooks load at session start. The CLI and the IDE extensions both read these project settings.
 
-Options:
-```
-omnodex install claude-code [project]   # defaults to cwd
-omnodex install claude-code --debug    # verbose shim logging to stderr
-omnodex install claude-code --project-settings  # write to settings.json
-```
+Hooks record session lifecycle, every tool call (built-in and MCP) with parameters, timing, and status, and `file.read` / `file.written` events for Claude Code's file tools. They run outside the agent's context window, with zero token overhead.
 
-To remove the hooks:
-```bash
-omnodex uninstall claude-code --confirm
-```
-
-**View the dashboard**
-
-```bash
-omnodex dashboard
-# open http://localhost:7890
-```
-
-The dashboard shows a connection graph, credential ledger, risk events, and a full event timeline with click-through detail. It updates in real time via SSE - risks are detected and pushed to the browser as each tool call arrives.
-
-**Cloud streaming:** If you have an Omnodex Cloud account, the dashboard can push events to the hosted dashboard at `dashboard.omnodex.com` in real time. Set `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` as environment variables and events are encrypted end-to-end (AES-256-GCM) and streamed to your cloud dashboard automatically. No raw data ever leaves your machine unencrypted.
-
-**Connecting to your dashboard:** The easiest way to link the CLI to your dashboard account is the `connect` command:
-
-```bash
-omnodex connect
-```
-
-This auto-generates a sync passphrase (if you don't already have one), creates a secure one-time connection link, and prints it. Open the link in your browser while signed in to your dashboard account. The passphrase is transferred end-to-end encrypted and never visible to the server. After connecting, `OMNODEX_API_TOKEN` and `OMNODEX_SYNC_PASSPHRASE` are configured automatically for future sessions.
-
-**Multi-machine sync:** When you run `omnodex sync` from multiple machines, each machine is identified automatically by a stable ID derived from its hostname. The hosted dashboard fetches and decrypts blobs from all machines, merging them into a single unified view with a machine selector dropdown. No extra configuration is needed — just run `omnodex sync` on each machine with the same API token and passphrase. To give a machine a human-readable name, add a label to `~/.omnodex/config.json`:
-
-```json
-{
-  "machine": {
-    "label": "Work Laptop"
-  }
-}
-```
-
-**Multi-source aggregation (local):** If you run multiple agent surfaces simultaneously on the same machine (e.g. Cowork on Windows + Claude Code in WSL), the local dashboard can tail all of them at once. Configure additional roots in `~/.omnodex/config.json`:
-
-```json
-{
-  "dashboard": {
-    "roots": ["\\\\wsl$\\Ubuntu\\home\\you\\.omnodex"]
-  }
-}
-```
-
-Or pass them as a CLI flag: `omnodex dashboard --roots /path/to/.omnodex`. The default root (`~/.omnodex`) is always included. Events from all roots merge into a single timeline, filterable by source.
-
----
-
-#### IDE Extensions (VS Code, Cursor, JetBrains)
-
-Claude Code's IDE extensions use the same `.claude/settings.local.json` hook configuration as the CLI. Run `omnodex install claude-code` in your project directory and the hooks will fire inside IDE-based Claude Code sessions automatically.
-
----
-
-#### claude.ai Web
-
-> **Not yet available.** The claude.ai web interface does not support local MCP servers or hooks. Omnodex will support claude.ai web sessions via a hosted MCP proxy.
-
----
-
-#### Claude Desktop - claude.ai chat app
-
-The Claude desktop chat app supports MCP servers via its configuration. Add `omnodex-mcp-proxy` as an MCP server and route your existing MCP servers through it to capture all tool calls.
-
-```json
-{
-  "mcpServers": {
-    "omnodex": {
-      "command": "omnodex-mcp-proxy",
-      "args": []
-    }
-  }
-}
-```
-
-Configure the upstream servers in the Omnodex proxy config (see `omnodex mcp-proxy install`).
-
----
-
-#### Cowork
-
-Omnodex integrates with Cowork via an MCP proxy plugin. The proxy sits between Cowork and your upstream MCP servers, capturing every tool call to the Omnodex event log.
-
-Install the Omnodex plugin and add `omnodex-mcp-proxy` as the MCP server command in the plugin's `mcp.json`. All Cowork MCP traffic flows through the proxy transparently.
-
-> **Note:** Hook-based interception is not available in Cowork - plugin-contributed hooks are currently ignored upstream ([#27398](https://github.com/anthropics/claude-code/issues/27398), [#40495](https://github.com/anthropics/claude-code/issues/40495)). The MCP proxy approach provides equivalent coverage for all MCP tool calls.
-
----
+To remove: `omnodex uninstall claude-code --confirm`.
 
 ### OpenAI Codex
 
-#### CLI / Terminal
+Two independent parts:
 
-Omnodex integrates with the Codex hook system, using the same architecture as the Claude Code integration: a lightweight shim subprocess receives hook payloads on stdin, maps them to Omnodex trace events, and appends them to the event log without touching the agent's execution path.
+1. **Hooks**, per project:
 
-**Prerequisites**
+   ```bash
+   cd /your/project
+   omnodex install codex
+   ```
 
-- Node.js 24 or newer
-- Codex CLI installed
+   Writes `.codex/hooks.json`. Hooks are enabled by default in Codex; no feature flag is needed. Trust the Omnodex hooks when Codex asks. Hooks record session lifecycle, shell commands, and `apply_patch` edits as tool calls.
 
-**Enable hooks in your Codex config**
+2. **The Omnodex MCP server**, once per host. `omnodex install codex` does not register it. In ChatGPT Desktop use **Settings > MCP servers > Add server** (STDIO), or from the CLI:
 
-Codex hooks require an opt-in feature flag. Add this to `~/.codex/config.toml` (or the project-local `.codex/config.toml`):
+   ```bash
+   codex mcp add omnodex -- /absolute/path/to/node /path/to/omnodex/packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js --config ~/.omnodex/omnodex-proxy.json
+   ```
 
-```toml
-[features]
-codex_hooks = true
-```
+   Use the absolute path of the config file on hosts where `~` is not expanded. The Desktop app, CLI, and IDE extension share this entry when they run on the same host. On native Windows, use Windows paths.
 
-**Install**
+Hosted tools such as web search run on OpenAI's side and are not visible to local hooks.
 
-```bash
-npm install -g omnodex      # or: npx omnodex
-```
+### Cowork
 
-**Enable hooks for a project**
+Install the `omnodex-cowork` plugin, then create `~/.omnodex/omnodex-proxy.json` (on Windows, `C:\Users\<you>\.omnodex\omnodex-proxy.json`) with `proxy_bin` pointing at `packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js` in your build and at least one upstream MCP server. Fully quit and reopen Cowork.
 
-```bash
-cd /your/project
-omnodex install codex
-```
-
-This writes Omnodex hook entries into `.codex/hooks.json`. Codex picks them up automatically.
-
-Options:
-```
-omnodex install codex [project]    # defaults to cwd
-omnodex install codex --debug      # verbose shim logging to stderr
-```
-
-To remove the hooks:
-```bash
-omnodex uninstall codex --confirm
-```
-
-**View the dashboard**
-
-Same as Claude Code - run `omnodex dashboard` and open `http://localhost:7890`.
-
-**Known limitations (Codex hooks are a work in progress)**
-
-Codex hooks currently only fire for Bash tool calls. The following are **not** intercepted via hooks today:
-- File writes (`apply_patch`)
-- MCP tool calls
-- WebSearch
-- `unified_exec` shell calls (partial interception only)
-
-These are upstream gaps in Codex's hook coverage ([#20204](https://github.com/openai/codex/issues/20204)). The Omnodex schema is ready - coverage will expand automatically when Codex ships it.
-
----
-
-#### IDE Extension (VS Code, Cursor)
-
-The Codex IDE extension uses the same `.codex/` config directory as the CLI. Run `omnodex install codex` in your project and hooks will fire in IDE sessions.
-
----
-
-#### Codex Desktop App
-
-The Codex desktop app runs the Codex CLI under the hood and shares the same `.codex/hooks.json` configuration. `omnodex install codex` applies to desktop sessions as well.
-
-For complete tool coverage beyond what Codex hooks currently support (file writes, MCP calls), run the Omnodex MCP proxy alongside the hook-based approach. See the [MCP Proxy](#mcp-proxy) section below.
-
----
-
-#### Codex Web
-
-> **Not yet available.** Codex web sessions will be supported via a hosted Omnodex MCP proxy.
-
----
+The proxy records calls to the MCP servers routed through it. Cowork's built-in tools are not recorded: Cowork does not currently run plugin hooks.
 
 ### Google Antigravity
 
-#### CLI, Desktop App, IDE Extensions
-
-Omnodex hooks into Google Antigravity's hook system via the Shared Agent Harness. A single `omnodex install antigravity` command covers all three surfaces (CLI `agy`, Desktop App, and IDE extensions) because they share the same `.agents/hooks.json` configuration.
-
-**Prerequisites**
-
-- Node.js 24 or newer
-- Google Antigravity installed (CLI, Desktop, or IDE extension)
-
-**Install**
-
-```bash
-npm install -g omnodex      # or: npx omnodex
-```
-
-**Enable hooks for a project**
-
 ```bash
 cd /your/project
-omnodex install antigravity
+omnodex install antigravity           # hooks
+omnodex install antigravity --mcp     # MCP proxy
 ```
 
-This writes Omnodex hook entries into `.agents/hooks.json`. All Antigravity surfaces pick them up automatically.
+Writes `.agents/hooks.json` and, with `--mcp`, `.agents/mcp_config.json`. The CLI (`agy`), Desktop App, and Antigravity IDE share this configuration.
 
-Options:
-```
-omnodex install antigravity [project]    # defaults to cwd
-omnodex install antigravity --debug      # verbose shim logging to stderr
-```
+### MCP proxy
 
-To remove the hooks:
-```bash
-omnodex uninstall antigravity --confirm
-```
-
-**View the dashboard**
-
-Same as other integrations - run `omnodex dashboard` and open `http://localhost:7890`.
-
----
-
-### MCP Proxy
-
-For agents and platforms that don't expose a hook API, Omnodex provides a general-purpose MCP proxy. Route your agent's MCP traffic through the proxy and Omnodex captures tool calls, data flows, and credential usage across any MCP-compatible agent - regardless of model or runtime.
+For any MCP-capable agent, the proxy sits between the agent and its upstream MCP servers and records every call:
 
 ```bash
-# Generate a proxy config template
-omnodex mcp-proxy install
-
-# Check the config
-omnodex mcp-proxy status
-
-# Start the proxy
-omnodex mcp-proxy start
+omnodex mcp-proxy install    # create a config template in the Omnodex home
+omnodex mcp-proxy status     # show configured upstreams
+omnodex mcp-proxy start      # run the proxy on stdin/stdout
 ```
 
-The proxy config maps upstream MCP servers. Point your agent at `omnodex-mcp-proxy` instead of its usual MCP servers, and the proxy forwards all traffic while logging every tool call to the Omnodex event log.
+Upstream tools are exposed as `<server>__<tool>`, for example `filesystem__read_file`. See [packages/mcp-proxy](packages/mcp-proxy/README.md) for the configuration reference and exactly what is logged.
 
-Target platforms: Cowork, Claude Desktop, Codex Desktop (full tool coverage), claude.ai Web (requires hosted proxy), Codex Web (requires hosted proxy), and any other agent that connects to MCP servers.
+### Dashboards
+
+```bash
+omnodex dashboard            # http://localhost:7890
+```
+
+The local dashboard shows a connection graph, credential ledger, risk events, and an event timeline, updated in real time. To include another host's data (for example the Windows home from WSL), add it with `--roots /mnt/c/Users/<you>/.omnodex` or `dashboard.roots` in `~/.omnodex/config.json`.
+
+To use the hosted dashboard at `dashboard.omnodex.com`, run `omnodex connect` on each host. It starts a device code flow and stores an API token and a generated sync passphrase; events are encrypted end-to-end (AES-256-GCM) before they leave the machine. Each host appears as its own machine; set `machine.label` in `config.json` for a readable name.
 
 ---
 
@@ -322,6 +157,8 @@ omnodex install <target> [project]  install hooks for an AI agent platform
                                       --debug               verbose shim logging
                                       --project-settings    (claude-code) edit
                                                             settings.json instead
+                                      --hooks, --mcp        (antigravity) hooks and/or
+                                                            the MCP proxy
 omnodex uninstall [target] [project] remove Omnodex hooks (requires --confirm)
 omnodex status [project]            show which hooks are installed
                                       --all                 full installation registry
@@ -329,14 +166,16 @@ omnodex status [project]            show which hooks are installed
 omnodex update                      self-update (npm: npm update -g; source: git pull
                                       --ff-only + npm install + npm run build)
                                       --check               dry-run, show available updates
+                                      --refresh-launchers   rewrite hook launchers only
 omnodex --version, -V               show version (source installs show branch + sha)
 
-omnodex connect [--token <token>]     connect this machine to your dashboard account.
-  [--platform <name>]                   Without --token: starts device code flow (displays
-  [--label <name>]                      a code + URL, polls for authorization).
-                                        With --token: stores the token directly.
-                                        Auto-generates a sync passphrase on first run.
-                                        Passphrase transferred end-to-end encrypted.
+omnodex connect [--token <token>]   connect this host to your dashboard account.
+  [--passphrase <phrase>]             Without a stored token: starts a device code flow
+  [--platform <name>] [--api <url>]   (displays a code + URL, polls for authorization).
+                                      With a token: prints a one-time connection link.
+                                      Generates a sync passphrase on first run; the
+                                      passphrase is transferred end-to-end encrypted.
+omnodex sync                        encrypt the read model and upload it to the cloud
 
 omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       install   generate proxy config template
@@ -351,8 +190,10 @@ omnodex dashboard [port]            start the local dashboard (default port 7890
                                       --roots <path> [path...]  additional OMNODEX_HOME
                                                                 roots to tail
                                       --no-detect   skip the historical detection pass
-omnodex clear                       delete all event log data and the read model
-omnodex license                     manage license activation and status
+omnodex clear <session-id>          remove one session
+omnodex clear --all --confirm       delete the entire Omnodex home (events, config,
+                                      and cloud connection)
+omnodex license [clear]             show license tier, or clear the cached license
 ```
 
 ---
@@ -394,8 +235,12 @@ One pre-existing timing flake in the CLI streaming suite (`tailSession`) that on
 
 ## Known limitations
 
-- **Codex hook coverage** - Bash only today. File writes, MCP calls, and WebSearch are upstream gaps in Codex's hook system (see [#20204](https://github.com/openai/codex/issues/20204)).
-- **Cowork hook-based interception unavailable** - All Cowork versions currently ignore plugin-contributed hooks ([#27398](https://github.com/anthropics/claude-code/issues/27398), [#40495](https://github.com/anthropics/claude-code/issues/40495)). The MCP proxy approach provides full coverage for MCP tool calls as a workaround.
+- **npm release** - The published npm package (0.2.0) does not include the hook handlers or the MCP proxy entry point, so hooks installed from it record nothing and the Cowork and Codex plugins cannot start the proxy. Install from source.
+- **Codex hook coverage** - `apply_patch` edits are recorded as tool calls, not yet as `file.written` events. Hosted tools such as web search are not visible to local hooks.
+- **Cowork built-in tools** - Cowork does not run plugin-contributed hooks ([#27398](https://github.com/anthropics/claude-code/issues/27398), [#40495](https://github.com/anthropics/claude-code/issues/40495)), so only MCP tool calls routed through the proxy are recorded.
+- **One host's hooks per project folder** - Hook commands contain the installing host's paths. Installing from native Windows and from WSL in the same project folder replaces the other host's hooks.
+- **MCP proxy upstreams** - The proxy needs at least one upstream, stops if any upstream fails to start, and supports `stdio` upstreams only.
+- **Proxy session end with ChatGPT Desktop** - ChatGPT Desktop can stop the proxy without closing its connection, so those proxy sessions may be missing `session.ended`.
 - **Grep/Glob file read counts** - Reported as invocation counts, not individual file counts. The hook layer cannot observe how many files a search actually opened.
 - **`duration_ms` for Codex events** - Computed from wall-clock timing between PreToolUse and PostToolUse shim invocations, not from Codex itself (Codex does not send this field).
 - **Dual settings file duplication (Claude Code)** - If both `.claude/settings.json` and `.claude/settings.local.json` contain Omnodex hooks, events will be double-counted. Use `settings.local.json` exclusively (the `omnodex install claude-code` default).

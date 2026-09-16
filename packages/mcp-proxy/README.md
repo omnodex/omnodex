@@ -82,24 +82,30 @@ You can also set `redact_parameters: true` at the top level to redact all server
 
 ## Installation
 
-```bash
-npm install -g @omnodex/cli
-```
-
-This installs the `omnodex` CLI and the `omnodex-mcp-proxy` binary.
-
-### For Cowork Desktop or Codex
-
-Install the plugin bundle (one-click, no terminal required):
-
-- **Cowork:** install `omnodex-cowork.plugin` from [omnodex.com/download](https://omnodex.com/download)
-- **Codex:** install `omnodex-codex.plugin` from the same page
-
-Then follow the in-app setup prompt, or run:
+Install Omnodex from source (the current npm release does not include the proxy entry point):
 
 ```bash
-omnodex mcp-proxy install --platform cowork   # or --platform codex
+git clone https://github.com/omnodex/omnodex.git
+cd omnodex
+npm install
+npx tsc -b
 ```
+
+The proxy entry point is `packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js`. Run it with Node.js, or through the CLI as `omnodex mcp-proxy start`.
+
+### For Cowork or Codex
+
+The Omnodex plugins start the proxy for you. Point them at your build with `proxy_bin` in `omnodex-proxy.json`:
+
+```json
+{
+  "version": 1,
+  "proxy_bin": "/path/to/omnodex/packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js",
+  "upstream_servers": [ ... ]
+}
+```
+
+On Windows, use Windows paths with escaped backslashes. For Codex on any platform you can instead register the proxy directly, as in the manual setup below. Setup guides: [Cowork](https://docs.omnodex.com/guides/cowork/), [Codex](https://docs.omnodex.com/guides/codex/).
 
 ### Manual setup (any MCP-capable agent)
 
@@ -108,10 +114,16 @@ omnodex mcp-proxy install --platform cowork   # or --platform codex
 ```json
 {
   "name": "omnodex",
-  "command": "omnodex-mcp-proxy",
-  "args": ["--config", "~/.omnodex/omnodex-proxy.json"]
+  "command": "/absolute/path/to/node",
+  "args": [
+    "/path/to/omnodex/packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js",
+    "--config",
+    "/home/<you>/.omnodex/omnodex-proxy.json"
+  ]
 }
 ```
+
+Use absolute paths: desktop apps may not share your terminal's `PATH` or expand `~`.
 
 2. Create `~/.omnodex/omnodex-proxy.json` with your upstream servers:
 
@@ -139,6 +151,7 @@ omnodex mcp-proxy install --platform cowork   # or --platform codex
 
 3. Restart your agent. It will connect to the proxy, which connects to your
    upstream servers. Tool names become `filesystem__read_file`, `github__create_issue`, etc.
+   Start a new conversation or task afterwards; existing ones may keep their old tool list.
 
 ---
 
@@ -149,8 +162,8 @@ omnodex mcp-proxy install --platform cowork   # or --platform codex
 # run manually to debug or verify upstream connections)
 omnodex mcp-proxy start [--config <path>]
 
-# Print setup instructions and create a config template
-omnodex mcp-proxy install [--platform cowork|codex|generic]
+# Create a config template if none exists
+omnodex mcp-proxy install
 
 # Show configured upstream servers and their redaction status
 omnodex mcp-proxy status
@@ -190,7 +203,7 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].args` | string[] | `[]` | Arguments to pass to command |
 | `upstream_servers[].env` | object | `{}` | Env vars; values support `${VAR}` interpolation |
 | `upstream_servers[].redact_parameters` | boolean | inherits global | Per-server override |
-| `upstream_servers[].name_override` | string | — | Use a shorter prefix instead of `name` |
+| `upstream_servers[].name_override` | string | (none) | Use a shorter prefix instead of `name` |
 
 `${VAR}` in `env` values is resolved from the proxy's process environment. Secrets
 stay out of the config file.
@@ -200,19 +213,21 @@ stay out of the config file.
 ## Known Limitations
 
 **Built-in tool blindness.** The proxy only sees MCP tool calls. Built-in agent
-tools (Read, Write, Edit, Bash, Glob, Grep in Cowork; apply_patch in Codex) are not
-routed through the MCP protocol and are therefore invisible to the proxy. For Codex,
-the hook-based CodexInterceptor covers built-ins separately. For Cowork, this gap
-will close when plugin hook delivery is fixed.
+tools (read, write, edit, and shell tools in Cowork; `apply_patch` and shell commands
+in Codex) are not routed through the MCP protocol and are invisible to the proxy. For
+Codex, the hook integration records them separately. Cowork does not currently run
+plugin hooks, so its built-in tools are not recorded.
 
-**Additive coverage only (v0.5).** The proxy observes only MCP servers explicitly
-routed through it. MCPs the agent connects to directly are not monitored. A future
-auto-injection installer (`omnodex mcp-proxy install`) will migrate existing direct
-connections to route through the proxy.
+**Additive coverage only.** The proxy observes only MCP servers explicitly routed
+through it. MCP servers the agent connects to directly are not monitored.
 
-**HTTP upstream transport.** The `transport: "http"` config field is accepted by
-the schema but not yet implemented. Stdio covers all common local MCP servers.
-HTTP support is planned for a future release.
+**Upstream startup.** The proxy needs at least one upstream server and stops if any
+upstream fails to start. Test a new upstream by running the proxy yourself before
+adding it to a desktop app.
+
+**HTTP upstream transport.** The `transport: "http"` config field is accepted by the
+schema but not implemented; the proxy stops with an error if it is used. Use `stdio`
+upstreams.
 
 ---
 
@@ -220,7 +235,7 @@ HTTP support is planned for a future release.
 
 The proxy implements the `Interceptor` interface from `@omnodex/shared` and emits
 the same `TraceEvent` wire format as all other Omnodex interceptors. The event log,
-projector, analyzer, and dashboard are interceptor-agnostic — they handle proxy-sourced
+projector, analyzer, and dashboard are interceptor-agnostic: they handle proxy-sourced
 events identically to hook-sourced events, distinguished only by the `interceptor: "mcp-proxy"`
 field on each event.
 
