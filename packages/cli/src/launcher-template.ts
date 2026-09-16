@@ -19,9 +19,19 @@
  *   3. omnodex on PATH -> resolve relative to its location
  *   4. Common global npm node_modules dirs
  *   5. require.resolve from the Node binary running the launcher
+ *
+ * Steps 3-5 check two layouts: a workspace checkout
+ * (packages/<provider>/dist/bin/<shim>) and the published npm package,
+ * which ships every shim flat in its bin/ directory (omnodex/bin/<shim>).
+ *
+ * Arguments passed to the launcher are forwarded to the shim (Antigravity
+ * passes the hook event name this way). Setting OMNODEX_LAUNCHER_RESOLVE_ONLY=1
+ * prints the resolved shim path and exits without running it, which is how
+ * `omnodex status` checks that hooks can find their shim.
  */
 
 import { promises as fs } from "node:fs";
+import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 
@@ -54,6 +64,17 @@ const PLATFORM_INFO: Record<LauncherPlatform, PlatformShimInfo> = {
   },
 };
 
+/** All platforms that have a hook launcher. */
+export const LAUNCHER_PLATFORMS: LauncherPlatform[] = ["claude-code", "codex", "antigravity"];
+
+/**
+ * Filename of a platform's shim. The published npm package ships each shim
+ * under this name in its bin/ directory.
+ */
+export function shimFilename(platform: LauncherPlatform): string {
+  return path.posix.basename(PLATFORM_INFO[platform].shimRelative);
+}
+
 /**
  * Return the stable path where a launcher will be written.
  * Does not check whether the file exists.
@@ -68,7 +89,7 @@ export function launcherPath(platform: LauncherPlatform): string {
  * The generated script is a standalone CJS file with no dependencies.
  * Uses string concatenation to avoid nested template literal escaping.
  */
-function generateLauncherSource(platform: LauncherPlatform): string {
+export function generateLauncherSource(platform: LauncherPlatform): string {
   const info = PLATFORM_INFO[platform];
   const lines: string[] = [
     '#!/usr/bin/env node',
@@ -77,13 +98,14 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '// This file survives npm updates. The actual hook shim is resolved at runtime.',
     '"use strict";',
     'const { spawnSync } = require("node:child_process");',
-    'const { existsSync, readFileSync, mkdirSync, appendFileSync } = require("node:fs");',
+    'const { existsSync, readFileSync, realpathSync, mkdirSync, appendFileSync } = require("node:fs");',
     'const { join, dirname } = require("node:path");',
     'const os = require("node:os");',
     '',
     'const PLATFORM = ' + JSON.stringify(platform) + ';',
     'const PACKAGE_NAME = ' + JSON.stringify(info.packageName) + ';',
     'const SHIM_RELATIVE = ' + JSON.stringify(info.shimRelative) + ';',
+    'const SHIM_FILE = ' + JSON.stringify(shimFilename(platform)) + ';',
     '',
     'const HOME = os.homedir();',
     'const OMNODEX_DIR = process.env.OMNODEX_HOME || join(HOME, ".omnodex");',
@@ -141,6 +163,14 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '    );',
     '    if (result.status === 0 && result.stdout.trim()) {',
     '      var omnodexBin = result.stdout.trim().split(/\\r?\\n/)[0].trim();',
+    '      // npm package: bin/omnodex is symlinked into the global bin dir on Unix',
+    '      try {',
+    '        var sibling = join(dirname(realpathSync(omnodexBin)), SHIM_FILE);',
+    '        if (existsSync(sibling)) {',
+    '          log("found next to PATH omnodex binary: " + sibling);',
+    '          return sibling;',
+    '        }',
+    '      } catch (e) {}',
     '      var dir = dirname(omnodexBin);',
     '      for (var i = 0; i < 8; i++) {',
     '        var candidate = join(dir, "packages", PACKAGE_NAME, SHIM_RELATIVE);',
@@ -152,6 +182,12 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '        if (existsSync(parentCandidate)) {',
     '          log("found via PATH node_modules: " + parentCandidate);',
     '          return parentCandidate;',
+    '        }',
+    '        // npm package: Windows wrappers sit beside node_modules/omnodex',
+    '        var packageCandidate = join(dir, "node_modules", "omnodex", "bin", SHIM_FILE);',
+    '        if (existsSync(packageCandidate)) {',
+    '          log("found via PATH omnodex package: " + packageCandidate);',
+    '          return packageCandidate;',
     '        }',
     '        dir = dirname(dir);',
     '      }',
@@ -178,6 +214,14 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '    // nvm / fnm / volta',
     '    join(dirname(nodeDir), "lib", "node_modules", "omnodex", "packages", PACKAGE_NAME, SHIM_RELATIVE),',
     '    join(dirname(nodeDir), "lib", "node_modules", "@omnodex", PACKAGE_NAME, SHIM_RELATIVE),',
+    '    // Published npm package (shims ship flat in omnodex/bin)',
+    '    join(dirname(nodeDir), "lib", "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join(nodeDir, "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join(HOME, ".npm-global", "lib", "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join("/usr", "local", "lib", "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join("/usr", "lib", "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join("/opt", "homebrew", "lib", "node_modules", "omnodex", "bin", SHIM_FILE),',
+    '    join(HOME, "AppData", "Roaming", "npm", "node_modules", "omnodex", "bin", SHIM_FILE),',
     '  ];',
     '  for (var ci = 0; ci < candidates.length; ci++) {',
     '    if (existsSync(candidates[ci])) {',
@@ -188,7 +232,7 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '',
     '  // 5. Try require.resolve',
     '  try {',
-    '    var resolveScript = "try { console.log(require.resolve(\\"@omnodex/" + PACKAGE_NAME + "/" + SHIM_RELATIVE + "\\")); } catch (e) { try { console.log(require.resolve(\\"omnodex/packages/" + PACKAGE_NAME + "/" + SHIM_RELATIVE + "\\")); } catch (e2) {} }";',
+    '    var resolveScript = "try { console.log(require.resolve(\\"@omnodex/" + PACKAGE_NAME + "/" + SHIM_RELATIVE + "\\")); } catch (e) { try { console.log(require.resolve(\\"omnodex/packages/" + PACKAGE_NAME + "/" + SHIM_RELATIVE + "\\")); } catch (e2) { try { console.log(require.resolve(\\"omnodex/bin/" + SHIM_FILE + "\\")); } catch (e3) {} } }";',
     '    var result2 = spawnSync(',
     '      process.execPath,',
     '      ["-e", resolveScript],',
@@ -209,14 +253,21 @@ function generateLauncherSource(platform: LauncherPlatform): string {
     '',
     'log("launcher started");',
     'var shimPath = findShim();',
+    '',
+    '// Resolve-only mode: report the shim path without running it',
+    'if (process.env.OMNODEX_LAUNCHER_RESOLVE_ONLY === "1") {',
+    '  if (shimPath) process.stdout.write(shimPath + "\\n");',
+    '  process.exit(shimPath ? 0 : 1);',
+    '}',
+    '',
     'if (!shimPath) {',
-    '  logFatal("Could not locate " + PLATFORM + " hook shim. Run: omnodex update --refresh-launchers");',
+    '  logFatal("Could not locate " + PLATFORM + " hook shim. Run: omnodex status");',
     '  // Exit 0 so the AI agent is never blocked by a missing Omnodex install',
     '  process.exit(0);',
     '}',
     '',
     'log("spawning shim: " + shimPath);',
-    'var result = spawnSync(process.execPath, [shimPath], {',
+    'var result = spawnSync(process.execPath, [shimPath].concat(process.argv.slice(2)), {',
     '  stdio: "inherit",',
     '  env: process.env,',
     '});',
@@ -250,12 +301,50 @@ export async function writeLauncher(platform: LauncherPlatform): Promise<string>
  * Returns a map of platform -> launcher path.
  */
 export async function writeAllLaunchers(): Promise<Record<LauncherPlatform, string>> {
-  const platforms: LauncherPlatform[] = ["claude-code", "codex", "antigravity"];
   const result = {} as Record<LauncherPlatform, string>;
-  for (const p of platforms) {
+  for (const p of LAUNCHER_PLATFORMS) {
     result[p] = await writeLauncher(p);
   }
   return result;
+}
+
+/**
+ * Rewrite launchers that exist but were generated by a different version.
+ * Launchers that were never installed are left alone. Returns the platforms
+ * that were refreshed.
+ *
+ * `omnodex update` refreshes launchers from the process that ran the npm
+ * install, which is still the old version, so the new version calls this on
+ * startup to replace them.
+ */
+export async function refreshStaleLaunchers(): Promise<LauncherPlatform[]> {
+  const refreshed: LauncherPlatform[] = [];
+  for (const p of LAUNCHER_PLATFORMS) {
+    try {
+      await fs.access(launcherPath(p));
+    } catch {
+      continue;
+    }
+    if (!(await isLauncherCurrent(p))) {
+      await writeLauncher(p);
+      refreshed.push(p);
+    }
+  }
+  return refreshed;
+}
+
+/**
+ * Run a launcher in resolve-only mode and return the shim path it finds,
+ * or null if it cannot locate one.
+ */
+export function resolveLauncherShim(platform: LauncherPlatform): string | null {
+  const result = spawnSync(process.execPath, [launcherPath(platform)], {
+    encoding: "utf8",
+    env: { ...process.env, OMNODEX_LAUNCHER_RESOLVE_ONLY: "1" },
+    timeout: 15000,
+  });
+  const out = result.status === 0 ? result.stdout.trim() : "";
+  return out || null;
 }
 
 /**
