@@ -11,6 +11,8 @@
  *   MOCK_TOOLS          JSON array of tool names to expose (default: 3 tools)
  *   MOCK_RESULT_TEXT    text to return from every tools/call (default: "ok")
  *   MOCK_ERROR          if "1", every tools/call returns isError:true
+ *   MOCK_STRUCTURED     if "1", tools declare an outputSchema and return
+ *                       structuredContent alongside the text content
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -20,6 +22,7 @@ import { z } from "zod";
 const name = process.env.MOCK_SERVER_NAME ?? "mock";
 const resultText = process.env.MOCK_RESULT_TEXT ?? "ok";
 const returnError = process.env.MOCK_ERROR === "1";
+const structured = process.env.MOCK_STRUCTURED === "1";
 
 const defaultTools = ["read_file", "write_file", "list_dir"];
 let tools;
@@ -34,6 +37,24 @@ try {
 const server = new McpServer({ name, version: "0.0.0" });
 
 for (const toolName of tools) {
+  if (structured) {
+    server.registerTool(
+      toolName,
+      {
+        description: `Mock tool: ${toolName}`,
+        inputSchema: { input: z.string().optional() },
+        outputSchema: { content: z.string() },
+      },
+      async ({ input }) => {
+        const text = `${resultText}:${toolName}:${input ?? ""}`;
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: { content: text },
+        };
+      }
+    );
+    continue;
+  }
   server.tool(
     toolName,
     `Mock tool: ${toolName}`,

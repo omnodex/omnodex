@@ -13,8 +13,8 @@ Licensed under AGPL v3.
 
 The proxy registers itself as a single MCP server in your agent's config. It
 connects to your real MCP servers (filesystem, GitHub, Slack, etc.) in the
-background, exposes their tools under prefixed names (`filesystem/read_file`,
-`github/create_issue`), and logs every tool call as a `tool.invoked` /
+background, exposes their tools under prefixed names (`filesystem__read_file`,
+`github__create_issue`), and logs every tool call as a `tool.invoked` /
 `tool.completed` TraceEvent to the local event log.
 
 ```
@@ -42,7 +42,7 @@ and does not record.
 
 | Data | Logged? | Notes |
 |------|---------|-------|
-| Tool name | ✅ Yes | e.g. `filesystem/read_file` |
+| Tool name | ✅ Yes | e.g. `filesystem__read_file` |
 | Tool call parameters | ✅ Yes (default) | File paths, queries, code snippets. See [Parameter redaction](#parameter-redaction). |
 | Tool call result (content) | ❌ No | Only the byte size of the response is recorded. |
 | Upstream server credentials | ❌ No | API keys and tokens are env vars inside the upstream process -- they never appear in MCP protocol messages. |
@@ -138,7 +138,7 @@ omnodex mcp-proxy install --platform cowork   # or --platform codex
 ```
 
 3. Restart your agent. It will connect to the proxy, which connects to your
-   upstream servers. Tool names become `filesystem/read_file`, `github/create_issue`, etc.
+   upstream servers. Tool names become `filesystem__read_file`, `github__create_issue`, etc.
 
 ---
 
@@ -226,8 +226,16 @@ field on each event.
 
 The proxy is both an MCP server (accepts inbound stdio from the agent) and an MCP
 client pool (maintains outbound stdio connections to each upstream server). Tool names
-from upstream servers are namespaced with a prefix (`filesystem/read_file`) to avoid
-collisions and to make the `mcp_server` field in every TraceEvent unambiguous.
+from upstream servers are namespaced with a prefix (`filesystem__read_file`) to avoid
+collisions and to make the `mcp_server` field in every TraceEvent unambiguous. The
+separator is `__` because MCP clients only accept letters, digits, `_` and `-` in tool
+names.
+
+Tool definitions are otherwise passed through unchanged, with one normalization: a
+`$schema` declaration naming a JSON Schema dialect other than 2020-12 (commonly
+draft-07) is removed from `inputSchema` and `outputSchema`, because clients validate
+tool schemas as 2020-12 and reject other dialects. Tool results are forwarded with both
+`content` and `structuredContent`.
 
 ---
 
@@ -236,7 +244,7 @@ collisions and to make the `mcp_server` field in every TraceEvent unambiguous.
 ```bash
 npm install
 npm run build          # tsc -b
-npm test               # 49 unit + integration tests
+npm test               # unit + integration tests
 ```
 
 Tests use Node's built-in test runner (`node:test`). Integration tests in

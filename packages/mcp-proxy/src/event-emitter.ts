@@ -37,7 +37,7 @@ const REDACTED_SENTINEL = "[REDACTED]";
 // ---------------------------------------------------------------------------
 
 export interface CallToolOptions {
-  /** Prefixed tool name as seen by the agent, e.g. "filesystem/read_file" */
+  /** Prefixed tool name as seen by the agent, e.g. "filesystem__read_file" */
   prefixedName: string;
   /** Raw arguments from the agent's tools/call request */
   args: Record<string, unknown>;

@@ -25,8 +25,8 @@ const BASE_CONFIG = ProxyConfigSchema.parse({
 
 /** Builds a minimal mock UpstreamClientPool. */
 function makePool({
-  knownTools = ["filesystem/read_file", "filesystem/write_file"],
-  serverMap = { "filesystem/read_file": "filesystem", "filesystem/write_file": "filesystem" },
+  knownTools = ["filesystem__read_file", "filesystem__write_file"],
+  serverMap = { "filesystem__read_file": "filesystem", "filesystem__write_file": "filesystem" },
   callResult = { content: [{ type: "text", text: "file contents" }], isError: false },
   callError = null,
 } = {}) {
@@ -47,7 +47,7 @@ function collectEvents() {
 }
 
 const BASE_OPTS = {
-  prefixedName: "filesystem/read_file",
+  prefixedName: "filesystem__read_file",
   args: { path: "/etc/hosts" },
   toolCallId: "tc-001",
   sessionId: "sess-test",
@@ -67,7 +67,7 @@ test("emits tool.invoked before the call", async () => {
   assert.ok(invoked, "tool.invoked not emitted");
   assert.equal(invoked.event_type, "tool.invoked");
   assert.equal(invoked.interceptor, "mcp-proxy");
-  assert.equal(invoked.tool_name, "filesystem/read_file");
+  assert.equal(invoked.tool_name, "filesystem__read_file");
   assert.equal(invoked.mcp_server, "filesystem");
   assert.equal(invoked.tool_call_id, "tc-001");
   assert.equal(invoked.session_id, "sess-test");
@@ -100,7 +100,7 @@ test("redacts parameter VALUES but preserves KEYS when redact_parameters is true
       { name: "filesystem", transport: "stdio", command: "node" },
     ],
   });
-  const pool = makePool({ serverMap: { "filesystem/read_file": "filesystem" } });
+  const pool = makePool({ serverMap: { "filesystem__read_file": "filesystem" } });
 
   await callToolWithEvents(pool, cfg, emit, {
     ...BASE_OPTS,
@@ -118,13 +118,13 @@ test("per-server redact_parameters override beats global false", async () => {
   const { events, emit } = collectEvents();
   // github server has redact_parameters: true per BASE_CONFIG
   const pool = makePool({
-    knownTools: ["github/create_issue"],
-    serverMap: { "github/create_issue": "github" },
+    knownTools: ["github__create_issue"],
+    serverMap: { "github__create_issue": "github" },
   });
 
   await callToolWithEvents(pool, BASE_CONFIG, emit, {
     ...BASE_OPTS,
-    prefixedName: "github/create_issue",
+    prefixedName: "github__create_issue",
     args: { title: "secret bug", body: "private details" },
   });
 
@@ -207,6 +207,21 @@ test("response_bytes is non-zero for non-empty content", async () => {
   assert.ok(completed.response_bytes > 100);
 });
 
+test("outcome keeps structuredContent from the upstream result", async () => {
+  const { emit } = collectEvents();
+  const pool = makePool({
+    callResult: {
+      content: [{ type: "text", text: "{\"size\":3}" }],
+      structuredContent: { size: 3 },
+      isError: false,
+    },
+  });
+
+  const outcome = await callToolWithEvents(pool, BASE_CONFIG, emit, BASE_OPTS);
+
+  assert.deepEqual(outcome.result.structuredContent, { size: 3 });
+});
+
 // ---------------------------------------------------------------------------
 // McpToolNotFoundError (thrown before any events)
 // ---------------------------------------------------------------------------
@@ -218,7 +233,7 @@ test("throws McpToolNotFoundError for unknown tool (no events emitted)", async (
   await assert.rejects(
     () => callToolWithEvents(pool, BASE_CONFIG, emit, {
       ...BASE_OPTS,
-      prefixedName: "unknown/tool",
+      prefixedName: "unknown__tool",
     }),
     (err) => {
       assert.ok(err instanceof McpToolNotFoundError);

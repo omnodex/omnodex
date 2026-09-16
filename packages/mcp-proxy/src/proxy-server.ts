@@ -20,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -41,11 +42,13 @@ export interface ProxyServerOptions {
   sessionId: string;
   /** Human-readable project path for session.started event. */
   projectPath?: string;
+  /** Inbound transport. Defaults to stdio; tests pass an in-memory transport. */
+  transport?: Transport;
 }
 
 /**
- * Creates and starts the inbound MCP server. Returns a stop function that
- * cleanly closes the server transport and emits session.ended.
+ * Creates and starts the inbound MCP server, emitting session.started on
+ * start and session.ended once the agent disconnects.
  *
  * This function does not return until the agent disconnects (stdin closes).
  * Callers should await it in the main proxy process.
@@ -167,6 +170,9 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       });
       return {
         content: outcome.result.content as Array<{ type: string }>,
+        ...(outcome.result.structuredContent !== undefined
+          ? { structuredContent: outcome.result.structuredContent }
+          : {}),
         isError: outcome.result.isError,
       };
     } catch (err) {
@@ -181,7 +187,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   });
 
   // ── Transport + session lifecycle ─────────────────────────────────────────
-  const transport = new StdioServerTransport();
+  const transport = opts.transport ?? new StdioServerTransport();
   const connectStart = Date.now();
   const sessionStart = new Date().toISOString();
 
@@ -210,8 +216,13 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     );
   }
 
-  // connect() resolves when the transport closes (agent disconnects / EOF).
+  // connect() resolves as soon as the transport has started, not when it
+  // closes, so wait for the close callback before recording session.ended.
+  const closed = new Promise<void>((resolve) => {
+    server.onclose = () => resolve();
+  });
   await server.connect(transport);
+  await closed;
 
   const endedAt = new Date().toISOString();
   const endedEvent: SessionEndedEvent = {
