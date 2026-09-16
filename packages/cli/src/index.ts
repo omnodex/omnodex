@@ -67,7 +67,13 @@ import {
   resolveCredentials,
 } from "./stream-config.js";
 import { createClaim, platformFromTarget } from "./connect.js";
-import { writeLauncher } from "./launcher-template.js";
+import {
+  writeLauncher,
+  launcherPath,
+  refreshStaleLaunchers,
+  resolveLauncherShim,
+  LAUNCHER_PLATFORMS,
+} from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
 import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
@@ -1111,8 +1117,11 @@ async function cmdStatus(_args: string[]): Promise<void> {
   console.log(`[status] OMNODEX_HOME: ${paths.home}`);
 
   if (!showAll) {
-    console.log(`[status] project:      ${projectPath}\n`);
+    console.log(`[status] project:      ${projectPath}`);
   }
+
+  await printLauncherHealth(paths.home);
+  console.log("");
 
   // If --all, show the full registry instead of per-project detection
   if (showAll) {
@@ -1195,6 +1204,54 @@ async function cmdStatus(_args: string[]): Promise<void> {
     console.log(`  No Omnodex hooks installed in this project.`);
     console.log(`\n  Run \`omnodex install <target>\` to get started.`);
     console.log(`  Targets: ${VALID_TARGETS.join(", ")}`);
+  }
+}
+
+const LAUNCHER_LOG_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Report whether each installed hook launcher can find its shim, and any
+ * launcher failures logged recently. Launchers exit 0 when they fail so the
+ * agent is never blocked, which makes this the only place a broken install
+ * becomes visible.
+ */
+async function printLauncherHealth(omnodexHome: string): Promise<void> {
+  const rows: string[] = [];
+  let unresolved = 0;
+  for (const platform of LAUNCHER_PLATFORMS) {
+    try {
+      await fs.access(launcherPath(platform));
+    } catch {
+      continue;
+    }
+    const shim = resolveLauncherShim(platform);
+    if (!shim) unresolved++;
+    rows.push(`    ${platform.padEnd(12)} ${shim ?? "shim not found: these hooks record nothing"}`);
+  }
+  if (rows.length > 0) {
+    console.log(`[status] hook launchers:`);
+    for (const row of rows) console.log(row);
+    if (unresolved > 0) {
+      console.log(`    Install omnodex with npm, or set shim_paths in ${path.join(omnodexHome, "omnodex-config.json")}.`);
+    }
+  }
+
+  let logText = "";
+  try {
+    logText = await fs.readFile(path.join(omnodexHome, "launcher.log"), "utf8");
+  } catch {
+    return;
+  }
+  const since = Date.now() - LAUNCHER_LOG_WINDOW_MS;
+  const recent = logText.split("\n").filter((line) => {
+    if (!line.includes("FATAL")) return false;
+    const ts = Date.parse(line.match(/^\[([^\]]+)\]/)?.[1] ?? "");
+    return !Number.isNaN(ts) && ts >= since;
+  });
+  if (recent.length > 0) {
+    console.log(`[status] launcher errors in the last 24h: ${recent.length}`);
+    console.log(`    last: ${recent[recent.length - 1]}`);
+    console.log(`    log:  ${path.join(omnodexHome, "launcher.log")}`);
   }
 }
 
@@ -1488,6 +1545,16 @@ async function main(): Promise<void> {
   if (command !== "update") {
     await scheduleBackgroundCheck();
     await printUpdateNotification();
+    // Launchers written by an older version (for example by `omnodex update`,
+    // which runs in the old process) are replaced with this version's.
+    try {
+      const refreshed = await refreshStaleLaunchers();
+      if (refreshed.length > 0) {
+        console.error(`[omnodex] refreshed hook launchers: ${refreshed.join(", ")}`);
+      }
+    } catch {
+      // Not critical: `omnodex update --refresh-launchers` does the same
+    }
   }
 
   switch (command) {
