@@ -4,10 +4,29 @@
 // See https://omnodex.com/licensing for commercial license options
 // Commercial licensing available for organizations that cannot use AGPL
 
-import { build } from "esbuild";
-import { writeFileSync, chmodSync } from "fs";
+// Builds the publishable `omnodex` npm package into bundle/ (or --out <dir>).
+//
+// Layout:
+//   package.json                 copied from publish-package.json
+//   omnodex-bundle.cjs           the CLI
+//   dashboard.html
+//   bin/omnodex                  CLI entry
+//   bin/omnodex-mcp-proxy.js     MCP proxy entry (used by the agent plugins)
+//   bin/<platform>-hook-shim.js  hook shims, found by the ~/.omnodex/bin launchers
+//
+// The shims must sit in bin/ next to the bundle: the CLI resolves
+// CLAUDE_HOOK_SHIM_PATH and friends relative to its own file, and the
+// launchers look for <package>/bin/<shim>.
 
-// Plugin: replace import.meta.url with CJS equivalent
+import { build } from "esbuild";
+import { writeFileSync, chmodSync, copyFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+const pkgDir = import.meta.dirname;
+const outIdx = process.argv.indexOf("--out");
+const outDir = outIdx !== -1 ? process.argv[outIdx + 1] : join(pkgDir, "bundle");
+
+// Replace import.meta.url with its CJS equivalent
 const importMetaPlugin = {
   name: "import-meta-url",
   setup(build) {
@@ -26,24 +45,42 @@ const importMetaPlugin = {
   },
 };
 
-await build({
-  entryPoints: ["dist/index.js"],
-  bundle: true,
-  platform: "node",
-  target: "node24",
-  outfile: "bundle/omnodex-bundle.cjs",
-  format: "cjs",
-  plugins: [importMetaPlugin],
-});
+/** Standalone executables bundled into bin/, keyed by output filename. */
+const BIN_ENTRIES = {
+  "omnodex-mcp-proxy.js": "../mcp-proxy/dist/bin/omnodex-mcp-proxy.js",
+  "claude-hook-shim.js": "../hooks-provider/dist/bin/claude-hook-shim.js",
+  "codex-hook-shim.js": "../codex-provider/dist/bin/codex-hook-shim.js",
+  "antigravity-hook-shim.js": "../antigravity-provider/dist/bin/antigravity-hook-shim.js",
+};
+
+async function bundle(entry, outfile) {
+  await build({
+    entryPoints: [join(pkgDir, entry)],
+    bundle: true,
+    platform: "node",
+    target: "node24",
+    outfile,
+    format: "cjs",
+    plugins: [importMetaPlugin],
+  });
+}
+
+mkdirSync(join(outDir, "bin"), { recursive: true });
+
+await bundle("dist/index.js", join(outDir, "omnodex-bundle.cjs"));
+
+for (const [name, entry] of Object.entries(BIN_ENTRIES)) {
+  const outfile = join(outDir, "bin", name);
+  await bundle(entry, outfile);
+  chmodSync(outfile, 0o755);
+}
 
 // CJS launcher with shebang
-import { mkdirSync } from "fs";
-mkdirSync("bundle/bin", { recursive: true });
-writeFileSync("bundle/bin/omnodex", `#!/usr/bin/env node\nrequire("../omnodex-bundle.cjs");\n`);
-chmodSync("bundle/bin/omnodex", 0o755);
+writeFileSync(join(outDir, "bin", "omnodex"), `#!/usr/bin/env node\nrequire("../omnodex-bundle.cjs");\n`);
+chmodSync(join(outDir, "bin", "omnodex"), 0o755);
 
-// Copy dashboard.html into the bundle directory
-import { copyFileSync } from "fs";
-copyFileSync("dist/dashboard.html", "bundle/dashboard.html");
+// From src/: `tsc -b` alone (as in CI) does not copy it into dist/
+copyFileSync(join(pkgDir, "src", "dashboard.html"), join(outDir, "dashboard.html"));
+copyFileSync(join(pkgDir, "publish-package.json"), join(outDir, "package.json"));
 
-console.log("Bundle written to bundle/omnodex-bundle.cjs + omnodex.cjs launcher");
+console.log(`Bundle written to ${outDir}`);
