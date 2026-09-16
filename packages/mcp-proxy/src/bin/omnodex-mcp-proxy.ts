@@ -60,6 +60,8 @@ async function main(): Promise<void> {
     await log.close();
   }
 
+  // Normal end: the agent closes stdin.
+  void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
   // Clean up on SIGTERM (sent by Cowork / Codex when the session ends).
   process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
   // SIGINT (Ctrl-C during local dev).

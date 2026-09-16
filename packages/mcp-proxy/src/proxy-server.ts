@@ -188,6 +188,11 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
 
   // ── Transport + session lifecycle ─────────────────────────────────────────
   const transport = opts.transport ?? new StdioServerTransport();
+  if (!opts.transport) {
+    // StdioServerTransport does not close itself when stdin ends, so without
+    // this the session never ends when the agent closes the pipe.
+    process.stdin.once("end", () => void transport.close());
+  }
   const connectStart = Date.now();
   const sessionStart = new Date().toISOString();
 
@@ -204,7 +209,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     project_path: projectPath,
     mcp_servers: config.upstream_servers.map((s) => s.name),
   };
-  void emit(startedEvent);
+  // Awaited so session.started is always written before any later event.
+  await emit(startedEvent);
 
   // Print the parameter-logging disclosure to stderr so it appears in the
   // agent's session log (Cowork shows this in the terminal panel).
@@ -236,5 +242,6 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     duration_ms: Date.now() - connectStart,
     status: "completed",
   };
-  void emit(endedEvent);
+  // Awaited so the event is written before the caller shuts the process down.
+  await emit(endedEvent);
 }

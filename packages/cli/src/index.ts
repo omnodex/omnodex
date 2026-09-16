@@ -1252,6 +1252,8 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
     await stop();
     await log.close();
   }
+  // Normal end: the agent closes stdin.
+  void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
   process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
   process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
 }

@@ -37,6 +37,7 @@ export class MCPProxy implements Interceptor {
   private readonly config: ProxyConfig;
   private readonly sessionId: string;
   private readonly projectPath: string | undefined;
+  private serverDone: Promise<void> | undefined;
 
   constructor(config: ProxyConfig, options?: { projectPath?: string }) {
     this.config = config;
@@ -69,6 +70,7 @@ export class MCPProxy implements Interceptor {
       sessionId: this.sessionId,
       projectPath: this.projectPath,
     });
+    this.serverDone = serverDone;
 
     const stop: StopFn = async () => {
       // Close upstream connections. The server transport will have already
@@ -86,5 +88,17 @@ export class MCPProxy implements Interceptor {
     });
 
     return stop;
+  }
+
+  /**
+   * Resolves once the agent has disconnected and session.ended has been
+   * recorded. Entrypoints use it to run their shutdown (close upstreams and
+   * the event log) and exit, since hosts usually just close the pipe.
+   */
+  whenClosed(): Promise<void> {
+    if (!this.serverDone) {
+      throw new Error("MCPProxy.whenClosed() called before start()");
+    }
+    return this.serverDone;
   }
 }
