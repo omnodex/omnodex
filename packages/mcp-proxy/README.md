@@ -255,7 +255,9 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   connecting. The wait ends as soon as every upstream has settled, so the setting is a
   ceiling, not a delay. See [Sizing the discovery window](#sizing-the-discovery-window).
 - **Changes.** When an upstream connects or disconnects later, the proxy sends
-  `notifications/tools/list_changed`.
+  `notifications/tools/list_changed`. Claude Code acts on it and picks the tools up
+  mid-session; the Codex clients and Cowork ignore it, so for those the discovery
+  window is what matters.
 - **Retries.** A failed or disconnected upstream is retried after
   `retry_initial_delay_ms`, doubling each time. Once the next delay would reach
   `retry_give_up_delay_ms` (with the defaults: 9 attempts over about 4 minutes), retries
@@ -271,12 +273,20 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
 
 ### Sizing the discovery window
 
-Agent clients read the tool list once, when they start the server, and the ones tested
-(ChatGPT Desktop in Codex mode, Codex CLI) do not act on
-`notifications/tools/list_changed`. An upstream that connects after the window is
-therefore unusable for the rest of that session, even though the proxy has it
-connected and `omnodex_status` shows it. Restarting the agent does not help on its
-own, because the proxy restarts with it and the upstream is slow again.
+Most agent clients read the tool list once, when they start the server. Measured
+behavior with an upstream that connects 12s after start:
+
+| Client | Picks up a late upstream in a running session |
+| --- | --- |
+| Claude Code | Yes, the tool list updates within seconds |
+| ChatGPT Desktop (Codex mode) | No |
+| Codex CLI | No |
+| Cowork Desktop | No |
+
+For the clients that answer no, an upstream connecting after the window is unusable
+for the rest of that session, even though the proxy has it connected and
+`omnodex_status` shows it. Restarting the agent does not help on its own, because the
+proxy restarts with it and the upstream is slow again.
 
 So the window has to cover your slowest upstream. To measure one, start the proxy by
 hand and watch how long it takes:
