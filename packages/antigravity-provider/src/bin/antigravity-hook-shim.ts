@@ -47,7 +47,13 @@ import type {
   PostToolUseCorrelation,
 } from "../antigravity-payload.js";
 import { mapAntigravityPayload } from "../antigravity-payload.js";
-import { pushEventsToCloud } from "@omnodex/sync-encryptor";
+import {
+  AUTO_SYNC_CHILD_ENV,
+  includesSessionEnd,
+  pushEventsToCloud,
+  runAutoSync,
+  startBackgroundSync,
+} from "@omnodex/sync-encryptor";
 
 /** State saved during PreToolUse to correlate with the matching PostToolUse. */
 interface PreToolUseState {
@@ -60,6 +66,14 @@ async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
   const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const eventLogRoot = path.join(home, "event-log");
+
+  // Detached background sync started by a session-ending hook, not a hook
+  // call. It has no event name and must not write a hook response.
+  if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
+    await runAutoSync(home);
+    return 0;
+  }
+
   const stateDir = path.join(home, "antigravity-state");
   await fs.mkdir(stateDir, { recursive: true });
 
@@ -159,6 +173,12 @@ async function main(): Promise<number> {
 
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
     await pushEventsToCloud(events, home);
+
+    // Refresh the hosted dashboard's sync blob in the background.
+    if (includesSessionEnd(events)) {
+      const decision = await startBackgroundSync({ home, scriptPath: process.argv[1] ?? "" });
+      if (debug) console.error(`[omnodex-antigravity] background sync: ${decision}`);
+    }
 
     outputResponse(eventName);
     return 0;

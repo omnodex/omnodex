@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./sync-runner": {
+      "import": "./dist/sync-runner.js",
+      "types": "./dist/sync-runner.d.ts"
     }
   },
   "scripts": {

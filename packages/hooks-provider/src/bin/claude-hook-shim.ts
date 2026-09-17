@@ -26,6 +26,10 @@
  *
  *   - OMNODEX_HOME      location of the event log, defaults to ~/.omnodex
  *   - OMNODEX_DEBUG     set to "1" to get verbose stderr logging
+ *
+ * When a session ends, the shim starts a detached copy of itself with
+ * OMNODEX_AUTO_SYNC_CHILD=1, which pushes an encrypted sync blob and exits
+ * (see startBackgroundSync in @omnodex/sync-encryptor).
  */
 
 import * as fs from "node:fs/promises";
@@ -35,12 +39,24 @@ import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
-import { pushEventsToCloud } from "@omnodex/sync-encryptor";
+import {
+  AUTO_SYNC_CHILD_ENV,
+  includesSessionEnd,
+  pushEventsToCloud,
+  runAutoSync,
+  startBackgroundSync,
+} from "@omnodex/sync-encryptor";
 
 async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
   const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const eventLogRoot = path.join(home, "event-log");
+
+  // Detached background sync started by a SessionEnd hook, not a hook call.
+  if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
+    await runAutoSync(home);
+    return 0;
+  }
 
   const timingDir = path.join(home, "timing");
   await fs.mkdir(timingDir, { recursive: true });
@@ -142,6 +158,12 @@ async function main(): Promise<number> {
     // It never throws -- errors are swallowed silently. On cache hit the
     // typical overhead is ~50-100ms; Argon2id only runs on first use.
     await pushEventsToCloud(events, home);
+
+    // Refresh the hosted dashboard's sync blob in the background.
+    if (includesSessionEnd(events)) {
+      const decision = await startBackgroundSync({ home, scriptPath: process.argv[1] ?? "" });
+      if (debug) console.error(`[omnodex-hook] background sync: ${decision}`);
+    }
 
     return 0;
   } catch (err) {

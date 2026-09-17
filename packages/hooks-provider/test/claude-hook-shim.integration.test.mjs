@@ -7,7 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -201,4 +202,61 @@ test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta whe
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test("SessionEnd starts a detached sync that pushes a blob without delaying the hook", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-sync-"));
+  const pushes = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      pushes.push({ method: req.method, url: req.url });
+      res.writeHead(201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ blob_id: "blob_case_shim", received_at: new Date().toISOString(), payload_bytes: 1 }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(home, { recursive: true, force: true });
+  });
+
+  const apiUrl = `http://127.0.0.1:${server.address().port}`;
+  // live_streaming is left out so the per-event push stays off and only the
+  // background sync talks to the server.
+  await writeFile(path.join(home, "stream-config.json"), JSON.stringify({
+    api_token: "omx_test_case", passphrase: "case-passphrase", api_url: apiUrl,
+  }));
+  await writeFile(path.join(home, "license-cache.json"), JSON.stringify({
+    response: { customer_id: "cust_case", tier: "hosted", features: ["encrypted_sync"] },
+    fetched_at: Date.now(),
+  }));
+
+  const env = { OMNODEX_HOME: home, OMNODEX_AUTO_SYNC: "" };
+  const session_id = "integration-sess-sync";
+  await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "SessionStart", user: "case" }, env);
+  assert.equal(pushes.length, 0, "only a session end starts a sync");
+
+  const started = Date.now();
+  const res = await runShim({ session_id, hook_event_name: "SessionEnd", reason: "completed" }, env);
+  assert.equal(res.code, 0, `SessionEnd stderr: ${res.stderr}`);
+  assert.equal(res.stdout, "");
+  // The hook returns before the sync (Argon2id alone takes longer than this).
+  assert.ok(Date.now() - started < 2000, "hook must not wait for the sync");
+
+  const deadline = Date.now() + 20_000;
+  let state = {};
+  while (Date.now() < deadline) {
+    try {
+      state = JSON.parse(await readFile(path.join(home, "auto-sync-state.json"), "utf8"));
+    } catch {
+      state = {};
+    }
+    if (state.last_success_at || state.last_error) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  assert.equal(state.last_error ?? null, null, `sync error: ${state.last_error}`);
+  assert.equal(state.last_blob_id, "blob_case_shim");
+  assert.deepEqual(pushes, [{ method: "PUT", url: "/api/v1/sync/push" }]);
 });

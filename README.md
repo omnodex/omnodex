@@ -175,7 +175,11 @@ omnodex connect [--token <token>]   connect this host to your dashboard account.
                                       With a token: prints a one-time connection link.
                                       Generates a sync passphrase on first run; the
                                       passphrase is transferred end-to-end encrypted.
-omnodex sync                        encrypt the read model and upload it to the cloud
+omnodex sync                        encrypt the read model and upload it to the cloud.
+                                      Connected hosts also sync automatically in the
+                                      background when a hooked session ends (at most
+                                      once a minute). Turn off with "auto_sync": false
+                                      in stream-config.json or OMNODEX_AUTO_SYNC=0.
 
 omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       install   generate proxy config template
