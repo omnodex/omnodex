@@ -47,8 +47,9 @@ export class MCPProxy implements Interceptor {
 
   /**
    * Starts the MCP proxy:
-   *   1. Connects to all upstream servers and discovers their tools.
-   *   2. Starts the inbound MCP server on stdin/stdout.
+   *   1. Starts connecting to the upstream servers in the background.
+   *   2. Starts the inbound MCP server on stdin/stdout right away, so the
+   *      agent is answered even while upstreams are slow or failing.
    *   3. Runs until the agent disconnects, then emits session.ended.
    *
    * Returns a StopFn that closes the upstream pool (the server transport
@@ -58,7 +59,7 @@ export class MCPProxy implements Interceptor {
    */
   async start(emit: EmitFn): Promise<StopFn> {
     const pool = new UpstreamClientPool();
-    await pool.connect(this.config);
+    pool.start(this.config);
 
     // runProxyServer resolves when the agent disconnects (stdin EOF).
     // We don't await it here so we can return the stop function immediately

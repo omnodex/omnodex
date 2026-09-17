@@ -1368,7 +1368,7 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
   const configPath =
     configFlagIdx !== -1 ? args[configFlagIdx + 1] : undefined;
 
-  const config = await loadProxyConfig(configPath);
+  const config = await loadProxyConfig(configPath, { allowMissing: true });
   const paths = resolvePaths();
 
   const log = new EventLog({ root: path.join(paths.home, "event-log") });

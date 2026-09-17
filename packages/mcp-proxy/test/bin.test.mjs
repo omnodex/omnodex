@@ -1,4 +1,4 @@
-// End-to-end test for the omnodex-mcp-proxy entrypoint.
+// End-to-end tests for the omnodex-mcp-proxy entrypoint.
 // Spawns the built bin as an agent host would, makes one tool call over
 // stdio, closes stdin, and checks the process exits and the session is
 // recorded as ended after the call.
@@ -104,6 +104,73 @@ test("closing stdin ends the session after the calls and exits the process", asy
     assert.ok(types.indexOf("tool.completed") < types.indexOf("session.ended"));
   } finally {
     // Kill a proxy that failed to exit (and its upstream) so the runner does not hang.
+    if (child && child.exitCode === null) child.kill("SIGKILL");
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("the proxy answers the host while its upstreams are failing or still starting", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-proxy-bin-"));
+  let child;
+  try {
+    const configPath = path.join(home, "omnodex-proxy.json");
+    const mock = (name, env) => ({
+      name,
+      transport: "stdio",
+      command: process.execPath,
+      args: [MOCK_SERVER],
+      env: { MOCK_TOOLS: JSON.stringify(["ping"]), ...env },
+    });
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        version: 1,
+        upstream_servers: [
+          mock("broken", { MOCK_FAIL_STARTUP: "1" }),
+          mock("slow", { MOCK_STARTUP_DELAY_MS: "60000" }),
+        ],
+        upstream_connection: { discovery_window_ms: 300 },
+      })
+    );
+
+    child = spawn(process.execPath, [BIN, "--config", configPath], {
+      env: { ...process.env, OMNODEX_HOME: home },
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+    const exited = new Promise((resolve) => child.on("exit", (code) => resolve(code)));
+    const rpc = rpcClient(child);
+
+    const init = await rpc.request("initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "bin-test", version: "0.0.0" },
+    });
+    assert.deepEqual(init.result.capabilities.tools, { listChanged: true });
+    rpc.notify("notifications/initialized");
+
+    const list = await rpc.request("tools/list", {});
+    assert.deepEqual(
+      list.result.tools.map((t) => t.name),
+      ["omnodex_status", "omnodex_connect", "omnodex_connection_status"]
+    );
+    // The built-ins answer while "broken" fails and "slow" keeps starting.
+    let states = [];
+    const deadline = Date.now() + 15000;
+    while (states[0] !== "broken:failed" && Date.now() < deadline) {
+      const status = await rpc.request("tools/call", { name: "omnodex_status", arguments: {} });
+      states = JSON.parse(status.result.content[0].text).upstream_servers.map(
+        (u) => `${u.name}:${u.state}`
+      );
+      if (states[0] !== "broken:failed") await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.deepEqual(states, ["broken:failed", "slow:connecting"]);
+
+    child.stdin.end();
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("proxy did not exit after stdin closed")), 15000).unref()
+    );
+    assert.equal(await Promise.race([exited, timeout]), 0);
+  } finally {
     if (child && child.exitCode === null) child.kill("SIGKILL");
     await rm(home, { recursive: true, force: true });
   }

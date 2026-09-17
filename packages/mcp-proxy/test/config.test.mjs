@@ -73,13 +73,43 @@ test("accepts an http upstream", () => {
   assert.equal(result.data.upstream_servers[0].transport, "http");
 });
 
-test("rejects missing upstream_servers", () => {
+test("missing upstream_servers defaults to an empty list", () => {
   const result = ProxyConfigSchema.safeParse({ version: 1 });
-  assert.ok(!result.success);
+  assert.ok(result.success);
+  assert.deepEqual(result.data.upstream_servers, []);
 });
 
-test("rejects empty upstream_servers array", () => {
+test("accepts an empty upstream_servers array", () => {
   const result = ProxyConfigSchema.safeParse({ version: 1, upstream_servers: [] });
+  assert.ok(result.success);
+  assert.deepEqual(result.data.upstream_servers, []);
+});
+
+test("upstream_connection defaults apply when omitted", () => {
+  const cfg = ProxyConfigSchema.parse(MINIMAL_STDIO);
+  assert.deepEqual(cfg.upstream_connection, {
+    discovery_window_ms: 15000,
+    connect_timeout_ms: 30000,
+    retry_initial_delay_ms: 1000,
+    retry_give_up_delay_ms: 180000,
+  });
+});
+
+test("upstream_connection keeps set values and fills the rest", () => {
+  const cfg = ProxyConfigSchema.parse({
+    ...MINIMAL_STDIO,
+    upstream_connection: { discovery_window_ms: 0, retry_give_up_delay_ms: 60000 },
+  });
+  assert.equal(cfg.upstream_connection.discovery_window_ms, 0);
+  assert.equal(cfg.upstream_connection.retry_give_up_delay_ms, 60000);
+  assert.equal(cfg.upstream_connection.connect_timeout_ms, 30000);
+});
+
+test("rejects a non-positive connect timeout", () => {
+  const result = ProxyConfigSchema.safeParse({
+    ...MINIMAL_STDIO,
+    upstream_connection: { connect_timeout_ms: 0 },
+  });
   assert.ok(!result.success);
 });
 
@@ -222,20 +252,56 @@ test("loadProxyConfig loads from an explicit path", async (t) => {
   });
 });
 
-test("loadProxyConfig throws when config file not found", async () => {
-  const origHome = process.env.OMNODEX_HOME;
+/**
+ * Runs fn with every config search location pointed at empty temp dirs, so a
+ * config file on the machine running the tests cannot be picked up.
+ */
+async function withNoConfigAnywhere(t, fn) {
+  const origEnv = { ...process.env };
   const origCwd = process.cwd();
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-proxy-home-"));
+  const cwd = await mkdtemp(path.join(os.tmpdir(), "omnodex-proxy-cwd-"));
   delete process.env.OMNODEX_HOME;
-  process.chdir("/tmp");
-  try {
+  // os.homedir() reads these; both are set so the test behaves the same on
+  // POSIX and Windows.
+  process.env.HOME = home;
+  process.env.USERPROFILE = home;
+  process.chdir(cwd);
+  t.after(async () => {
+    process.chdir(origCwd);
+    process.env = origEnv;
+    await rm(home, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  });
+  return fn();
+}
+
+test("loadProxyConfig throws when config file not found", async (t) => {
+  await withNoConfigAnywhere(t, async () => {
     await assert.rejects(
       () => loadProxyConfig("/definitely/does/not/exist/proxy.json"),
       /not found/i,
     );
-  } finally {
-    process.chdir(origCwd);
-    if (origHome !== undefined) process.env.OMNODEX_HOME = origHome;
-  }
+  });
+});
+
+test("loadProxyConfig returns an empty config when none is found and allowMissing is set", async (t) => {
+  await withNoConfigAnywhere(t, async () => {
+    const cfg = await loadProxyConfig("/definitely/does/not/exist/proxy.json", {
+      allowMissing: true,
+    });
+    assert.deepEqual(cfg.upstream_servers, []);
+    assert.equal(cfg.redact_parameters, false);
+    assert.equal(cfg.upstream_connection.discovery_window_ms, 15000);
+  });
+});
+
+test("loadProxyConfig still throws on a config file it cannot parse when allowMissing is set", async (t) => {
+  await withTmpDir(t, async (dir) => {
+    const cfgPath = path.join(dir, "omnodex-proxy.json");
+    await writeFile(cfgPath, "{ not valid json", "utf8");
+    await assert.rejects(() => loadProxyConfig(cfgPath, { allowMissing: true }), /parse/i);
+  });
 });
 
 test("loadProxyConfig throws on invalid JSON", async (t) => {
@@ -249,7 +315,7 @@ test("loadProxyConfig throws on invalid JSON", async (t) => {
 test("loadProxyConfig throws on schema violation", async (t) => {
   await withTmpDir(t, async (dir) => {
     const cfgPath = path.join(dir, "omnodex-proxy.json");
-    await writeFile(cfgPath, JSON.stringify({ version: 1, upstream_servers: [] }), "utf8");
+    await writeFile(cfgPath, JSON.stringify({ version: 2, upstream_servers: [] }), "utf8");
     await assert.rejects(() => loadProxyConfig(cfgPath), /invalid/i);
   });
 });

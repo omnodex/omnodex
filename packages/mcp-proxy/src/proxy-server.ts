@@ -15,6 +15,11 @@
  * The server re-presents the combined upstream tool surface verbatim except
  * for the name prefix, so agents that inspect inputSchema, descriptions, or
  * annotations see the real upstream definitions.
+ *
+ * The server answers the agent without waiting for upstreams. Only tools/list
+ * and calls to unknown tools wait, up to discovery_window_ms from start, for
+ * upstreams still connecting. Later changes to the connected set are announced with
+ * notifications/tools/list_changed.
  */
 
 import { randomUUID } from "node:crypto";
@@ -26,7 +31,11 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { SCHEMA_VERSION, type EmitFn, type SessionStartedEvent, type SessionEndedEvent } from "@omnodex/shared";
-import { type UpstreamClientPool } from "./upstream-client.js";
+import {
+  type UpstreamClientPool,
+  McpUpstreamUnavailableError,
+  describeUnavailable,
+} from "./upstream-client.js";
 import { callToolWithEvents } from "./event-emitter.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
@@ -61,7 +70,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     { name: "omnodex-mcp-proxy", version: "0.0.0" },
     {
       capabilities: {
-        tools: {},
+        tools: { listChanged: true },
+        logging: {},
       },
     }
   );
@@ -71,8 +81,17 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     name: "omnodex_status",
     description:
       "Returns the status of the Omnodex MCP proxy: version, session ID, " +
-      "connected upstream servers, and uptime.",
-    inputSchema: { type: "object" as const, properties: {} },
+      "uptime, and the connection state of each upstream server. Pass " +
+      "retry_failed: true to retry upstream servers that failed to connect.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        retry_failed: {
+          type: "boolean",
+          description: "Retry every upstream server that is not connected, now",
+        },
+      },
+    },
   };
 
   // ── Built-in connect tool ────────────────────────────────────────────────
@@ -107,8 +126,43 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     inputSchema: { type: "object" as const, properties: {} },
   };
 
+  // ── Upstream discovery and change notifications ──────────────────────────
+  // Counted from start, so the window stays inside the host's own startup
+  // timeout however late the first tools/list arrives.
+  const discovery = pool.waitForInitialAttempts(
+    config.upstream_connection.discovery_window_ms
+  );
+
+  let initialized = false;
+  server.oninitialized = () => {
+    initialized = true;
+  };
+
+  // Several upstreams often connect in the same moment; send one notification.
+  let listChangedQueued = false;
+  const unsubscribeTools = pool.onToolsChanged(() => {
+    if (listChangedQueued) return;
+    listChangedQueued = true;
+    setImmediate(() => {
+      listChangedQueued = false;
+      if (initialized) void server.sendToolListChanged().catch(() => undefined);
+    });
+  });
+
+  const unsubscribeExhausted = pool.onRetriesExhausted((upstream) => {
+    if (!initialized) return;
+    void server
+      .sendLoggingMessage({
+        level: "warning",
+        logger: "omnodex-mcp-proxy",
+        data: describeUnavailable(upstream),
+      })
+      .catch(() => undefined);
+  });
+
   // ── tools/list ────────────────────────────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    await discovery;
     const tools = pool.getTools().map((t) => t.definition);
     return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, ...tools] };
   });
@@ -120,15 +174,22 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
 
     // Handle built-in omnodex_status tool
     if (prefixedName === "omnodex_status") {
+      const retried = args.retry_failed === true ? pool.retryFailed() : undefined;
+      const upstreams = pool.getUpstreamStatuses();
+      const warnings = upstreams
+        .filter((u) => u.retries_exhausted)
+        .map((u) => describeUnavailable(u));
       const status = {
         proxy: "omnodex-mcp-proxy",
         version: "0.1.0",
         status: "running",
         session_id: sessionId,
         uptime_ms: Date.now() - connectStart,
-        upstream_servers: pool.getServerNames(),
+        upstream_servers: upstreams,
         tool_count: pool.getTools().length,
         redact_parameters: config.redact_parameters,
+        ...(retried ? { retried } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       };
       return {
         content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
@@ -154,6 +215,23 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         content: [{ type: "text", text: JSON.stringify(status, null, 2) }],
         isError: false,
       };
+    }
+
+    // A call can arrive before any tools/list; give its upstream the same
+    // discovery window. Resolves immediately once the window has passed.
+    if (!pool.getServerName(prefixedName)) {
+      await discovery;
+    }
+
+    // A tool on an upstream that is down: say why instead of "tool not found".
+    if (!pool.getServerName(prefixedName)) {
+      const unavailable = pool.findUnavailableUpstream(prefixedName);
+      if (unavailable) {
+        return {
+          content: [{ type: "text", text: new McpUpstreamUnavailableError(unavailable).message }],
+          isError: true,
+        };
+      }
     }
 
     // Use the MCP request id as correlation key when available; otherwise mint
@@ -229,6 +307,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   });
   await server.connect(transport);
   await closed;
+  unsubscribeTools();
+  unsubscribeExhausted();
 
   const endedAt = new Date().toISOString();
   const endedEvent: SessionEndedEvent = {
