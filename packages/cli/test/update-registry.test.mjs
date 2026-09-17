@@ -191,13 +191,21 @@ test("registry: getInstalledVersion returns a string", () => {
 // Launcher template
 // ---------------------------------------------------------------------------
 
-import { writeLauncher, launcherPath, isLauncherCurrent } from "../dist/launcher-template.js";
+import { writeLauncher, launcherPath, launcherHomeRelativePath, isLauncherCurrent } from "../dist/launcher-template.js";
 
 test("launcher: launcherPath returns expected location", () => {
   const p = launcherPath("claude-code");
   assert.ok(p.includes(".omnodex"));
   assert.ok(p.includes("bin"));
   assert.ok(p.endsWith("claude-hook-launcher.js"));
+});
+
+test("launcher: launcherHomeRelativePath is launcherPath relative to home, with forward slashes", () => {
+  for (const platform of ["claude-code", "codex", "antigravity"]) {
+    const rel = launcherHomeRelativePath(platform);
+    assert.ok(!rel.includes("\\"));
+    assert.equal(path.join(os.homedir(), ...rel.split("/")), launcherPath(platform));
+  }
 });
 
 test("launcher: writeLauncher creates a file", async () => {

@@ -61,6 +61,15 @@ export interface ClaudeCodeInterceptorOptions {
    * nvm/fnm/volta in PATH.
    */
   nodePath?: string;
+  /**
+   * Shim path relative to the user's home directory, with forward slashes.
+   * When set, the hook command is `node "$HOME/<path>"` with no env prefix,
+   * so one settings file resolves on every host that reads it: bash in WSL
+   * or Linux, Git Bash on Windows, and PowerShell. `shimPath`, `nodePath`,
+   * `omnodexHome` and `debug` are then not written into the command, so
+   * only use it when the shim's default OMNODEX_HOME is the right one.
+   */
+  homeRelativeShimPath?: string;
 }
 
 /**
@@ -220,6 +229,9 @@ export class ClaudeCodeInterceptor implements Interceptor {
   }
 
   private shimCommand(): string {
+    if (this.options.homeRelativeShimPath !== undefined) {
+      return portableCommand(this.options.homeRelativeShimPath);
+    }
     // We pass OMNODEX_HOME and OMNODEX_DEBUG via `env` so the shim has
     // everything it needs without touching Claude Code's own env file
     // contract. The quoting keeps shell semantics sane even if paths
@@ -249,6 +261,14 @@ export class ClaudeCodeInterceptor implements Interceptor {
     const serialized = JSON.stringify(settings, null, 2) + "\n";
     await fs.writeFile(settingsPath, serialized, "utf8");
   }
+}
+
+/**
+ * `node "$HOME/<path>"`. Double quotes let bash, Git Bash and PowerShell
+ * all expand $HOME while keeping a home directory with spaces intact.
+ */
+function portableCommand(homeRelativePath: string): string {
+  return `node "$HOME/${homeRelativePath}"`;
 }
 
 function shellQuote(value: string): string {

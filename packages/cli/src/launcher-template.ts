@@ -80,8 +80,15 @@ export function shimFilename(platform: LauncherPlatform): string {
  * Does not check whether the file exists.
  */
 export function launcherPath(platform: LauncherPlatform): string {
-  const info = PLATFORM_INFO[platform];
-  return path.join(os.homedir(), ".omnodex", "bin", info.launcherFilename);
+  return path.join(os.homedir(), ...launcherHomeRelativePath(platform).split("/"));
+}
+
+/**
+ * The launcher's path relative to the home directory, with forward slashes.
+ * Hook commands built from it resolve on whichever host runs them.
+ */
+export function launcherHomeRelativePath(platform: LauncherPlatform): string {
+  return path.posix.join(".omnodex", "bin", PLATFORM_INFO[platform].launcherFilename);
 }
 
 /**

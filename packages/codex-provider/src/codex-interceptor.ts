@@ -59,6 +59,15 @@ export interface CodexInterceptorOptions {
    */
   nodePath?: string;
   /**
+   * Shim path relative to the user's home directory, with forward slashes.
+   * When set, the hook command is `node "$HOME/<path>"` with no env prefix,
+   * so one settings file resolves on every host that reads it: bash in WSL
+   * or Linux, Git Bash on Windows, and PowerShell. `shimPath`, `nodePath`,
+   * `omnodexHome` and `debug` are then not written into the command, so
+   * only use it when the shim's default OMNODEX_HOME is the right one.
+   */
+  homeRelativeShimPath?: string;
+  /**
    * Target platform for hook command syntax. Defaults to process.platform.
    * Set explicitly in tests or when cross-compiling hooks for a different OS.
    */
@@ -193,6 +202,9 @@ export class CodexInterceptor implements Interceptor {
   }
 
   private shimCommand(): string {
+    if (this.options.homeRelativeShimPath !== undefined) {
+      return portableCommand(this.options.homeRelativeShimPath);
+    }
     if (this.options.platform === "win32") {
       return this.shimCommandWindows();
     }
@@ -230,6 +242,14 @@ export class CodexInterceptor implements Interceptor {
   private async writeHooks(hooksPath: string, hooks: HooksFile): Promise<void> {
     await fs.writeFile(hooksPath, JSON.stringify(hooks, null, 2) + "\n", "utf8");
   }
+}
+
+/**
+ * `node "$HOME/<path>"`. Double quotes let bash, Git Bash and PowerShell
+ * all expand $HOME while keeping a home directory with spaces intact.
+ */
+function portableCommand(homeRelativePath: string): string {
+  return `node "$HOME/${homeRelativePath}"`;
 }
 
 function shellQuote(value: string): string {

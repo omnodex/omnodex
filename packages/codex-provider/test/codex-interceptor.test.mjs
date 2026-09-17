@@ -218,3 +218,23 @@ test("POSIX platform uses env-prefix syntax (default on non-Windows)", async (t)
   assert.match(cmd, /^OMNODEX_HOME=/);
   assert.ok(!cmd.includes('set "'), "POSIX commands must not use set");
 });
+
+test("homeRelativeShimPath writes the same command for Windows and POSIX hosts", async (t) => {
+  const commands = [];
+  for (const platform of ["win32", "linux"]) {
+    const projectPath = await fresh(t);
+    const interceptor = new CodexInterceptor({
+      projectPath,
+      shimPath: "/home/case/.omnodex/bin/codex-hook-launcher.js",
+      omnodexHome: "/home/case/.omnodex",
+      homeRelativeShimPath: ".omnodex/bin/codex-hook-launcher.js",
+      platform,
+      debug: true,
+    });
+    await interceptor.install();
+    const hooks = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+    commands.push(hooks.hooks.PreToolUse[0].hooks[0].command);
+  }
+  assert.equal(commands[0], 'node "$HOME/.omnodex/bin/codex-hook-launcher.js"');
+  assert.equal(commands[1], commands[0]);
+});
