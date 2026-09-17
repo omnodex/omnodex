@@ -38,12 +38,25 @@ import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
 import type { CodexHookPayload } from "../codex-payload.js";
 import { mapCodexPayload } from "../codex-payload.js";
-import { pushEventsToCloud } from "@omnodex/sync-encryptor";
+import {
+  AUTO_SYNC_CHILD_ENV,
+  includesSessionEnd,
+  pushEventsToCloud,
+  runAutoSync,
+  startBackgroundSync,
+} from "@omnodex/sync-encryptor";
 
 async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
   const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const eventLogRoot = path.join(home, "event-log");
+
+  // Detached background sync started by a SessionEnd hook, not a hook call.
+  if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
+    await runAutoSync(home);
+    return 0;
+  }
+
   const timingDir = path.join(home, "timing");
   await fs.mkdir(timingDir, { recursive: true });
 
@@ -132,6 +145,13 @@ async function main(): Promise<number> {
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
     // Codex hooks are synchronous so keep the timeout short.
     await pushEventsToCloud(events, home, 2000);
+
+    // Refresh the hosted dashboard's sync blob in the background. The sync
+    // runs detached, so Codex's short SessionEnd timeout does not cut it off.
+    if (includesSessionEnd(events)) {
+      const decision = await startBackgroundSync({ home, scriptPath: process.argv[1] ?? "" });
+      if (debug) console.error(`[omnodex-codex] background sync: ${decision}`);
+    }
 
     return 0;
   } catch (err) {
