@@ -80,11 +80,18 @@ const UpstreamServerSchema = z.discriminatedUnion("transport", [
 const UpstreamConnectionSchema = z.object({
   /**
    * How long the first tools/list waits for upstreams that are still
-   * connecting, counted from proxy start. Keep this well under the host's
-   * own MCP startup timeout. Upstreams that connect later are announced with
-   * notifications/tools/list_changed.
+   * connecting, counted from proxy start. The wait ends as soon as every
+   * upstream has settled, so this is a ceiling, not a delay.
+   *
+   * It needs to cover the slowest upstream, because agent clients read the
+   * tool list once at startup: measured clients ignore
+   * notifications/tools/list_changed, so an upstream that connects after the
+   * window is unusable for the rest of the session even though the proxy
+   * has it. A first run of npx or uvx takes several seconds. Raise it for
+   * slow upstreams; lower it if a hung upstream delaying the first tool
+   * listing matters more than losing that upstream's tools.
    */
-  discovery_window_ms: z.number().int().min(0).default(5000),
+  discovery_window_ms: z.number().int().min(0).default(15000),
   /** Per-attempt limit for one upstream to start and list its tools. */
   connect_timeout_ms: z.number().int().positive().default(30000),
   /** Delay before the first retry of a failed upstream. Doubles each retry. */

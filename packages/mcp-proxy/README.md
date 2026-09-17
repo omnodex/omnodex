@@ -191,7 +191,7 @@ Full schema for `omnodex-proxy.json`:
     }
   ],
   "upstream_connection": {
-    "discovery_window_ms": 5000,
+    "discovery_window_ms": 15000,
     "connect_timeout_ms": 30000,
     "retry_initial_delay_ms": 1000,
     "retry_give_up_delay_ms": 180000
@@ -210,7 +210,7 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].env` | object | `{}` | Env vars; values support `${VAR}` interpolation |
 | `upstream_servers[].redact_parameters` | boolean | inherits global | Per-server override |
 | `upstream_servers[].name_override` | string | (none) | Use a shorter prefix instead of `name` |
-| `upstream_connection.discovery_window_ms` | number | `5000` | How long the first `tools/list` waits for upstreams still connecting, from proxy start |
+| `upstream_connection.discovery_window_ms` | number | `15000` | Ceiling on how long the first `tools/list` waits for upstreams still connecting, from proxy start. See [Sizing the discovery window](#sizing-the-discovery-window) |
 | `upstream_connection.connect_timeout_ms` | number | `30000` | Limit for one connection attempt (start plus tool listing) |
 | `upstream_connection.retry_initial_delay_ms` | number | `1000` | First retry delay for a failed upstream; doubles on each retry |
 | `upstream_connection.retry_give_up_delay_ms` | number | `180000` | Retries stop once the next delay would reach this |
@@ -252,7 +252,8 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
 
 - **Discovery window.** The first `tools/list`, and any call to a tool the proxy does
   not know yet, waits up to `discovery_window_ms` from proxy start for upstreams still
-  connecting. Keep it well under your agent's MCP startup timeout.
+  connecting. The wait ends as soon as every upstream has settled, so the setting is a
+  ceiling, not a delay. See [Sizing the discovery window](#sizing-the-discovery-window).
 - **Changes.** When an upstream connects or disconnects later, the proxy sends
   `notifications/tools/list_changed`.
 - **Retries.** A failed or disconnected upstream is retried after
@@ -267,6 +268,51 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   `connected`, `failed`), last error, tool count, last attempt time and next retry.
   Call it with `retry_failed: true` to retry every failed upstream immediately with a
   fresh count, or restart the agent.
+
+### Sizing the discovery window
+
+Agent clients read the tool list once, when they start the server, and the ones tested
+(ChatGPT Desktop in Codex mode, Codex CLI) do not act on
+`notifications/tools/list_changed`. An upstream that connects after the window is
+therefore unusable for the rest of that session, even though the proxy has it
+connected and `omnodex_status` shows it. Restarting the agent does not help on its
+own, because the proxy restarts with it and the upstream is slow again.
+
+So the window has to cover your slowest upstream. To measure one, start the proxy by
+hand and watch how long it takes:
+
+```bash
+node packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js --config ~/.omnodex/omnodex-proxy.json
+```
+
+Each upstream prints a line when it fails, and `omnodex_status` reports
+`state` per upstream. Simpler: start your agent, ask it to call `omnodex_status`, and
+look for any upstream still `connecting`, or any tool missing from the list. Then set
+the window above that time:
+
+```json
+{ "upstream_connection": { "discovery_window_ms": 25000 } }
+```
+
+Rules of thumb:
+
+- A local server started from an installed binary connects in well under a second.
+- A first run of `npx -y` or `uvx` downloads the package: several seconds, occasionally
+  tens of seconds on a slow network. Later runs are faster because the package is cached.
+- A server that authenticates over the network on startup takes as long as that call.
+
+**Raising it** costs nothing when upstreams are healthy, because the wait ends as soon
+as they have all settled. It costs time only when one is slow or hanging: the agent's
+first tool listing can block for up to the window. `initialize` is answered immediately
+either way, so the agent still starts; Codex answered normally with a 12s first listing.
+
+**Lowering it** makes that first listing quicker at the cost of dropping any upstream
+that has not connected yet for the whole session. Use a low value only when every
+upstream is a fast local process, or when you would rather the agent start with fewer
+tools than wait.
+
+`connect_timeout_ms` is a separate, longer limit on one connection attempt. An upstream
+can still be connecting when the window closes; it is simply not in the first listing.
 
 ---
 
