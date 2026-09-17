@@ -12,8 +12,18 @@
  */
 
 export { MCPProxy } from "./mcp-proxy.js";
-export { UpstreamClientPool, McpToolNotFoundError } from "./upstream-client.js";
-export type { PrefixedTool, UpstreamCallResult } from "./upstream-client.js";
+export {
+  UpstreamClientPool,
+  McpToolNotFoundError,
+  McpUpstreamUnavailableError,
+  describeUnavailable,
+} from "./upstream-client.js";
+export type {
+  PrefixedTool,
+  UpstreamCallResult,
+  UpstreamState,
+  UpstreamStatus,
+} from "./upstream-client.js";
 export { callToolWithEvents } from "./event-emitter.js";
 export type { CallToolOptions, CallToolOutcome } from "./event-emitter.js";
 export { runProxyServer } from "./proxy-server.js";
@@ -32,4 +42,5 @@ export type {
   UpstreamServer,
   StdioUpstream,
   HttpUpstream,
+  UpstreamConnectionSettings,
 } from "./config.js";

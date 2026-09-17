@@ -13,11 +13,24 @@
  *   MOCK_ERROR          if "1", every tools/call returns isError:true
  *   MOCK_STRUCTURED     if "1", tools declare an outputSchema and return
  *                       structuredContent alongside the text content
+ *   MOCK_FAIL_STARTUP   if "1", exit with code 1 before speaking MCP
+ *   MOCK_STARTUP_DELAY_MS  wait this long before speaking MCP
+ *   MOCK_EXIT_AFTER_MS  exit this long after connecting (simulates a crash)
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+
+if (process.env.MOCK_FAIL_STARTUP === "1") {
+  process.stderr.write("mock server: startup failure\n");
+  process.exit(1);
+}
+
+const startupDelayMs = Number(process.env.MOCK_STARTUP_DELAY_MS ?? 0);
+if (startupDelayMs > 0) {
+  await new Promise((resolve) => setTimeout(resolve, startupDelayMs));
+}
 
 const name = process.env.MOCK_SERVER_NAME ?? "mock";
 const resultText = process.env.MOCK_RESULT_TEXT ?? "ok";
@@ -75,3 +88,8 @@ for (const toolName of tools) {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+const exitAfterMs = Number(process.env.MOCK_EXIT_AFTER_MS ?? 0);
+if (exitAfterMs > 0) {
+  setTimeout(() => process.exit(0), exitAfterMs);
+}

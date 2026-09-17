@@ -189,7 +189,13 @@ Full schema for `omnodex-proxy.json`:
       "redact_parameters": false,
       "name_override": "fs"
     }
-  ]
+  ],
+  "upstream_connection": {
+    "discovery_window_ms": 5000,
+    "connect_timeout_ms": 30000,
+    "retry_initial_delay_ms": 1000,
+    "retry_give_up_delay_ms": 180000
+  }
 }
 ```
 
@@ -204,6 +210,12 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].env` | object | `{}` | Env vars; values support `${VAR}` interpolation |
 | `upstream_servers[].redact_parameters` | boolean | inherits global | Per-server override |
 | `upstream_servers[].name_override` | string | (none) | Use a shorter prefix instead of `name` |
+| `upstream_connection.discovery_window_ms` | number | `5000` | How long the first `tools/list` waits for upstreams still connecting, from proxy start |
+| `upstream_connection.connect_timeout_ms` | number | `30000` | Limit for one connection attempt (start plus tool listing) |
+| `upstream_connection.retry_initial_delay_ms` | number | `1000` | First retry delay for a failed upstream; doubles on each retry |
+| `upstream_connection.retry_give_up_delay_ms` | number | `180000` | Retries stop once the next delay would reach this |
+
+`upstream_servers` may be empty or omitted; the proxy then serves only its built-in tools.
 
 `${VAR}` in `env` values is resolved from the proxy's process environment. Secrets
 stay out of the config file.
@@ -221,13 +233,40 @@ plugin hooks, so its built-in tools are not recorded.
 **Additive coverage only.** The proxy observes only MCP servers explicitly routed
 through it. MCP servers the agent connects to directly are not monitored.
 
-**Upstream startup.** The proxy needs at least one upstream server and stops if any
-upstream fails to start. Test a new upstream by running the proxy yourself before
-adding it to a desktop app.
+**Late upstreams.** The proxy answers the agent right away and connects upstreams in
+the background. Upstreams that connect after the discovery window are announced with
+`notifications/tools/list_changed`; agents that ignore that notification see their tools
+after a reconnect or a new conversation.
 
 **HTTP upstream transport.** The `transport: "http"` config field is accepted by the
 schema but not implemented; the proxy stops with an error if it is used. Use `stdio`
 upstreams.
+
+---
+
+## Upstream Connections
+
+Upstreams connect in parallel and independently. A slow, failing or crashed upstream
+never affects the others or the built-in tools (`omnodex_status`, `omnodex_connect`,
+`omnodex_connection_status`).
+
+- **Discovery window.** The first `tools/list`, and any call to a tool the proxy does
+  not know yet, waits up to `discovery_window_ms` from proxy start for upstreams still
+  connecting. Keep it well under your agent's MCP startup timeout.
+- **Changes.** When an upstream connects or disconnects later, the proxy sends
+  `notifications/tools/list_changed`.
+- **Retries.** A failed or disconnected upstream is retried after
+  `retry_initial_delay_ms`, doubling each time. Once the next delay would reach
+  `retry_give_up_delay_ms` (with the defaults: 9 attempts over about 4 minutes), retries
+  stop and the proxy logs a warning to stderr and to the agent as an MCP log message.
+  An upstream that crashes within 30 seconds of connecting keeps counting toward that
+  limit.
+- **Calls to a down upstream** return an error saying the upstream is connecting, is
+  retrying, or has stopped retrying, with its last error.
+- **Status.** `omnodex_status` reports each upstream's state (`connecting`,
+  `connected`, `failed`), last error, tool count, last attempt time and next retry.
+  Call it with `retry_failed: true` to retry every failed upstream immediately with a
+  fresh count, or restart the agent.
 
 ---
 

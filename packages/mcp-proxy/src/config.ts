@@ -72,6 +72,31 @@ const UpstreamServerSchema = z.discriminatedUnion("transport", [
   HttpUpstreamSchema,
 ]);
 
+/**
+ * How the proxy connects to upstream servers. Upstreams connect in the
+ * background: the proxy answers the agent immediately, and a slow or broken
+ * upstream never takes the built-in tools down with it.
+ */
+const UpstreamConnectionSchema = z.object({
+  /**
+   * How long the first tools/list waits for upstreams that are still
+   * connecting, counted from proxy start. Keep this well under the host's
+   * own MCP startup timeout. Upstreams that connect later are announced with
+   * notifications/tools/list_changed.
+   */
+  discovery_window_ms: z.number().int().min(0).default(5000),
+  /** Per-attempt limit for one upstream to start and list its tools. */
+  connect_timeout_ms: z.number().int().positive().default(30000),
+  /** Delay before the first retry of a failed upstream. Doubles each retry. */
+  retry_initial_delay_ms: z.number().int().positive().default(1000),
+  /**
+   * Retries stop once the next delay would reach this value, and the upstream
+   * stays failed until the proxy restarts or a retry is requested through
+   * omnodex_status. With the defaults that is 9 attempts over about 4 minutes.
+   */
+  retry_give_up_delay_ms: z.number().int().positive().default(180000),
+});
+
 export const ProxyConfigSchema = z.object({
   /** Schema version. Currently always 1. */
   version: z.literal(1),
@@ -91,10 +116,16 @@ export const ProxyConfigSchema = z.object({
    * redact_parameters field.
    */
   redact_parameters: z.boolean().default(false),
-  upstream_servers: z.array(UpstreamServerSchema).min(1),
+  /**
+   * May be empty: the proxy still serves its built-in tools, so a host can
+   * register it before any upstream is configured.
+   */
+  upstream_servers: z.array(UpstreamServerSchema).default([]),
+  upstream_connection: UpstreamConnectionSchema.default({}),
 });
 
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
+export type UpstreamConnectionSettings = z.infer<typeof UpstreamConnectionSchema>;
 export type UpstreamServer = z.infer<typeof UpstreamServerSchema>;
 export type StdioUpstream = z.infer<typeof StdioUpstreamSchema>;
 export type HttpUpstream = z.infer<typeof HttpUpstreamSchema>;
