@@ -268,6 +268,24 @@ test("loadProxyConfig throws when config file not found", async () => {
   }
 });
 
+test("loadProxyConfig returns an empty config when none is found and allowMissing is set", async (t) => {
+  await withTmpDir(t, async (dir) => {
+    const cfg = await loadProxyConfig(path.join(dir, "omnodex-proxy.json"), {
+      allowMissing: true,
+    });
+    assert.deepEqual(cfg.upstream_servers, []);
+    assert.equal(cfg.redact_parameters, false);
+  });
+});
+
+test("loadProxyConfig still throws on a config file it cannot parse when allowMissing is set", async (t) => {
+  await withTmpDir(t, async (dir) => {
+    const cfgPath = path.join(dir, "omnodex-proxy.json");
+    await writeFile(cfgPath, "{ not valid json", "utf8");
+    await assert.rejects(() => loadProxyConfig(cfgPath, { allowMissing: true }), /parse/i);
+  });
+});
+
 test("loadProxyConfig throws on invalid JSON", async (t) => {
   await withTmpDir(t, async (dir) => {
     const cfgPath = path.join(dir, "omnodex-proxy.json");

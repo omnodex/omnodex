@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     configPath = args[configFlagIdx + 1];
   }
 
-  const config = await loadProxyConfig(configPath);
+  const config = await loadProxyConfig(configPath, { allowMissing: true });
 
   // Resolve the event log root using the same convention as the hooks shim.
   const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");

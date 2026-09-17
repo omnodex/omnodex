@@ -203,9 +203,15 @@ export function toolNamePrefix(server: UpstreamServer): string {
  *   2. $OMNODEX_HOME/omnodex-proxy.json
  *   3. ~/.omnodex/omnodex-proxy.json (os.homedir)
  *   4. ./omnodex-proxy.json (cwd)
+ *
+ * With allowMissing, a config file that is nowhere to be found is treated as
+ * a config with no upstream servers rather than an error, so a proxy started
+ * by an agent still serves its built-in tools. The paths searched are written
+ * to stderr. Callers that report on the config file itself leave it off.
  */
 export async function loadProxyConfig(
-  explicitPath?: string
+  explicitPath?: string,
+  options?: { allowMissing?: boolean }
 ): Promise<ProxyConfig> {
   const candidates: string[] = [];
   if (explicitPath) candidates.push(explicitPath);
@@ -236,6 +242,15 @@ export async function loadProxyConfig(
       }
       return result.data;
     }
+  }
+
+  if (options?.allowMissing) {
+    process.stderr.write(
+      `[omnodex-mcp-proxy] no omnodex-proxy.json found, starting with no ` +
+        `upstream servers. Searched: ${candidates.join(", ")}. ` +
+        `Run 'omnodex mcp-proxy install' to create one.\n`
+    );
+    return ProxyConfigSchema.parse({ version: 1 });
   }
 
   throw new Error(
