@@ -53,14 +53,11 @@ import { detectRisks } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
 import {
-  SyncEncryptor,
-  HttpSyncTransport,
   StreamingTransport,
   deriveStreamingKey,
   computeKeyId,
-  computeMachineId,
-  readMachineLabel,
 } from "@omnodex/sync-encryptor";
+import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
 import {
   generatePassphrase,
   updateStreamConfig,
@@ -1571,48 +1568,23 @@ async function cmdSync(args: string[]): Promise<void> {
     return;
   }
 
-  const log = new EventLog({ root: paths.eventLogRoot });
-  await log.init();
-  const store = await openStore(paths);
-  // Rebuild the read model so we sync current data (replay is idempotent).
-  await new Projector(store).replay(iterateLog(log));
-
-  // Reuse a persisted KDF salt across syncs (it is also embedded in each blob).
-  const saltPath = path.join(paths.home, "sync-salt.bin");
-  let kdfSalt: Uint8Array | undefined;
-  try {
-    kdfSalt = new Uint8Array(await fs.readFile(saltPath));
-  } catch {
-    // first sync: SyncEncryptor generates a fresh salt
-  }
-
   const sessionsFlag = readFlagValue(args, "--sessions");
   const sessionIds = sessionsFlag
     ? sessionsFlag.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
-  const machineId = computeMachineId();
-  const machineLabel = await readMachineLabel(paths.home);
-
-  const transport = new HttpSyncTransport({ baseUrl: apiUrl, apiToken });
-  const encryptor = new SyncEncryptor({
+  console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
+  const result = await syncReadModel({
+    home: paths.home,
+    apiUrl,
+    apiToken,
     passphrase,
     customerId: customer_id,
-    transport,
-    store,
-    eventLog: log,
-    kdfSalt,
-    machineId,
-    machineLabel,
+    sessionIds,
   });
-
-  console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
-  const result = await encryptor.sync(sessionIds);
-  await fs.writeFile(saltPath, result.kdfSalt);
   console.log(
     `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.payloadBytes}`,
   );
-  await store.close();
 }
 
 async function main(): Promise<void> {

@@ -37,3 +37,13 @@ export { computeMachineId, readMachineLabel } from "./machine-id.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
 
 export { pushEventsToCloud } from "./shim-push.js";
+
+export {
+  startBackgroundSync,
+  runAutoSync,
+  readAutoSyncState,
+  includesSessionEnd,
+  AUTO_SYNC_CHILD_ENV,
+  DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS,
+} from "./auto-sync.js";
+export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions } from "./auto-sync.js";
