@@ -10,9 +10,16 @@
 
 import { test, beforeEach } from "node:test";
 import * as assert from "node:assert/strict";
-import { promises as fs } from "node:fs";
+import { promises as fs, rmSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+
+// Launcher tests write to ~/.omnodex/bin. Point the home directory at a temp
+// dir so the suite never reads or modifies a developer's real launchers.
+const TEST_HOME = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-test-home-"));
+process.env.HOME = TEST_HOME;
+process.env.USERPROFILE = TEST_HOME;
+process.on("exit", () => rmSync(TEST_HOME, { recursive: true, force: true }));
 
 // ---------------------------------------------------------------------------
 // compareSemver (pure function, no I/O)
