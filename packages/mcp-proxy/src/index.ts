@@ -12,6 +12,19 @@
  */
 
 export { MCPProxy } from "./mcp-proxy.js";
+export type { MCPProxyOptions } from "./mcp-proxy.js";
+export { createCloudPushQueue } from "./cloud-push.js";
+export type {
+  CloudPushQueue,
+  CloudPushQueueOptions,
+  CloudPushFn,
+} from "./cloud-push.js";
+export { startAutoSyncTimer } from "./background-sync.js";
+export type {
+  AutoSyncTimer,
+  AutoSyncTimerOptions,
+  StartSyncFn,
+} from "./background-sync.js";
 export {
   UpstreamClientPool,
   McpToolNotFoundError,

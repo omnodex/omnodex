@@ -15,6 +15,11 @@
  * payload, and exits. The hook itself returns immediately, which matters
  * for hosts that cap hook runtime at a few seconds.
  *
+ * The MCP proxy uses the same mechanism from a long-lived process: a timer
+ * calls startBackgroundSync() every readAutoSyncIntervalMs(), and again when
+ * the agent disconnects. Spawning rather than syncing in-process keeps the
+ * projector's synchronous SQLite replay off the thread answering tools/call.
+ *
  * Files under OMNODEX_HOME:
  *   - auto-sync-state.json  last attempt, last success, last error
  *   - auto-sync.lock        held while a sync runs; stale after 10 minutes
@@ -22,6 +27,7 @@
  * Settings (stream-config.json):
  *   - auto_sync: false                      turn automatic sync off
  *   - auto_sync_min_interval_seconds: <n>   minimum gap between syncs (default 60)
+ *   - auto_sync_interval_seconds: <n>       proxy timer period (default 900)
  * OMNODEX_AUTO_SYNC=0 in the environment also turns it off.
  *
  * Never throws: failures are recorded in auto-sync-state.json.
@@ -36,6 +42,16 @@ import type { TraceEvent } from "@omnodex/shared";
 export const AUTO_SYNC_CHILD_ENV = "OMNODEX_AUTO_SYNC_CHILD";
 
 export const DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS = 60;
+
+/**
+ * How often a long-lived process (the MCP proxy) asks for a sync. Matches
+ * the feature-extraction cadence so a session that never ends cleanly is
+ * still no more than a quarter hour stale in the dashboard.
+ */
+export const DEFAULT_AUTO_SYNC_INTERVAL_SECONDS = 15 * 60;
+
+/** A configured timer period below this is ignored; the default is used. */
+const MIN_AUTO_SYNC_INTERVAL_SECONDS = 30;
 
 /** A lock older than this is assumed to belong to a crashed sync. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
@@ -186,6 +202,25 @@ export async function readAutoSyncState(home: string): Promise<AutoSyncState> {
   } catch {
     return {};
   }
+}
+
+/**
+ * Timer period for a long-lived process, from stream-config.json. Hook shims
+ * have no timer -- they sync when a session ends -- so only the MCP proxy
+ * reads this. A missing, unparseable or implausibly small value falls back to
+ * the default rather than hammering the API.
+ */
+export async function readAutoSyncIntervalMs(home: string): Promise<number> {
+  const config = await readJson(path.join(home, "stream-config.json"));
+  const seconds = config?.auto_sync_interval_seconds;
+  if (
+    typeof seconds === "number" &&
+    Number.isFinite(seconds) &&
+    seconds >= MIN_AUTO_SYNC_INTERVAL_SECONDS
+  ) {
+    return seconds * 1000;
+  }
+  return DEFAULT_AUTO_SYNC_INTERVAL_SECONDS * 1000;
 }
 
 // ---------------------------------------------------------------------------

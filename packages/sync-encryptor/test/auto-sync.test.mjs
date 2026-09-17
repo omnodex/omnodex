@@ -19,8 +19,10 @@ import {
   startBackgroundSync,
   runAutoSync,
   readAutoSyncState,
+  readAutoSyncIntervalMs,
   includesSessionEnd,
   AUTO_SYNC_CHILD_ENV,
+  DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "../dist/auto-sync.js";
 
 const CUSTOMER_ID = "cust_case";
@@ -119,6 +121,46 @@ describe("includesSessionEnd", () => {
       true,
     );
     assert.equal(includesSessionEnd([]), false);
+  });
+});
+
+describe("readAutoSyncIntervalMs", () => {
+  let home;
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "omnodex-autosync-interval-"));
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+  });
+
+  const DEFAULT_MS = DEFAULT_AUTO_SYNC_INTERVAL_SECONDS * 1000;
+
+  it("falls back to the default when there is no config", async () => {
+    assert.equal(await readAutoSyncIntervalMs(home), DEFAULT_MS);
+  });
+
+  it("uses a configured period", async () => {
+    await writeJson(home, "stream-config.json", { auto_sync_interval_seconds: 120 });
+    assert.equal(await readAutoSyncIntervalMs(home), 120_000);
+  });
+
+  it("ignores a period too short to be meant seriously", async () => {
+    await writeJson(home, "stream-config.json", { auto_sync_interval_seconds: 1 });
+    assert.equal(await readAutoSyncIntervalMs(home), DEFAULT_MS);
+  });
+
+  it("ignores values that are not usable numbers", async () => {
+    for (const value of ["900", 0, -60, null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await writeJson(home, "stream-config.json", { auto_sync_interval_seconds: value });
+      assert.equal(await readAutoSyncIntervalMs(home), DEFAULT_MS, `value: ${String(value)}`);
+    }
+  });
+
+  it("falls back to the default on unparseable config", async () => {
+    await writeFile(path.join(home, "stream-config.json"), "{ not json");
+    assert.equal(await readAutoSyncIntervalMs(home), DEFAULT_MS);
   });
 });
 

@@ -56,12 +56,17 @@ import {
   StreamingTransport,
   deriveStreamingKey,
   computeKeyId,
+  AUTO_SYNC_CHILD_ENV,
+  readAutoSyncState,
+  runAutoSync,
+  startBackgroundSync,
 } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
 import {
   generatePassphrase,
   updateStreamConfig,
   resolveCredentials,
+  readStreamConfig,
 } from "./stream-config.js";
 import { createClaim, platformFromTarget } from "./connect.js";
 import {
@@ -1194,6 +1199,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
   }
 
   await printLauncherHealth(paths.home);
+  await printAutoSyncHealth(paths.home);
   console.log("");
 
   // If --all, show the full registry instead of per-project detection
@@ -1329,6 +1335,50 @@ async function printLauncherHealth(omnodexHome: string): Promise<void> {
 }
 
 
+/**
+ * Report the automatic sync that hook shims and the MCP proxy run in the
+ * background. Both swallow their errors so the agent is never blocked, which
+ * makes this the only place a sync that has been failing quietly shows up.
+ *
+ * Silent on a machine with no cloud credentials and no sync history: that is
+ * the entire free tier, and it has nothing to say.
+ */
+async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
+  const state = await readAutoSyncState(omnodexHome);
+  const hasHistory = Boolean(state.last_attempt_at ?? state.last_success_at);
+  if (!hasHistory && !(await readStreamConfig(omnodexHome))) return;
+
+  if (state.last_success_at) {
+    const blob = state.last_blob_id ? `  blob ${state.last_blob_id}` : "";
+    console.log(
+      `[status] auto sync:   last success ${formatWhen(state.last_success_at)}${blob}`,
+    );
+  } else {
+    console.log(`[status] auto sync:   no successful sync yet`);
+  }
+
+  if (state.last_error) {
+    console.log(`    last error: ${state.last_error}`);
+    if (state.last_attempt_at) {
+      console.log(`    last attempt: ${formatWhen(state.last_attempt_at)}`);
+    }
+  }
+}
+
+/** ISO timestamp plus a rough age, e.g. "2026-09-17T18:40:12Z (12m ago)". */
+function formatWhen(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  const seconds = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (seconds < 60) return `${iso} (${seconds}s ago)`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${iso} (${minutes}m ago)`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${iso} (${hours}h ago)`;
+  return `${iso} (${Math.round(hours / 24)}d ago)`;
+}
+
+
 // ---------------------------------------------------------------------------
 // mcp-proxy subcommands
 // ---------------------------------------------------------------------------
@@ -1374,13 +1424,23 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
   const log = new EventLog({ root: path.join(paths.home, "event-log") });
   await log.init();
 
-  const proxy = new MCPProxy(config, { projectPath: process.cwd() });
+  // argv[1] is this CLI; main() runs a background sync when it sees
+  // AUTO_SYNC_CHILD_ENV, so the proxy can re-spawn it the same way the
+  // standalone omnodex-mcp-proxy binary re-spawns itself.
+  const scriptPath = process.argv[1] ?? "";
+  const proxy = new MCPProxy(config, {
+    projectPath: process.cwd(),
+    home: paths.home,
+    autoSyncScriptPath: scriptPath,
+  });
   const emit = log.append.bind(log);
   const stop = await proxy.start(emit);
 
   async function shutdown(): Promise<void> {
     await stop();
     await log.close();
+    // After log.close(), so the detached child sees session.ended.
+    await startBackgroundSync({ home: paths.home, scriptPath });
   }
   // Normal end: the agent closes stdin.
   void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
@@ -1589,6 +1649,15 @@ async function cmdSync(args: string[]): Promise<void> {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
+
+  // Detached sync child spawned by a running MCP proxy. Handled before
+  // anything else: it has no command, and the update check below would print
+  // to a stdout nobody is reading.
+  if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
+    await runAutoSync(resolvePaths().home);
+    return;
+  }
+
   // Background update check + notification (skip for update command itself)
   if (command !== "update") {
     await scheduleBackgroundCheck();
