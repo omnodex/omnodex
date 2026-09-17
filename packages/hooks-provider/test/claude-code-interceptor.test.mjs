@@ -4,6 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -110,4 +111,56 @@ test("uninstall leaves foreign handlers intact", async (t) => {
   // No Omnodex-tagged handlers should remain anywhere.
   const flat = JSON.stringify(after);
   assert.equal(flat.includes("omnodex-managed"), false);
+});
+
+test("homeRelativeShimPath writes a host-neutral command with no env prefix", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = new ClaudeCodeInterceptor({
+    projectPath,
+    shimPath: "/home/case/.omnodex/bin/claude-hook-launcher.js",
+    omnodexHome: "/home/case/.omnodex",
+    homeRelativeShimPath: ".omnodex/bin/claude-hook-launcher.js",
+    debug: true,
+  });
+  await interceptor.install();
+  const settings = JSON.parse(
+    await readFile(interceptor.settingsFilePath(), "utf8"),
+  );
+  for (const groups of Object.values(settings.hooks)) {
+    assert.equal(
+      groups[0].hooks[0].command,
+      'node "$HOME/.omnodex/bin/claude-hook-launcher.js"',
+    );
+  }
+});
+
+test("host-neutral command resolves the launcher under the running shell's HOME", { skip: process.platform === "win32" }, async (t) => {
+  const home = await fresh(t);
+  const binDir = path.join(home, ".omnodex", "bin");
+  await mkdir(binDir, { recursive: true });
+  const marker = path.join(home, "ran");
+  await writeFile(
+    path.join(binDir, "claude-hook-launcher.js"),
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ok");\n`,
+  );
+
+  const projectPath = await fresh(t);
+  const interceptor = new ClaudeCodeInterceptor({
+    projectPath,
+    shimPath: path.join(binDir, "claude-hook-launcher.js"),
+    omnodexHome: path.join(home, ".omnodex"),
+    homeRelativeShimPath: ".omnodex/bin/claude-hook-launcher.js",
+  });
+  await interceptor.install();
+  const settings = JSON.parse(
+    await readFile(interceptor.settingsFilePath(), "utf8"),
+  );
+  const command = settings.hooks.PreToolUse[0].hooks[0].command;
+
+  const result = spawnSync("sh", ["-c", command], {
+    env: { ...process.env, HOME: home },
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(await readFile(marker, "utf8"), "ok");
 });

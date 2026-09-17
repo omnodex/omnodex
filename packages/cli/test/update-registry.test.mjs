@@ -191,13 +191,21 @@ test("registry: getInstalledVersion returns a string", () => {
 // Launcher template
 // ---------------------------------------------------------------------------
 
-import { writeLauncher, launcherPath, isLauncherCurrent } from "../dist/launcher-template.js";
+import { writeLauncher, launcherPath, launcherHomeRelativePath, isLauncherCurrent } from "../dist/launcher-template.js";
 
 test("launcher: launcherPath returns expected location", () => {
   const p = launcherPath("claude-code");
   assert.ok(p.includes(".omnodex"));
   assert.ok(p.includes("bin"));
   assert.ok(p.endsWith("claude-hook-launcher.js"));
+});
+
+test("launcher: launcherHomeRelativePath is launcherPath relative to home, with forward slashes", () => {
+  for (const platform of ["claude-code", "codex", "antigravity"]) {
+    const rel = launcherHomeRelativePath(platform);
+    assert.ok(!rel.includes("\\"));
+    assert.equal(path.join(os.homedir(), ...rel.split("/")), launcherPath(platform));
+  }
 });
 
 test("launcher: writeLauncher creates a file", async () => {
@@ -256,14 +264,13 @@ test("getSourceInstallInfo: returns expected shape (branch, sha, dirty)", () => 
   assert.equal(typeof info.dirty, "boolean", "dirty should be a boolean");
 });
 
-test("getSourceInstallInfo: repoRoot ends with the omnodex repo directory", () => {
+test("getSourceInstallInfo: repoRoot is the omnodex repo root", async () => {
   const info = getSourceInstallInfo();
   assert.equal(typeof info.repoRoot, "string", "repoRoot should be a string");
-  const normalized = info.repoRoot.replace(/\\/g, "/");
-  assert.ok(
-    normalized.endsWith("/omnodex") || normalized.endsWith("/omnodex/"),
-    `repoRoot should end with the omnodex repo directory, got: ${info.repoRoot}`
-  );
+  // Check the root package name, not the directory name, so the test also
+  // passes in clones and worktrees under a different folder name.
+  const pkg = JSON.parse(await fs.readFile(path.join(info.repoRoot, "package.json"), "utf8"));
+  assert.equal(pkg.name, "omnodex", `unexpected repoRoot: ${info.repoRoot}`);
 });
 
 test("getSourceInstallInfo: sha is a short hex string", () => {

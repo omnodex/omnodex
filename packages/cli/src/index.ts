@@ -70,6 +70,7 @@ import { createClaim, platformFromTarget } from "./connect.js";
 import {
   writeLauncher,
   launcherPath,
+  launcherHomeRelativePath,
   refreshStaleLaunchers,
   resolveLauncherShim,
   LAUNCHER_PLATFORMS,
@@ -93,6 +94,32 @@ function resolvePaths(): Paths {
     eventLogRoot: path.join(home, "event-log"),
     dbPath: path.join(home, "traces.db"),
   };
+}
+
+/**
+ * Whether hook commands can use the host-neutral `node "$HOME/..."` form.
+ * That form carries no env prefix, so it needs the launcher (not a legacy
+ * absolute shim path), no --debug, and the default OMNODEX_HOME, which the
+ * shim falls back to by itself on each host.
+ */
+function canUsePortableHookCommand(
+  paths: Paths,
+  opts: { useLegacy: boolean; debug: boolean },
+): boolean {
+  return (
+    !opts.useLegacy &&
+    !opts.debug &&
+    path.resolve(paths.home) === path.resolve(os.homedir(), ".omnodex")
+  );
+}
+
+function logHookCommandForm(target: InstallTarget, portable: boolean, useLegacy: boolean): void {
+  if (portable) {
+    console.log(`[install] hook command is host-neutral: the same file works from Windows, WSL and other devices`);
+  } else if (!useLegacy) {
+    console.log(`[install] note: --debug or a custom OMNODEX_HOME writes a host-specific hook command;`);
+    console.log(`          installing ${target} from another host in this project will replace it`);
+  }
 }
 
 async function openStore(paths: Paths): Promise<ReadModelStore> {
@@ -739,6 +766,8 @@ async function installClaudeCode(args: string[]): Promise<void> {
   // Claude Code merges settings.json and settings.local.json; duplicate hooks
   // cause every event to be processed twice and produce double risk findings.
   const nodePath = useLegacy ? process.execPath : "node";
+  const portable = canUsePortableHookCommand(paths, { useLegacy, debug });
+  const homeRelativeShimPath = portable ? launcherHomeRelativePath("claude-code") : undefined;
   const alternateInterceptor = new ClaudeCodeInterceptor({
     projectPath,
     shimPath,
@@ -767,6 +796,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
     settingsFile: targetFile,
     debug,
     nodePath,
+    homeRelativeShimPath,
   });
   await interceptor.install();
   console.log(`[install] installed Claude Code hooks into`);
@@ -779,6 +809,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
     console.log(`[install] launcher:     ${shimPath}`);
     console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
   }
+  logHookCommandForm("claude-code", portable, useLegacy);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
@@ -813,12 +844,14 @@ async function installCodex(args: string[]): Promise<void> {
     : await writeLauncher("codex");
 
   const nodePath = useLegacy ? process.execPath : "node";
+  const portable = canUsePortableHookCommand(paths, { useLegacy, debug });
   const interceptor = new CodexInterceptor({
     projectPath,
     shimPath,
     omnodexHome: paths.home,
     debug,
     nodePath,
+    homeRelativeShimPath: portable ? launcherHomeRelativePath("codex") : undefined,
   });
   await interceptor.install();
   console.log(`[install] installed Codex hooks into`);
@@ -831,6 +864,7 @@ async function installCodex(args: string[]): Promise<void> {
     console.log(`[install] launcher:     ${shimPath}`);
     console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
   }
+  logHookCommandForm("codex", portable, useLegacy);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(`[install] note: ensure hooks = true in ~/.codex/config.toml`);
   console.log(
