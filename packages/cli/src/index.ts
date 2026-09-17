@@ -73,6 +73,8 @@ import {
   launcherHomeRelativePath,
   refreshStaleLaunchers,
   resolveLauncherShim,
+  ensureLauncherResolves,
+  shimFilename,
   LAUNCHER_PLATFORMS,
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
@@ -113,9 +115,46 @@ function canUsePortableHookCommand(
   );
 }
 
+/**
+ * Check that this host's launcher finds a shim, pinning the running CLI's own
+ * shim in omnodex-config.json when it does not (source checkouts, installs
+ * outside the usual npm locations). Without this, hooks exit 0 and record
+ * nothing, which is easy to miss.
+ */
+async function checkLauncherShim(
+  platform: LauncherPlatform,
+  omnodexHome: string,
+  ownShimPath: string,
+): Promise<void> {
+  const candidates = [ownShimPath];
+  if (process.argv[1]) {
+    try {
+      // Published npm package: shims sit beside the CLI entry point in bin/.
+      const entryDir = path.dirname(await fs.realpath(process.argv[1]));
+      candidates.push(path.join(entryDir, shimFilename(platform)));
+    } catch { /* entry point not on disk */ }
+  }
+  const check = await ensureLauncherResolves(platform, omnodexHome, candidates);
+  switch (check.status) {
+    case "resolved":
+      console.log(`[install] launcher finds shim: ${check.shim}`);
+      return;
+    case "pinned":
+      console.log(`[install] launcher found no shim on this host; set shim_paths.${platform} in`);
+      console.log(`          ${check.configPath}`);
+      console.log(`[install] launcher finds shim: ${check.shim}`);
+      return;
+    case "unresolved":
+      console.warn(`[install] WARNING: hooks will record nothing on this host: ${check.reason}`);
+      console.warn(`[install]          run \`omnodex status\` to check the launchers`);
+      return;
+  }
+}
+
 function logHookCommandForm(target: InstallTarget, portable: boolean, useLegacy: boolean): void {
   if (portable) {
-    console.log(`[install] hook command is host-neutral: the same file works from Windows, WSL and other devices`);
+    console.log(`[install] hook command is host-neutral: the same file works on Windows, WSL and other devices`);
+    console.log(`          once \`omnodex install ${target}\` has been run on each of them`);
   } else if (!useLegacy) {
     console.log(`[install] note: --debug or a custom OMNODEX_HOME writes a host-specific hook command;`);
     console.log(`          installing ${target} from another host in this project will replace it`);
@@ -809,6 +848,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
     console.log(`[install] launcher:     ${shimPath}`);
     console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
   }
+  if (!useLegacy) await checkLauncherShim("claude-code", paths.home, CLAUDE_HOOK_SHIM_PATH);
   logHookCommandForm("claude-code", portable, useLegacy);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(
@@ -864,6 +904,7 @@ async function installCodex(args: string[]): Promise<void> {
     console.log(`[install] launcher:     ${shimPath}`);
     console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
   }
+  if (!useLegacy) await checkLauncherShim("codex", paths.home, CODEX_HOOK_SHIM_PATH);
   logHookCommandForm("codex", portable, useLegacy);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(`[install] note: ensure hooks = true in ~/.codex/config.toml`);
@@ -927,6 +968,7 @@ async function installAntigravity(args: string[]): Promise<void> {
       console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
     }
     console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+    if (!useLegacy) await checkLauncherShim("antigravity", paths.home, ANTIGRAVITY_HOOK_SHIM_PATH);
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
   }
 
