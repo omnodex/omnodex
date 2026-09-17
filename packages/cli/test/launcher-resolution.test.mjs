@@ -11,16 +11,17 @@
  *   4. Resolve-only mode reports a missing shim without running anything
  *   5. shim_paths in omnodex-config.json wins over PATH
  *   6. refreshStaleLaunchers rewrites outdated launchers only
+ *   7. ensureLauncherResolves pins the CLI's own shim only when nothing resolves
  */
 
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { generateLauncherSource } from "../dist/launcher-template.js";
+import { generateLauncherSource, ensureLauncherResolves } from "../dist/launcher-template.js";
 
 const NODE_DIR = path.dirname(process.execPath);
 
@@ -214,6 +215,92 @@ test("refreshStaleLaunchers: rewrites outdated launchers and skips missing ones"
       generateLauncherSource("claude-code"),
     );
     await assert.rejects(fs.access(path.join(binDir, "antigravity-hook-launcher.js")));
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+// A resolver that behaves like a launcher which only knows shim_paths.
+function configResolver(omnodexHome) {
+  return (platform) => {
+    try {
+      const raw = readFileSync(path.join(omnodexHome, "omnodex-config.json"), "utf8");
+      return JSON.parse(raw).shim_paths?.[platform] ?? null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+test("ensureLauncherResolves: leaves config alone when the launcher already finds a shim", async () => {
+  const tmp = await makeTemp();
+  try {
+    const home = path.join(tmp, ".omnodex");
+    const ownShim = path.join(tmp, "own", "claude-hook-shim.js");
+    await writeFile(ownShim, RECORDING_SHIM);
+
+    const check = await ensureLauncherResolves("claude-code", home, [ownShim], () => "/usr/lib/node_modules/omnodex/bin/claude-hook-shim.js");
+
+    assert.deepEqual(check, { status: "resolved", shim: "/usr/lib/node_modules/omnodex/bin/claude-hook-shim.js" });
+    await assert.rejects(fs.access(path.join(home, "omnodex-config.json")));
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("ensureLauncherResolves: pins the first existing candidate and keeps other config", async () => {
+  const tmp = await makeTemp();
+  try {
+    const home = path.join(tmp, ".omnodex");
+    const configPath = path.join(home, "omnodex-config.json");
+    await writeFile(configPath, JSON.stringify({ shim_paths: { codex: "/keep/codex-hook-shim.js" }, other: 1 }), 0o644);
+    const ownShim = path.join(tmp, "own", "claude-hook-shim.js");
+    await writeFile(ownShim, RECORDING_SHIM);
+
+    const check = await ensureLauncherResolves(
+      "claude-code",
+      home,
+      [path.join(tmp, "missing", "claude-hook-shim.js"), ownShim],
+      configResolver(home),
+    );
+
+    assert.deepEqual(check, { status: "pinned", shim: ownShim, configPath });
+    const config = JSON.parse(await fs.readFile(configPath, "utf8"));
+    assert.deepEqual(config, {
+      shim_paths: { codex: "/keep/codex-hook-shim.js", "claude-code": ownShim },
+      other: 1,
+    });
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("ensureLauncherResolves: reports unresolved without writing when no candidate exists", async () => {
+  const tmp = await makeTemp();
+  try {
+    const home = path.join(tmp, ".omnodex");
+    const check = await ensureLauncherResolves("codex", home, [path.join(tmp, "missing.js")], () => null);
+
+    assert.equal(check.status, "unresolved");
+    await assert.rejects(fs.access(path.join(home, "omnodex-config.json")));
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("ensureLauncherResolves: does not overwrite an unreadable config", async () => {
+  const tmp = await makeTemp();
+  try {
+    const home = path.join(tmp, ".omnodex");
+    const configPath = path.join(home, "omnodex-config.json");
+    await writeFile(configPath, "{ not json", 0o644);
+    const ownShim = path.join(tmp, "own", "codex-hook-shim.js");
+    await writeFile(ownShim, RECORDING_SHIM);
+
+    const check = await ensureLauncherResolves("codex", home, [ownShim], () => null);
+
+    assert.equal(check.status, "unresolved");
+    assert.equal(await fs.readFile(configPath, "utf8"), "{ not json");
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }

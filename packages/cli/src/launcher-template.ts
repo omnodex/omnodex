@@ -354,6 +354,68 @@ export function resolveLauncherShim(platform: LauncherPlatform): string | null {
   return out || null;
 }
 
+/** Outcome of {@link ensureLauncherResolves}. */
+export type LauncherShimCheck =
+  | { status: "resolved"; shim: string }
+  | { status: "pinned"; shim: string; configPath: string }
+  | { status: "unresolved"; reason: string };
+
+/**
+ * Make sure this host's launcher for `platform` can find a shim.
+ *
+ * A launcher finds npm installs on its own, but not a source checkout or an
+ * install outside the usual locations. When it finds nothing, record the
+ * first existing path in `candidateShims` (the shim shipped with the CLI
+ * running the install) as `shim_paths.<platform>` in
+ * `<omnodexHome>/omnodex-config.json`. A shim the launcher already finds is
+ * never overridden, and other config fields are kept.
+ */
+export async function ensureLauncherResolves(
+  platform: LauncherPlatform,
+  omnodexHome: string,
+  candidateShims: string[],
+  resolve: (platform: LauncherPlatform) => string | null = resolveLauncherShim,
+): Promise<LauncherShimCheck> {
+  const found = resolve(platform);
+  if (found) return { status: "resolved", shim: found };
+
+  let shim: string | undefined;
+  for (const candidate of candidateShims) {
+    try {
+      await fs.access(candidate);
+      shim = candidate;
+      break;
+    } catch { /* try the next one */ }
+  }
+  if (!shim) {
+    return { status: "unresolved", reason: "no shim found next to the running omnodex CLI" };
+  }
+
+  const configPath = path.join(omnodexHome, "omnodex-config.json");
+  let config: Record<string, unknown> = {};
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    if (raw.trim()) config = JSON.parse(raw) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      return { status: "unresolved", reason: `could not read ${configPath}: ${(err as Error).message}` };
+    }
+  }
+  const shimPaths =
+    config.shim_paths && typeof config.shim_paths === "object"
+      ? (config.shim_paths as Record<string, string>)
+      : {};
+  config.shim_paths = { ...shimPaths, [platform]: shim };
+  await fs.mkdir(omnodexHome, { recursive: true });
+  await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+
+  const pinned = resolve(platform);
+  if (!pinned) {
+    return { status: "unresolved", reason: `launcher still cannot find a shim after setting shim_paths in ${configPath}` };
+  }
+  return { status: "pinned", shim: pinned, configPath };
+}
+
 /**
  * Check whether a launcher exists and is up to date.
  * Compares the first line (shebang) and the PLATFORM constant to detect
