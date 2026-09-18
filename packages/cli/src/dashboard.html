@@ -836,6 +836,32 @@ header {
 
   const API = "";
 
+  // --- Risk score presentation ---
+  // Thresholds mirror RISK_BAND_THRESHOLD in @omnodex/shared, which is the
+  // source of truth for how a severity becomes a number. A session with one
+  // finding lands in that finding's own band. This file is served as a
+  // standalone page and cannot import, so the values are repeated here; change
+  // them together.
+  const RISK_BANDS = [
+    { min: 1.0, label: "CRITICAL", color: "var(--red)" },
+    { min: 0.7, label: "HIGH", color: "var(--orange)" },
+    { min: 0.4, label: "MEDIUM", color: "var(--yellow)" },
+    { min: 0, label: "LOW", color: "var(--mint)" },
+  ];
+
+  function riskBand(score) {
+    const n = score || 0;
+    for (const band of RISK_BANDS) {
+      if (n >= band.min) return band;
+    }
+    return RISK_BANDS[RISK_BANDS.length - 1];
+  }
+
+  /** Scores are sums of tenths, so they need rounding before display. */
+  function fmtRisk(score) {
+    return (Math.round((score || 0) * 100) / 100).toString();
+  }
+
   // --- State ---
   var useUtc = false;
   let sessions = [];
@@ -1065,13 +1091,13 @@ header {
       totalRisk += s.risk_score || 0;
       (s.mcp_servers || []).forEach(function(srv) { serverSet[srv] = true; });
     }
-    var riskLabel = totalRisk >= 60 ? "CRITICAL" : totalRisk >= 30 ? "HIGH" : totalRisk >= 15 ? "MEDIUM" : "LOW";
-    var riskColor = totalRisk >= 60 ? "var(--red)" : totalRisk >= 30 ? "var(--orange)" : totalRisk >= 15 ? "var(--yellow)" : "var(--mint)";
+    var riskLabel = riskBand(totalRisk).label;
+    var riskColor = riskBand(totalRisk).color;
 
     document.getElementById("stats-row").innerHTML = [
       statCard("Tool Calls", totalTools, "cyan", Object.keys(serverSet).length + " MCP servers"),
       statCard("File Reads", totalReads, "mint", totalWrites + " writes"),
-      statCard("Risk Score", totalRisk, "orange", '<span style="color:' + riskColor + '">' + riskLabel + '</span>'),
+      statCard("Risk Score", fmtRisk(totalRisk), "orange", '<span style="color:' + riskColor + '">' + riskLabel + '</span>'),
       statCard("Sessions", allActiveSessions.length, "cyan", "active"),
     ].join("");
   }
@@ -1152,12 +1178,8 @@ header {
     const s = currentSession;
     if (!s) return;
 
-    const riskLabel = s.risk_score >= 60 ? "CRITICAL" :
-                      s.risk_score >= 30 ? "HIGH" :
-                      s.risk_score >= 15 ? "MEDIUM" : "LOW";
-    const riskColor = s.risk_score >= 60 ? "var(--red)" :
-                      s.risk_score >= 30 ? "var(--orange)" :
-                      s.risk_score >= 15 ? "var(--yellow)" : "var(--mint)";
+    const riskLabel = riskBand(s.risk_score).label;
+    const riskColor = riskBand(s.risk_score).color;
 
     const durationSec = s.duration_ms != null ? (s.duration_ms / 1000).toFixed(1) + "s" : "active";
 
@@ -1165,7 +1187,7 @@ header {
       [
         statCard("Tool Calls", s.tool_call_count, "cyan", (s.mcp_servers || []).length + " MCP servers"),
         statCard("File Reads", s.file_read_count, "mint", s.file_write_count + " writes"),
-        statCard("Risk Score", s.risk_score, "orange",
+        statCard("Risk Score", fmtRisk(s.risk_score), "orange",
           '<span style="color:' + riskColor + '">' + riskLabel + '</span>'),
         statCard("Duration", durationSec, "cyan", displayStatus(s.status)),
       ].join("");

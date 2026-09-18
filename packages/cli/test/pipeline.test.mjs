@@ -75,7 +75,7 @@ test("full pipeline: mock interceptor -> event log -> projection -> sqlite", asy
   assert.equal(session.tool_call_count, 9);
   assert.equal(session.file_read_count, 2);
   assert.equal(session.file_write_count, 1);
-  assert.equal(session.risk_score, 90);
+  assert.equal(session.risk_score, 1.7); // one HIGH (0.7) + one CRITICAL (1.0)
 
   // Now delete the db file and replay again. Rebuild-from-scratch is a
   // load-bearing property of the event-log-first architecture.
@@ -92,7 +92,7 @@ test("full pipeline: mock interceptor -> event log -> projection -> sqlite", asy
   const rebuiltSessions = await rebuilt.listSessions();
   assert.equal(rebuiltSessions.length, 1);
   assert.equal(rebuiltSessions[0].tool_call_count, 9);
-  assert.equal(rebuiltSessions[0].risk_score, 90);
+  assert.equal(rebuiltSessions[0].risk_score, 1.7);
 
   const risks = await rebuilt.listRiskEvents("sess_e2e");
   assert.equal(risks.length, 2);

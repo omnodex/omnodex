@@ -42,6 +42,20 @@ export interface ToolCallRow {
   session_id: string;
   tool_name: string;
   mcp_server: string;
+  /**
+   * Which interceptor observed this call. Sessions carry one too, but a
+   * correlated pair spans two sessions with different interceptors, so
+   * consumers need it per row to label the sources of one logical call.
+   * Optional for rows projected before it existed.
+   */
+  interceptor?: string;
+  /**
+   * Shared by the hook-observed and proxy-observed rows of a single call.
+   * Null when a call was seen only once, which is every call that did not go
+   * through the proxy. Set by a pass over the read model, never at write
+   * time. See correlate.ts.
+   */
+  correlation_id?: string | null;
   parameters_json: string;
   started_at: string;
   ended_at: string | null;
@@ -52,6 +66,13 @@ export interface ToolCallRow {
 }
 
 export interface FileEventRow {
+  /**
+   * event_id of the originating file.read / file.written event. This is the
+   * row's natural key: the same log event projected twice must not produce
+   * two rows. Tool calls key on tool_call_id and sessions on session_id;
+   * file events have no other stable identity.
+   */
+  event_id: string;
   session_id: string;
   direction: "read" | "write";
   path: string;
@@ -60,6 +81,8 @@ export interface FileEventRow {
 }
 
 export interface RiskEventRow {
+  /** event_id of the originating risk.detected event. */
+  event_id: string;
   session_id: string;
   related_event_id: string;
   severity: RiskSeverity;
@@ -100,17 +123,40 @@ export interface ReadModelStore {
    * which Claude Code does not reliably populate.
    */
   addMcpServer(sessionId: string, mcpServer: string): Promise<void>;
-  insertToolCall(row: ToolCallRow): Promise<void>;
+  /**
+   * Insert a tool call, keyed on tool_call_id.
+   *
+   * Returns true when a row was written and false when one already existed.
+   * The projector uses the answer to decide whether to move the session's
+   * counters, which is what keeps a replayed or duplicated event from
+   * inflating them: the row is suppressed and the count must be too.
+   * The same contract applies to insertFileEvent and insertRiskEvent.
+   */
+  insertToolCall(row: ToolCallRow): Promise<boolean>;
   patchToolCall(
     toolCallId: string,
     patch: Partial<Omit<ToolCallRow, "tool_call_id" | "session_id">>,
   ): Promise<void>;
-  insertFileEvent(row: FileEventRow): Promise<void>;
-  insertRiskEvent(row: RiskEventRow): Promise<void>;
+  /** Insert a file event, keyed on event_id. Returns false if already present. */
+  insertFileEvent(row: FileEventRow): Promise<boolean>;
+  /**
+   * Insert a risk event, keyed on session_id + rule_id + related_event_id
+   * rather than event_id. Two analyzer runs over the same tool call mint
+   * different event_ids for the same finding, and this is the key detect.ts
+   * and the hosted dashboard's reducer already dedup on. Returns false if
+   * the finding is already recorded.
+   */
+  insertRiskEvent(row: RiskEventRow): Promise<boolean>;
   /** Query helpers used by tests and the CLI demo output. */
   getSession(sessionId: string): Promise<SessionRow | null>;
   listSessions(): Promise<SessionRow[]>;
   listToolCalls(sessionId: string): Promise<ToolCallRow[]>;
+  /**
+   * Every tool call in the store, across all sessions. Correlation needs a
+   * whole-model view because a hook call and its proxy counterpart live in
+   * different sessions.
+   */
+  listAllToolCalls(): Promise<ToolCallRow[]>;
   listFileEvents(sessionId: string): Promise<FileEventRow[]>;
   listRiskEvents(sessionId: string): Promise<RiskEventRow[]>;
   /** Best-effort close. Not all stores need it. */

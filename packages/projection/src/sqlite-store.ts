@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   tool_call_count INTEGER NOT NULL DEFAULT 0,
   file_read_count INTEGER NOT NULL DEFAULT 0,
   file_write_count INTEGER NOT NULL DEFAULT 0,
-  risk_score INTEGER NOT NULL DEFAULT 0,
+  -- REAL because a risk score is a sum of fractional severity weights.
+  -- Databases created before this said INTEGER, which needs no rebuild:
+  -- under SQLite's NUMERIC affinity an INTEGER-declared column stores a
+  -- non-integral value as a real anyway.
+  risk_score REAL NOT NULL DEFAULT 0,
   last_event_at TEXT NOT NULL DEFAULT '',
   source_root TEXT
 );
@@ -63,11 +67,14 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   duration_ms INTEGER,
   status TEXT NOT NULL,
   response_bytes INTEGER,
-  error_message TEXT
+  error_message TEXT,
+  interceptor TEXT,
+  correlation_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS file_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   direction TEXT NOT NULL,
   path TEXT NOT NULL,
@@ -77,6 +84,7 @@ CREATE TABLE IF NOT EXISTS file_events (
 
 CREATE TABLE IF NOT EXISTS risk_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   related_event_id TEXT NOT NULL,
   severity TEXT NOT NULL,
@@ -128,6 +136,66 @@ export class SqliteReadModelStore implements ReadModelStore {
     }
     // Index depends on source_root existing, so always create after migration.
     db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_source_root ON sessions(source_root, last_event_at)");
+
+    // Migration 2: natural keys on file_events and risk_events (2026-09-18).
+    //
+    // Both tables were insert-only with an autoincrement id, so a replayed or
+    // duplicated event produced a second row and a second counter bump. The
+    // unique indexes below are what let insertFileEvent and insertRiskEvent
+    // report whether they actually wrote anything.
+    //
+    // They cannot live in SCHEMA_SQL: an existing database may already hold
+    // the duplicates this fix prevents, and CREATE UNIQUE INDEX over them
+    // fails. So the rows are reconciled first, then the indexes are created.
+    this.addColumnIfMissing("file_events", "event_id", "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing("risk_events", "event_id", "TEXT NOT NULL DEFAULT ''");
+
+    // Rows written before this migration have no event_id and would all
+    // collide on ''. Their identity is the autoincrement id they already
+    // carry, so borrow it. Genuine duplicates among them survive until the
+    // next replay, which rebuilds the file from the log.
+    db.exec(
+      "UPDATE file_events SET event_id = 'legacy:' || id WHERE event_id = ''",
+    );
+    db.exec(
+      "UPDATE risk_events SET event_id = 'legacy:' || id WHERE event_id = ''",
+    );
+
+    // A finding is identified by its session, rule and target, not by the
+    // event that reported it: two analyzer passes over one tool call mint
+    // different event_ids for the same finding. Collapse any such rows onto
+    // the earliest before the unique index goes on.
+    db.exec(
+      `DELETE FROM risk_events WHERE id NOT IN (
+         SELECT MIN(id) FROM risk_events
+         GROUP BY session_id, rule_id, related_event_id
+       )`,
+    );
+
+    db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_events_event_id ON file_events(event_id)",
+    );
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_events_finding
+         ON risk_events(session_id, rule_id, related_event_id)`,
+    );
+
+    // Migration 3: per-row interceptor and correlation id (2026-09-18).
+    // A correlated pair spans two sessions with different interceptors, so
+    // the session's own interceptor cannot label the rows of one call.
+    this.addColumnIfMissing("tool_calls", "interceptor", "TEXT");
+    this.addColumnIfMissing("tool_calls", "correlation_id", "TEXT");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id)",
+    );
+  }
+
+  /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
+  private addColumnIfMissing(table: string, column: string, decl: string): void {
+    const db = this.requireDb();
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === column)) return;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
   async reset(): Promise<void> {
@@ -217,21 +285,23 @@ export class SqliteReadModelStore implements ReadModelStore {
 
   async addToRiskScore(sessionId: string, delta: number): Promise<void> {
     const db = this.requireDb();
+    // Rounded on the way in: the weights are tenths, and summing tenths in
+    // binary floating point drifts into values like 1.2000000000000002.
     const stmt = db.prepare(
-      `UPDATE sessions SET risk_score = risk_score + ? WHERE session_id = ?`,
+      `UPDATE sessions SET risk_score = ROUND(risk_score + ?, 2) WHERE session_id = ?`,
     );
     stmt.run(delta, sessionId);
   }
 
-  async insertToolCall(row: ToolCallRow): Promise<void> {
+  async insertToolCall(row: ToolCallRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO tool_calls
-        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message, interceptor, correlation_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tool_call_id) DO NOTHING`,
     );
-    stmt.run(
+    const result = stmt.run(
       row.tool_call_id,
       row.session_id,
       row.tool_name,
@@ -243,7 +313,10 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.status,
       row.response_bytes,
       row.error_message,
+      row.interceptor ?? null,
+      row.correlation_id ?? null,
     );
+    return Number(result.changes) > 0;
   }
 
   async patchToolCall(
@@ -278,20 +351,33 @@ export class SqliteReadModelStore implements ReadModelStore {
     update.run(JSON.stringify(current), sessionId);
   }
 
-  async insertFileEvent(row: FileEventRow): Promise<void> {
+  async insertFileEvent(row: FileEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO file_events (session_id, direction, path, bytes, at) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO file_events (event_id, session_id, direction, path, bytes, at)
+        VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(event_id) DO NOTHING`,
     );
-    stmt.run(row.session_id, row.direction, row.path, row.bytes, row.at);
+    const result = stmt.run(
+      row.event_id,
+      row.session_id,
+      row.direction,
+      row.path,
+      row.bytes,
+      row.at,
+    );
+    return Number(result.changes) > 0;
   }
 
-  async insertRiskEvent(row: RiskEventRow): Promise<void> {
+  async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO risk_events (session_id, related_event_id, severity, category, description, rule_id, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, rule_id, related_event_id) DO NOTHING`,
     );
-    stmt.run(
+    const result = stmt.run(
+      row.event_id,
       row.session_id,
       row.related_event_id,
       row.severity,
@@ -300,6 +386,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.rule_id,
       row.detected_at,
     );
+    return Number(result.changes) > 0;
   }
 
   async getSession(sessionId: string): Promise<SessionRow | null> {
@@ -325,10 +412,16 @@ export class SqliteReadModelStore implements ReadModelStore {
     return (stmt.all(sessionId) as unknown as ToolCallRowRaw[]).map(toToolCallRow);
   }
 
+  async listAllToolCalls(): Promise<ToolCallRow[]> {
+    const db = this.requireDb();
+    const stmt = db.prepare(`SELECT * FROM tool_calls ORDER BY started_at`);
+    return (stmt.all() as unknown as ToolCallRowRaw[]).map(toToolCallRow);
+  }
+
   async listFileEvents(sessionId: string): Promise<FileEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT session_id, direction, path, bytes, at FROM file_events WHERE session_id = ? ORDER BY at`,
+      `SELECT event_id, session_id, direction, path, bytes, at FROM file_events WHERE session_id = ? ORDER BY at`,
     );
     return stmt.all(sessionId) as unknown as FileEventRow[];
   }
@@ -336,7 +429,7 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT session_id, related_event_id, severity, category, description, rule_id, detected_at FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
+      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
     );
     return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map((r) => ({
       ...r,
@@ -389,9 +482,12 @@ interface ToolCallRowRaw {
   status: string;
   response_bytes: number | null;
   error_message: string | null;
+  interceptor: string | null;
+  correlation_id: string | null;
 }
 
 interface RiskEventRowRaw {
+  event_id: string;
   session_id: string;
   related_event_id: string;
   severity: string;
@@ -431,8 +527,10 @@ function toToolCallRow(raw: ToolCallRowRaw): ToolCallRow {
     started_at: raw.started_at,
     ended_at: raw.ended_at,
     duration_ms: raw.duration_ms,
-        status: raw.status as ToolCallRow["status"],
+    status: raw.status as ToolCallRow["status"],
     response_bytes: raw.response_bytes,
     error_message: raw.error_message,
+    interceptor: raw.interceptor ?? undefined,
+    correlation_id: raw.correlation_id ?? null,
   };
 }
