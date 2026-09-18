@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   tool_call_count INTEGER NOT NULL DEFAULT 0,
   file_read_count INTEGER NOT NULL DEFAULT 0,
   file_write_count INTEGER NOT NULL DEFAULT 0,
-  risk_score INTEGER NOT NULL DEFAULT 0,
+  -- REAL because a risk score is a sum of fractional severity weights.
+  -- Databases created before this said INTEGER, which needs no rebuild:
+  -- under SQLite's NUMERIC affinity an INTEGER-declared column stores a
+  -- non-integral value as a real anyway.
+  risk_score REAL NOT NULL DEFAULT 0,
   last_event_at TEXT NOT NULL DEFAULT '',
   source_root TEXT
 );
@@ -281,8 +285,10 @@ export class SqliteReadModelStore implements ReadModelStore {
 
   async addToRiskScore(sessionId: string, delta: number): Promise<void> {
     const db = this.requireDb();
+    // Rounded on the way in: the weights are tenths, and summing tenths in
+    // binary floating point drifts into values like 1.2000000000000002.
     const stmt = db.prepare(
-      `UPDATE sessions SET risk_score = risk_score + ? WHERE session_id = ?`,
+      `UPDATE sessions SET risk_score = ROUND(risk_score + ?, 2) WHERE session_id = ?`,
     );
     stmt.run(delta, sessionId);
   }

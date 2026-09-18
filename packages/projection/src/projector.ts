@@ -23,14 +23,8 @@ import type {
   ToolInvokedEvent,
   TraceEvent,
 } from "@omnodex/shared";
+import { riskScoreFor } from "@omnodex/shared";
 import type { ReadModelStore, SessionRow } from "./read-model.js";
-
-const SEVERITY_SCORE: Record<string, number> = {
-  LOW: 5,
-  MEDIUM: 15,
-  HIGH: 30,
-  CRITICAL: 60,
-};
 
 export class Projector {
   constructor(private readonly store: ReadModelStore) {}
@@ -239,7 +233,7 @@ export class Projector {
       detected_at: event.occurred_at,
     });
     if (!inserted) return;
-    const score = SEVERITY_SCORE[event.severity] ?? 0;
+    const score = riskScoreFor(event.severity);
     if (score) {
       await this.store.addToRiskScore(event.session_id, score);
     }

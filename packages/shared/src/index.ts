@@ -22,6 +22,67 @@ export const SCHEMA_VERSION = 1 as const;
 /** Severity levels used for risk events. */
 export type RiskSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+/**
+ * What one finding of each severity contributes to a session's risk score.
+ *
+ * This is the single source of truth. Four different scales had grown up
+ * independently (the projector on 5/15/30/60, the hosted dashboard's live
+ * reducer on 0.1/1.0, the demo generator on 1/15, and threshold checks that
+ * matched none of them), so the same session scored differently depending on
+ * whether its data arrived by synced blob or by live stream.
+ *
+ * The scale is deliberately small. A score is a sum over a whole session, and
+ * a session with hundreds of findings should still read as a number a person
+ * can hold in their head rather than several thousand.
+ *
+ * The hosted dashboard lives in another repo and mirrors these values by
+ * hand, the same way it mirrors the read-model row shapes. Change both.
+ */
+export const RISK_SEVERITY_WEIGHT: Readonly<Record<RiskSeverity, number>> = {
+  LOW: 0.1,
+  MEDIUM: 0.4,
+  HIGH: 0.7,
+  CRITICAL: 1.0,
+};
+
+/**
+ * Lower bound of each risk band, for turning an accumulated score back into a
+ * label. Set so that a session with exactly one finding lands in that
+ * finding's own band, and accumulates upward from there.
+ */
+export const RISK_BAND_THRESHOLD: Readonly<Record<RiskSeverity, number>> = {
+  CRITICAL: RISK_SEVERITY_WEIGHT.CRITICAL,
+  HIGH: RISK_SEVERITY_WEIGHT.HIGH,
+  MEDIUM: RISK_SEVERITY_WEIGHT.MEDIUM,
+  LOW: 0,
+};
+
+/** Score contributed by one finding. Unknown severities contribute nothing. */
+export function riskScoreFor(severity: string): number {
+  return RISK_SEVERITY_WEIGHT[severity as RiskSeverity] ?? 0;
+}
+
+/**
+ * Round an accumulated risk score to the precision the weights are expressed
+ * in. Summing tenths in binary floating point produces values like
+ * 1.2000000000000002, which have no business reaching a dashboard.
+ */
+export function roundRiskScore(score: number): number {
+  return Math.round(score * 100) / 100;
+}
+
+/**
+ * The band an accumulated score falls in, or null when nothing fired.
+ * Used for labels, colours and filters so they cannot drift from the weights.
+ */
+export function riskBandFor(score: number): RiskSeverity | null {
+  if (score <= 0) return null;
+  if (score >= RISK_BAND_THRESHOLD.CRITICAL) return "CRITICAL";
+  if (score >= RISK_BAND_THRESHOLD.HIGH) return "HIGH";
+  if (score >= RISK_BAND_THRESHOLD.MEDIUM) return "MEDIUM";
+  return "LOW";
+}
+
 /** Logical category of the interception source that emitted an event. */
 export type InterceptorKind =
   | "claude-code-hook"

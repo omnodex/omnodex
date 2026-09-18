@@ -32,7 +32,7 @@ test("projector applies mock session to in-memory store", async () => {
   assert.equal(session.tool_call_count, 9);
   assert.equal(session.file_read_count, 2);
   assert.equal(session.file_write_count, 1);
-  assert.equal(session.risk_score, 90);
+  assert.equal(session.risk_score, 1.7); // one HIGH (0.7) + one CRITICAL (1.0)
   assert.ok(session.last_event_at, "last_event_at should be set");
   // mcp_servers should reflect the MCP servers seen in tool.invoked events.
   // The mock has postgres, http-api, and filesystem calls.
@@ -81,7 +81,7 @@ test("projector applies mock session to sqlite store and replay is idempotent", 
   assert.equal(secondSessions[0].tool_call_count, 9);
   assert.equal(secondSessions[0].file_read_count, 2);
   assert.equal(secondSessions[0].file_write_count, 1);
-  assert.equal(secondSessions[0].risk_score, 90);
+  assert.equal(secondSessions[0].risk_score, 1.7);
 
   await store.close();
 });

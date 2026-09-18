@@ -125,7 +125,7 @@ for (const kind of ["in-memory", "sqlite"]) {
       tool_call_count: 1,
       file_read_count: 1,
       file_write_count: 1,
-      risk_score: 30,
+      risk_score: 0.7, // one HIGH finding
       tool_calls: 1,
       file_events: 2,
       risk_events: 1,
@@ -201,7 +201,7 @@ for (const kind of ["in-memory", "sqlite"]) {
     await projector.apply({ ...risk, event_id: "r_b", occurred_at: "2026-09-18T12:05:00.000Z" });
 
     const session = await store.getSession("sess_idem");
-    assert.equal(session.risk_score, 60, "one finding, scored once");
+    assert.equal(session.risk_score, 1.0, "one finding, scored once");
     assert.equal((await store.listRiskEvents("sess_idem")).length, 1);
 
     await store.close();

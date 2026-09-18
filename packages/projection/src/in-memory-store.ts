@@ -9,6 +9,7 @@
  * default CLI wiring when no persistent store is configured.
  */
 
+import { roundRiskScore } from "@omnodex/shared";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -87,7 +88,9 @@ export class InMemoryReadModelStore implements ReadModelStore {
   async addToRiskScore(sessionId: string, delta: number): Promise<void> {
     const existing = this.sessions.get(sessionId);
     if (!existing) return;
-    existing.risk_score = existing.risk_score + delta;
+    // Matches the ROUND in SqliteReadModelStore, so the two stores agree on
+    // the score as well as on the rows.
+    existing.risk_score = roundRiskScore(existing.risk_score + delta);
   }
 
   async insertToolCall(row: ToolCallRow): Promise<boolean> {
