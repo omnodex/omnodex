@@ -9,7 +9,7 @@ export type { SyncEncryptorOptions, SyncResult } from "./sync-encryptor.js";
 
 export { deriveKey, encrypt, decrypt, sha256Hex, randomSalt, randomIv, KDF_PARAMS, deriveStreamingKey, computeKeyId } from "./crypto.js";
 
-export { serializeReadModel, encodePayload } from "./serializer.js";
+export { serializeReadModel, encodePayload, SYNC_PAYLOAD_VERSION } from "./serializer.js";
 export type { SyncPayload } from "./serializer.js";
 
 export {

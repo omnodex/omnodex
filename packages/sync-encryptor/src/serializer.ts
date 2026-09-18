@@ -21,12 +21,32 @@ import type {
   RiskEventRow,
 } from "@omnodex/projection";
 
+/**
+ * Current payload format version. Bump when a consumer needs to tell this
+ * payload apart from an older one, and say why in the payload_version doc
+ * comment below.
+ */
+export const SYNC_PAYLOAD_VERSION = 2;
+
 /** The shape of the serialized sync payload (pre-encryption). */
 export interface SyncPayload {
   /** ISO 8601 timestamp when this payload was produced. */
   serialized_at: string;
-  /** Schema version for forward-compat of the payload format. */
-  payload_version: 1;
+  /**
+   * Schema version for forward-compat of the payload format.
+   *
+   * 1: risk_score on the old severity scale (LOW 5, MEDIUM 15, HIGH 30,
+   *    CRITICAL 60).
+   * 2: risk_score on the scale in RISK_SEVERITY_WEIGHT (LOW 0.1, MEDIUM 0.4,
+   *    HIGH 0.7, CRITICAL 1.0), and correlation_id present on tool calls.
+   *
+   * A reader has to know which scale a blob is on: the two are not related by
+   * a constant factor, so a v1 score cannot be converted arithmetically. It
+   * can, however, be recomputed exactly from the risk_events the payload
+   * already carries, which is what the hosted dashboard does on load. Version
+   * the payload rather than guessing from the magnitude of the numbers.
+   */
+  payload_version: number;
   /** Session IDs included in this sync. */
   session_ids: string[];
   sessions: SessionRow[];
@@ -65,7 +85,7 @@ export async function serializeReadModel(
 
   return {
     serialized_at: new Date().toISOString(),
-    payload_version: 1,
+    payload_version: SYNC_PAYLOAD_VERSION,
     session_ids: ids,
     sessions,
     tool_calls: toolCalls,
