@@ -141,7 +141,7 @@ export class Projector {
 
   private async onToolInvoked(event: ToolInvokedEvent): Promise<void> {
     await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
-    await this.store.insertToolCall({
+    const inserted = await this.store.insertToolCall({
       tool_call_id: event.tool_call_id,
       session_id: event.session_id,
       tool_name: event.tool_name,
@@ -154,6 +154,10 @@ export class Projector {
       response_bytes: null,
       error_message: null,
     });
+    // The store suppressed a row it already had, so this event has been
+    // projected before. Bumping the counter anyway is what used to leave
+    // tool_call_count higher than the number of tool calls on record.
+    if (!inserted) return;
     await this.store.incrementSessionCounter(
       event.session_id,
       "tool_call_count",
@@ -182,13 +186,15 @@ export class Projector {
 
   private async onFileRead(event: FileReadEvent): Promise<void> {
     await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
-    await this.store.insertFileEvent({
+    const inserted = await this.store.insertFileEvent({
+      event_id: event.event_id,
       session_id: event.session_id,
       direction: "read",
       path: event.path,
       bytes: event.bytes,
       at: event.occurred_at,
     });
+    if (!inserted) return;
     await this.store.incrementSessionCounter(
       event.session_id,
       "file_read_count",
@@ -199,13 +205,15 @@ export class Projector {
 
   private async onFileWritten(event: FileWrittenEvent): Promise<void> {
     await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
-    await this.store.insertFileEvent({
+    const inserted = await this.store.insertFileEvent({
+      event_id: event.event_id,
       session_id: event.session_id,
       direction: "write",
       path: event.path,
       bytes: event.bytes,
       at: event.occurred_at,
     });
+    if (!inserted) return;
     await this.store.incrementSessionCounter(
       event.session_id,
       "file_write_count",
@@ -216,7 +224,8 @@ export class Projector {
 
   private async onRiskDetected(event: RiskDetectedEvent): Promise<void> {
     await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
-    await this.store.insertRiskEvent({
+    const inserted = await this.store.insertRiskEvent({
+      event_id: event.event_id,
       session_id: event.session_id,
       related_event_id: event.related_event_id,
       severity: event.severity,
@@ -225,6 +234,7 @@ export class Projector {
       rule_id: event.rule_id,
       detected_at: event.occurred_at,
     });
+    if (!inserted) return;
     const score = SEVERITY_SCORE[event.severity] ?? 0;
     if (score) {
       await this.store.addToRiskScore(event.session_id, score);

@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 
 CREATE TABLE IF NOT EXISTS file_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   direction TEXT NOT NULL,
   path TEXT NOT NULL,
@@ -77,6 +78,7 @@ CREATE TABLE IF NOT EXISTS file_events (
 
 CREATE TABLE IF NOT EXISTS risk_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   related_event_id TEXT NOT NULL,
   severity TEXT NOT NULL,
@@ -128,6 +130,57 @@ export class SqliteReadModelStore implements ReadModelStore {
     }
     // Index depends on source_root existing, so always create after migration.
     db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_source_root ON sessions(source_root, last_event_at)");
+
+    // Migration 2: natural keys on file_events and risk_events (2026-09-18).
+    //
+    // Both tables were insert-only with an autoincrement id, so a replayed or
+    // duplicated event produced a second row and a second counter bump. The
+    // unique indexes below are what let insertFileEvent and insertRiskEvent
+    // report whether they actually wrote anything.
+    //
+    // They cannot live in SCHEMA_SQL: an existing database may already hold
+    // the duplicates this fix prevents, and CREATE UNIQUE INDEX over them
+    // fails. So the rows are reconciled first, then the indexes are created.
+    this.addColumnIfMissing("file_events", "event_id", "TEXT NOT NULL DEFAULT ''");
+    this.addColumnIfMissing("risk_events", "event_id", "TEXT NOT NULL DEFAULT ''");
+
+    // Rows written before this migration have no event_id and would all
+    // collide on ''. Their identity is the autoincrement id they already
+    // carry, so borrow it. Genuine duplicates among them survive until the
+    // next replay, which rebuilds the file from the log.
+    db.exec(
+      "UPDATE file_events SET event_id = 'legacy:' || id WHERE event_id = ''",
+    );
+    db.exec(
+      "UPDATE risk_events SET event_id = 'legacy:' || id WHERE event_id = ''",
+    );
+
+    // A finding is identified by its session, rule and target, not by the
+    // event that reported it: two analyzer passes over one tool call mint
+    // different event_ids for the same finding. Collapse any such rows onto
+    // the earliest before the unique index goes on.
+    db.exec(
+      `DELETE FROM risk_events WHERE id NOT IN (
+         SELECT MIN(id) FROM risk_events
+         GROUP BY session_id, rule_id, related_event_id
+       )`,
+    );
+
+    db.exec(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_file_events_event_id ON file_events(event_id)",
+    );
+    db.exec(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_events_finding
+         ON risk_events(session_id, rule_id, related_event_id)`,
+    );
+  }
+
+  /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
+  private addColumnIfMissing(table: string, column: string, decl: string): void {
+    const db = this.requireDb();
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === column)) return;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
   async reset(): Promise<void> {
@@ -223,7 +276,7 @@ export class SqliteReadModelStore implements ReadModelStore {
     stmt.run(delta, sessionId);
   }
 
-  async insertToolCall(row: ToolCallRow): Promise<void> {
+  async insertToolCall(row: ToolCallRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO tool_calls
@@ -231,7 +284,7 @@ export class SqliteReadModelStore implements ReadModelStore {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tool_call_id) DO NOTHING`,
     );
-    stmt.run(
+    const result = stmt.run(
       row.tool_call_id,
       row.session_id,
       row.tool_name,
@@ -244,6 +297,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.response_bytes,
       row.error_message,
     );
+    return Number(result.changes) > 0;
   }
 
   async patchToolCall(
@@ -278,20 +332,33 @@ export class SqliteReadModelStore implements ReadModelStore {
     update.run(JSON.stringify(current), sessionId);
   }
 
-  async insertFileEvent(row: FileEventRow): Promise<void> {
+  async insertFileEvent(row: FileEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO file_events (session_id, direction, path, bytes, at) VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO file_events (event_id, session_id, direction, path, bytes, at)
+        VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(event_id) DO NOTHING`,
     );
-    stmt.run(row.session_id, row.direction, row.path, row.bytes, row.at);
+    const result = stmt.run(
+      row.event_id,
+      row.session_id,
+      row.direction,
+      row.path,
+      row.bytes,
+      row.at,
+    );
+    return Number(result.changes) > 0;
   }
 
-  async insertRiskEvent(row: RiskEventRow): Promise<void> {
+  async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO risk_events (session_id, related_event_id, severity, category, description, rule_id, detected_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(session_id, rule_id, related_event_id) DO NOTHING`,
     );
-    stmt.run(
+    const result = stmt.run(
+      row.event_id,
       row.session_id,
       row.related_event_id,
       row.severity,
@@ -300,6 +367,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.rule_id,
       row.detected_at,
     );
+    return Number(result.changes) > 0;
   }
 
   async getSession(sessionId: string): Promise<SessionRow | null> {
@@ -328,7 +396,7 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listFileEvents(sessionId: string): Promise<FileEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT session_id, direction, path, bytes, at FROM file_events WHERE session_id = ? ORDER BY at`,
+      `SELECT event_id, session_id, direction, path, bytes, at FROM file_events WHERE session_id = ? ORDER BY at`,
     );
     return stmt.all(sessionId) as unknown as FileEventRow[];
   }
@@ -336,7 +404,7 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT session_id, related_event_id, severity, category, description, rule_id, detected_at FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
+      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
     );
     return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map((r) => ({
       ...r,
@@ -392,6 +460,7 @@ interface ToolCallRowRaw {
 }
 
 interface RiskEventRowRaw {
+  event_id: string;
   session_id: string;
   related_event_id: string;
   severity: string;
