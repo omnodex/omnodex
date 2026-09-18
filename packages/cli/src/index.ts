@@ -15,7 +15,7 @@
  * Commands:
  *
  *   omnodex spike            run a simulated session through the full pipeline
- *   omnodex replay           rebuild the SQLite read model by replaying the event log
+ *   omnodex replay           rebuild the read model by replaying every root's event log
  *   omnodex report           print a summary of sessions in the read model
  *   omnodex mcp-proxy        manage the MCP proxy interceptor (start/install/status)
  *
@@ -170,6 +170,82 @@ async function openStore(paths: Paths): Promise<ReadModelStore> {
   return store;
 }
 
+// ---------------------------------------------------------------------------
+// The read model, and the roots that feed it
+// ---------------------------------------------------------------------------
+
+/**
+ * One canonical read model, derived from every configured root.
+ *
+ * A root is a place event logs are written. There can be several: this
+ * installation's own home, the default home a host like Cowork writes to
+ * whatever OMNODEX_HOME says, and anything listed in config.json.
+ *
+ * The read model is not per-root. It is a derived artifact rebuilt from logs,
+ * so it lives in exactly one place, the primary root, and it always holds
+ * every root's sessions. Previously only `omnodex dashboard` resolved roots
+ * at all, and it wrote the aggregate to the same file `omnodex replay`
+ * rebuilt from the primary root alone, so replaying deleted every secondary
+ * root's sessions and the next sync pushed the smaller set.
+ */
+interface RootLog {
+  rootPath: string;
+  log: EventLog;
+}
+
+/** Open an EventLog for each root. Callers close them. */
+async function openRootLogs(roots: string[]): Promise<RootLog[]> {
+  const logs: RootLog[] = [];
+  for (const rootPath of roots) {
+    const log = new EventLog({ root: path.join(rootPath, "event-log") });
+    await log.init();
+    logs.push({ rootPath, log });
+  }
+  return logs;
+}
+
+async function closeRootLogs(logs: RootLog[]): Promise<void> {
+  for (const { log } of logs) await log.close();
+}
+
+/**
+ * Rebuild the read model from every root, from scratch.
+ *
+ * Shared by `replay`, `dashboard` and anything else that reconstructs the
+ * model, so the two cannot disagree about what it should contain. Each
+ * session row is stamped with the root it came from, and correlation runs at
+ * the end because pairing a hook call with its proxy counterpart needs the
+ * whole model rather than one root's slice of it.
+ */
+async function rebuildReadModel(
+  store: ReadModelStore,
+  logs: RootLog[],
+): Promise<void> {
+  const projector = new Projector(store);
+  await store.reset();
+  for (const { rootPath, log } of logs) {
+    projector.setSourceRoot(rootPath);
+    for await (const event of iterateLog(log)) {
+      await projector.apply(event);
+    }
+  }
+  projector.setSourceRoot(null);
+  await runCorrelation(store);
+}
+
+/**
+ * Paths for the canonical read model, given a resolved root set.
+ * The primary root is this installation's home, so this agrees with
+ * resolvePaths() by construction.
+ */
+function primaryPathsFor(primary: string): Paths {
+  return {
+    home: primary,
+    eventLogRoot: path.join(primary, "event-log"),
+    dbPath: path.join(primary, "traces.db"),
+  };
+}
+
 async function cmdSpike(args: string[]): Promise<void> {
   const paths = resolvePaths();
 
@@ -204,20 +280,23 @@ async function cmdSpike(args: string[]): Promise<void> {
   console.log(`[spike] done`);
 }
 
-async function cmdReplay(): Promise<void> {
-  const paths = resolvePaths();
-  const log = new EventLog({ root: paths.eventLogRoot });
-  await log.init();
-  const store = await openStore(paths);
-  const projector = new Projector(store);
-  await projector.replay(iterateLog(log));
-  // A hook and the proxy each record the same routed call. Pairing them
-  // needs the whole model, so it runs after the replay, not during it.
-  const { correlations } = await runCorrelation(store);
-  console.log(`[replay] rebuilt read model at ${paths.dbPath}`);
-  if (correlations.length > 0) {
-    console.log(`[replay] correlated ${correlations.length} hook/proxy tool call pair(s)`);
+async function cmdReplay(args: string[] = []): Promise<void> {
+  const { roots: cliRoots } = parseRootsFlag(args);
+  const resolved = await resolveRoots(cliRoots);
+  const paths = primaryPathsFor(resolved.primary);
+
+  if (resolved.all.length > 1) {
+    console.log(`[replay] roots: ${resolved.all.join(", ")}`);
   }
+
+  const logs = await openRootLogs(resolved.all);
+  const store = await openStore(paths);
+  await rebuildReadModel(store, logs);
+  await closeRootLogs(logs);
+
+  const sessions = await store.listSessions();
+  console.log(`[replay] rebuilt read model at ${paths.dbPath}`);
+  console.log(`[replay] ${sessions.length} session(s) from ${resolved.all.length} root(s)`);
   await store.close();
 }
 
@@ -273,43 +352,58 @@ async function cmdClear(args: string[]): Promise<void> {
   }
 
   // --- Remove a single session ---
-  const log = new EventLog({ root: paths.eventLogRoot });
-  await log.init();
+  // The session may live in any root, not just this installation's own, so
+  // find it first. Deleting from the primary alone used to leave the session
+  // on disk while still rebuilding the read model without it.
+  const resolved = await resolveRoots();
+  const logs = await openRootLogs(resolved.all);
 
-  // 1. Delete the session's JSONL file.
-  // sessionId is guaranteed defined here: we returned above if both sessionId and wipeAll were falsy,
-  // and again if wipeAll+confirmed, so reaching this point means sessionId is set.
-  const sessionFile = log.sessionFilePath(sessionId!);
-  await fs.rm(sessionFile, { force: true });
+  // sessionId is guaranteed defined here: we returned above if both sessionId
+  // and wipeAll were falsy, and again if wipeAll+confirmed.
+  let removedFrom: string | null = null;
+  for (const { rootPath, log } of logs) {
+    const sessions = await log.listSessions();
+    if (!sessions.includes(sessionId!)) continue;
 
-  // 2. Rewrite the event log index without this session.
-  const indexPath = path.join(paths.eventLogRoot, "index.jsonl");
-  const raw = await fs.readFile(indexPath, "utf8").catch(() => "");
-  const kept = raw
-    .split("\n")
-    .filter((line) => {
-      if (!line.trim()) return false;
-      try {
-        const entry = JSON.parse(line) as { session_id?: string };
-        return entry.session_id !== sessionId;
-      } catch {
-        return true; // keep malformed lines as-is
-      }
-    })
-    .join("\n");
-  await fs.writeFile(indexPath, kept ? kept + "\n" : "", "utf8");
-  await log.close();
+    // 1. Delete the session's JSONL file.
+    await fs.rm(log.sessionFilePath(sessionId!), { force: true });
 
-  // 3. Rebuild the read model from remaining sessions.
-  const store = await openStore(paths);
-  const projector = new Projector(store);
-  const freshLog = new EventLog({ root: paths.eventLogRoot });
-  await freshLog.init();
-  await projector.replay(iterateLog(freshLog));
-  await freshLog.close();
+    // 2. Rewrite that root's event log index without this session.
+    const indexPath = path.join(rootPath, "event-log", "index.jsonl");
+    const raw = await fs.readFile(indexPath, "utf8").catch(() => "");
+    const kept = raw
+      .split("\n")
+      .filter((line) => {
+        if (!line.trim()) return false;
+        try {
+          const entry = JSON.parse(line) as { session_id?: string };
+          return entry.session_id !== sessionId;
+        } catch {
+          return true; // keep malformed lines as-is
+        }
+      })
+      .join("\n");
+    await fs.writeFile(indexPath, kept ? kept + "\n" : "", "utf8");
+    removedFrom = rootPath;
+    break;
+  }
+
+  await closeRootLogs(logs);
+
+  if (!removedFrom) {
+    console.error(`[clear] session ${sessionId} not found in any root`);
+    process.exitCode = 1;
+    return;
+  }
+
+  // 3. Rebuild the read model from every root's remaining sessions.
+  const freshLogs = await openRootLogs(resolved.all);
+  const store = await openStore(primaryPathsFor(resolved.primary));
+  await rebuildReadModel(store, freshLogs);
+  await closeRootLogs(freshLogs);
   await store.close();
 
-  console.log(`[clear] removed session ${sessionId}`);
+  console.log(`[clear] removed session ${sessionId} from ${removedFrom}`);
 }
 
 async function cmdReport(): Promise<void> {
@@ -359,45 +453,61 @@ async function printReport(store: ReadModelStore): Promise<void> {
  * skips risks that have already been detected for the same rule + tool call.
  */
 async function cmdDetect(args: string[]): Promise<void> {
-  const paths = resolvePaths();
-  const log = new EventLog({ root: paths.eventLogRoot });
-  await log.init();
+  const { roots: cliRoots, rest } = parseRootsFlag(args);
+  const resolved = await resolveRoots(cliRoots);
 
-  const targetSession = args.find((a) => !a.startsWith("--"));
-  const sessionIds = targetSession
-    ? [targetSession]
-    : await log.listSessions();
-
-  if (sessionIds.length === 0) {
-    console.log("[detect] no sessions in event log");
-    return;
+  // Analysis has to cover every root a session could have been written to.
+  // Scanning only the primary meant a secondary root accumulated tool calls
+  // and never a single risk event.
+  const logs = await openRootLogs(resolved.all);
+  if (resolved.all.length > 1) {
+    console.log(`[detect] roots: ${resolved.all.join(", ")}`);
   }
+
+  const targetSession = rest.find((a) => !a.startsWith("--"));
 
   let totalNew = 0;
   let totalSkipped = 0;
+  let scanned = 0;
 
-  for (const sessionId of sessionIds) {
-    const events = await log.readSession(sessionId);
-    if (events.length === 0) continue;
+  for (const { log } of logs) {
+    const sessionIds = targetSession
+      ? (await log.listSessions()).filter((id) => id === targetSession)
+      : await log.listSessions();
 
-    const result = detectRisks(events, newEventId);
-    totalSkipped += result.skipped;
+    for (const sessionId of sessionIds) {
+      const events = await log.readSession(sessionId);
+      if (events.length === 0) continue;
+      scanned++;
 
-    if (result.newEvents.length > 0) {
-      await log.appendMany(result.newEvents);
-      totalNew += result.newEvents.length;
-      console.log(
-        `[detect] ${sessionId}: ${result.newEvents.length} new risk(s) detected`,
-      );
-      for (const re of result.newEvents) {
-        console.log(`  [${re.severity}] ${re.category}: ${re.description}`);
+      const result = detectRisks(events, newEventId);
+      totalSkipped += result.skipped;
+
+      if (result.newEvents.length > 0) {
+        await log.appendMany(result.newEvents);
+        totalNew += result.newEvents.length;
+        console.log(
+          `[detect] ${sessionId}: ${result.newEvents.length} new risk(s) detected`,
+        );
+        for (const re of result.newEvents) {
+          console.log(`  [${re.severity}] ${re.category}: ${re.description}`);
+        }
+      } else {
+        console.log(`[detect] ${sessionId}: no new risks`);
       }
-    } else {
-      console.log(`[detect] ${sessionId}: no new risks`);
     }
   }
 
-  await log.close();
+  await closeRootLogs(logs);
+
+  if (scanned === 0) {
+    console.log(
+      targetSession
+        ? `[detect] session ${targetSession} not found in any root`
+        : "[detect] no sessions in event log",
+    );
+    return;
+  }
   console.log(
     `[detect] done. ${totalNew} new risk event(s), ${totalSkipped} already known.`,
   );
@@ -424,12 +534,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
   console.log(`[dashboard] roots: ${resolved.all.join(", ")}`);
 
   // Create an EventLog per root.
-  const logs: Array<{ rootPath: string; log: EventLog }> = [];
-  for (const rootPath of resolved.all) {
-    const log = new EventLog({ root: path.join(rootPath, "event-log") });
-    await log.init();
-    logs.push({ rootPath, log });
-  }
+  const logs = await openRootLogs(resolved.all);
 
   // --- Historical processing (batch) ---
   // Run batch detection on any sessions that completed before the dashboard
@@ -456,27 +561,12 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // Rebuild the read model from the full log across all roots (includes any
   // newly appended risk events from the historical detection pass above).
   // Use the primary root for the SQLite database location.
-  const primaryPaths = {
-    home: resolved.primary,
-    eventLogRoot: path.join(resolved.primary, "event-log"),
-    dbPath: path.join(resolved.primary, "traces.db"),
-  };
+  const primaryPaths = primaryPathsFor(resolved.primary);
   const store = await openStore(primaryPaths);
-  const projector = new Projector(store);
 
-  // Replay all roots into the same read model. Tag each root so the
-  // projector stamps source_root on session rows.
-  await store.reset();
-  for (const { rootPath, log } of logs) {
-    projector.setSourceRoot(rootPath);
-    for await (const event of iterateLog(log)) {
-      await projector.apply(event);
-    }
-  }
-
-  // Pair up the hook and proxy views of any routed call, now that every
-  // root has been replayed into the one model.
-  await runCorrelation(store);
+  // Same rebuild `omnodex replay` performs, so the two cannot disagree about
+  // what the read model should hold.
+  await rebuildReadModel(store, logs);
 
   // --- Start server ---
   const assetsDir = new URL(".", import.meta.url).pathname;
@@ -533,7 +623,10 @@ async function cmdDashboard(args: string[]): Promise<void> {
     rootPath,
     log,
   }));
-  const { stop } = startStreamingLoop(streamingRoots, store, projector, server, cloudTransport);
+  // Its own projector: the rebuild above owns the one it used, and the
+  // streaming loop sets a source root per session as it tails.
+  const streamProjector = new Projector(store);
+  const { stop } = startStreamingLoop(streamingRoots, store, streamProjector, server, cloudTransport);
 
   // --- Shutdown handling ---
   await new Promise<void>((resolve) => {
@@ -1726,7 +1819,7 @@ async function main(): Promise<void> {
       await cmdClear(rest);
       return;
     case "replay":
-      await cmdReplay();
+      await cmdReplay(rest);
       return;
     case "report":
       await cmdReport();
@@ -1799,10 +1892,14 @@ commands:
                      Optional name sets the session ID (sess_<name>); if
                      omitted a unique timestamp-based ID is generated so
                      successive runs each create a distinct session.
-  detect [session]   scan event log for risk patterns and append
+  detect [session]   scan event logs for risk patterns and append
                      risk.detected events. Runs on all sessions if no
-                     session id is given.
-  replay             rebuild the SQLite read model from the event log.
+                     session id is given, across every configured root.
+                       --roots <a,b>  scan these roots as well
+  replay             rebuild the SQLite read model from every configured
+                     root's event log. Roots come from OMNODEX_HOME, the
+                     default home and config.json.  Flags:
+                       --roots <a,b>  include these roots as well
   report             print a summary of sessions in the read model.
   dashboard [port]   start the local dashboard (default port 7890).
                      Streaming detection is active while the dashboard

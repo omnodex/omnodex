@@ -120,12 +120,20 @@ export async function resolveRoots(cliRoots?: string[]): Promise<ResolvedRoots> 
   const defaultHome = path.join(os.homedir(), ".omnodex");
   const envHome = process.env.OMNODEX_HOME;
 
-  // Start with the default home.
-  const roots: string[] = [defaultHome];
+  // The primary root is this installation's own home, which is what
+  // OMNODEX_HOME means everywhere else in the CLI. It has to come first,
+  // because primary is where the read model is written: seeding the list with
+  // the default home instead meant that with OMNODEX_HOME set, the dashboard
+  // built a read model at ~/.omnodex/traces.db while every other command read
+  // $OMNODEX_HOME/traces.db, and neither knew about the other.
+  const primary = envHome ? path.resolve(envHome) : path.resolve(defaultHome);
+  const roots: string[] = [primary];
 
-  // Add OMNODEX_HOME if set and different.
-  if (envHome && path.resolve(envHome) !== path.resolve(defaultHome)) {
-    roots.push(path.resolve(envHome));
+  // The default home stays in the list even when it is not primary, because
+  // hosts that cannot be told about OMNODEX_HOME (Cowork Desktop) write there
+  // regardless, and their sessions should still be aggregated.
+  if (path.resolve(defaultHome) !== primary) {
+    roots.push(path.resolve(defaultHome));
   }
 
   // Add roots from config file.
