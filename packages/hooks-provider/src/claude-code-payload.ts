@@ -291,17 +291,46 @@ export function mapClaudeCodePayload(
 }
 
 /**
- * Heuristic mapping from a built-in tool name to its logical "MCP server".
+ * Split a Claude Code tool name into the MCP server that owns it and the
+ * name that server knows it by.
+ *
+ * Claude Code composes an MCP tool name as `mcp__<server>__<tool>`, joining
+ * on a double underscore. Both halves may contain single underscores, and a
+ * server name in particular often does: a plugin-provided server arrives as
+ * `plugin_<plugin>_<server>`. Splitting on `__` is therefore the mapping;
+ * matching `[^_]+` between the delimiters is not, and used to send every such
+ * tool to "builtin".
+ *
+ * Measured against Claude Code 2.1.276 on 2026-09-18 with a fixture upstream
+ * behind the proxy. Names are passed through verbatim: `-` survives, and a
+ * name carrying a character outside `[a-zA-Z0-9_-]` is not rewritten but
+ * dropped, never reaching the model at all. See
+ * `test/fixtures/tool-name-mapping.json` for the captured evidence.
+ *
+ * The tool half keeps any remaining `__`, because the proxy joins its own
+ * prefix the same way: `mcp__omnodex__demo__read_file` is server `omnodex`
+ * and tool `demo__read_file`, which is exactly the name the proxy recorded.
+ * That is what lets the two observations of one call be matched up.
+ */
+export function splitMcpToolName(
+  toolName: string,
+): { mcpServer: string; upstreamToolName: string } | null {
+  if (!toolName.startsWith("mcp__")) return null;
+  const rest = toolName.slice("mcp__".length);
+  const sep = rest.indexOf("__");
+  if (sep <= 0) return null;
+  const upstreamToolName = rest.slice(sep + 2);
+  if (!upstreamToolName) return null;
+  return { mcpServer: rest.slice(0, sep), upstreamToolName };
+}
+
+/**
+ * Heuristic mapping from a tool name to its logical "MCP server".
  * Built-in tools do not belong to an MCP, but downstream queries are much
- * cleaner if they all carry a non-empty mcp_server field. The real MCP
- * attribution for third-party tools comes from Claude Code config and
- * is derived from the tool name for Claude Code built-in tools.
+ * cleaner if they all carry a non-empty mcp_server field.
  */
 function mcpServerFor(toolName: string): string {
-  // Claude Code encodes MCP-provided tools as "mcp__<server>__<tool>".
-  const match = toolName.match(/^mcp__([^_]+)__/);
-  if (match) return match[1];
-  return "builtin";
+  return splitMcpToolName(toolName)?.mcpServer ?? "builtin";
 }
 
 /** Best-effort byte count of the tool response for the read model. */

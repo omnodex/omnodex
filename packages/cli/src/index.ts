@@ -30,6 +30,7 @@ import { EventLog, newEventId } from "@omnodex/event-log";
 import {
   Projector,
   SqliteReadModelStore,
+  runCorrelation,
   type ReadModelStore,
 } from "@omnodex/projection";
 import {
@@ -210,7 +211,13 @@ async function cmdReplay(): Promise<void> {
   const store = await openStore(paths);
   const projector = new Projector(store);
   await projector.replay(iterateLog(log));
+  // A hook and the proxy each record the same routed call. Pairing them
+  // needs the whole model, so it runs after the replay, not during it.
+  const { correlations } = await runCorrelation(store);
   console.log(`[replay] rebuilt read model at ${paths.dbPath}`);
+  if (correlations.length > 0) {
+    console.log(`[replay] correlated ${correlations.length} hook/proxy tool call pair(s)`);
+  }
   await store.close();
 }
 
@@ -466,6 +473,10 @@ async function cmdDashboard(args: string[]): Promise<void> {
       await projector.apply(event);
     }
   }
+
+  // Pair up the hook and proxy views of any routed call, now that every
+  // root has been replayed into the one model.
+  await runCorrelation(store);
 
   // --- Start server ---
   const assetsDir = new URL(".", import.meta.url).pathname;

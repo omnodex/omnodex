@@ -42,6 +42,20 @@ export interface ToolCallRow {
   session_id: string;
   tool_name: string;
   mcp_server: string;
+  /**
+   * Which interceptor observed this call. Sessions carry one too, but a
+   * correlated pair spans two sessions with different interceptors, so
+   * consumers need it per row to label the sources of one logical call.
+   * Optional for rows projected before it existed.
+   */
+  interceptor?: string;
+  /**
+   * Shared by the hook-observed and proxy-observed rows of a single call.
+   * Null when a call was seen only once, which is every call that did not go
+   * through the proxy. Set by a pass over the read model, never at write
+   * time. See correlate.ts.
+   */
+  correlation_id?: string | null;
   parameters_json: string;
   started_at: string;
   ended_at: string | null;
@@ -137,6 +151,12 @@ export interface ReadModelStore {
   getSession(sessionId: string): Promise<SessionRow | null>;
   listSessions(): Promise<SessionRow[]>;
   listToolCalls(sessionId: string): Promise<ToolCallRow[]>;
+  /**
+   * Every tool call in the store, across all sessions. Correlation needs a
+   * whole-model view because a hook call and its proxy counterpart live in
+   * different sessions.
+   */
+  listAllToolCalls(): Promise<ToolCallRow[]>;
   listFileEvents(sessionId: string): Promise<FileEventRow[]>;
   listRiskEvents(sessionId: string): Promise<RiskEventRow[]>;
   /** Best-effort close. Not all stores need it. */

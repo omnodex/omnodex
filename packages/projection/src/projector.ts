@@ -153,6 +153,10 @@ export class Projector {
       status: "in_progress",
       response_bytes: null,
       error_message: null,
+      // Per row, not per session: correlating a hook call with its proxy
+      // counterpart pairs rows from two sessions with different interceptors.
+      interceptor: event.interceptor,
+      correlation_id: null,
     });
     // The store suppressed a row it already had, so this event has been
     // projected before. Bumping the counter anyway is what used to leave

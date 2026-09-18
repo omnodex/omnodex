@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   duration_ms INTEGER,
   status TEXT NOT NULL,
   response_bytes INTEGER,
-  error_message TEXT
+  error_message TEXT,
+  interceptor TEXT,
+  correlation_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS file_events (
@@ -173,6 +175,15 @@ export class SqliteReadModelStore implements ReadModelStore {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_risk_events_finding
          ON risk_events(session_id, rule_id, related_event_id)`,
     );
+
+    // Migration 3: per-row interceptor and correlation id (2026-09-18).
+    // A correlated pair spans two sessions with different interceptors, so
+    // the session's own interceptor cannot label the rows of one call.
+    this.addColumnIfMissing("tool_calls", "interceptor", "TEXT");
+    this.addColumnIfMissing("tool_calls", "correlation_id", "TEXT");
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id)",
+    );
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -280,8 +291,8 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO tool_calls
-        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message, interceptor, correlation_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tool_call_id) DO NOTHING`,
     );
     const result = stmt.run(
@@ -296,6 +307,8 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.status,
       row.response_bytes,
       row.error_message,
+      row.interceptor ?? null,
+      row.correlation_id ?? null,
     );
     return Number(result.changes) > 0;
   }
@@ -393,6 +406,12 @@ export class SqliteReadModelStore implements ReadModelStore {
     return (stmt.all(sessionId) as unknown as ToolCallRowRaw[]).map(toToolCallRow);
   }
 
+  async listAllToolCalls(): Promise<ToolCallRow[]> {
+    const db = this.requireDb();
+    const stmt = db.prepare(`SELECT * FROM tool_calls ORDER BY started_at`);
+    return (stmt.all() as unknown as ToolCallRowRaw[]).map(toToolCallRow);
+  }
+
   async listFileEvents(sessionId: string): Promise<FileEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
@@ -457,6 +476,8 @@ interface ToolCallRowRaw {
   status: string;
   response_bytes: number | null;
   error_message: string | null;
+  interceptor: string | null;
+  correlation_id: string | null;
 }
 
 interface RiskEventRowRaw {
@@ -500,8 +521,10 @@ function toToolCallRow(raw: ToolCallRowRaw): ToolCallRow {
     started_at: raw.started_at,
     ended_at: raw.ended_at,
     duration_ms: raw.duration_ms,
-        status: raw.status as ToolCallRow["status"],
+    status: raw.status as ToolCallRow["status"],
     response_bytes: raw.response_bytes,
     error_message: raw.error_message,
+    interceptor: raw.interceptor ?? undefined,
+    correlation_id: raw.correlation_id ?? null,
   };
 }

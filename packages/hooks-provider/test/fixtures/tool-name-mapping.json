@@ -1,0 +1,116 @@
+{
+  "description": [
+    "Observed mapping from an upstream MCP tool name, through the Omnodex MCP",
+    "proxy, to the name the agent makes callable and reports in its hook",
+    "payloads. Captured rather than assumed: how an agent treats a character",
+    "it cannot put in a tool name is not documented anywhere.",
+    "",
+    "Regenerate with scripts/capture-tool-name-mapping.md."
+  ],
+  "captures": [
+    {
+      "platform": "claude-code",
+      "client_version": "2.1.276",
+      "captured_at": "2026-09-18",
+      "method": [
+        "A fixture upstream (test/helpers/mock-mcp-server.mjs) exposing four",
+        "tool names was placed behind the proxy, the proxy was registered as",
+        "the MCP server 'omnodex', and the agent was asked to print the tool",
+        "names it could see, verbatim, without calling any of them."
+      ],
+      "proxy_tool_name_separator": "__",
+      "findings": [
+        "The proxy joins its prefix verbatim: 'demo' + '__' + the upstream name, whatever characters that name holds.",
+        "Claude Code composes 'mcp__' + server + '__' + the proxy's name, again verbatim.",
+        "Characters outside [a-zA-Z0-9_-] are NOT rewritten, escaped or normalised. The tool is dropped, silently, and never reaches the model.",
+        "A server name may itself contain single underscores, so the server and tool halves can only be split on the FIRST '__' after the 'mcp__' prefix."
+      ],
+      "tools": [
+        {
+          "upstream_name": "read_file",
+          "proxy_tool_name": "demo__read_file",
+          "model_visible_name": "mcp__omnodex__demo__read_file",
+          "reaches_model": true
+        },
+        {
+          "upstream_name": "read-file",
+          "proxy_tool_name": "demo__read-file",
+          "model_visible_name": "mcp__omnodex__demo__read-file",
+          "reaches_model": true
+        },
+        {
+          "upstream_name": "read.file",
+          "proxy_tool_name": "demo__read.file",
+          "model_visible_name": null,
+          "reaches_model": false,
+          "note": "Dropped. Never offered to the model and never callable."
+        },
+        {
+          "upstream_name": "read/file",
+          "proxy_tool_name": "demo__read/file",
+          "model_visible_name": null,
+          "reaches_model": false,
+          "note": "Dropped, same as '.'. The proxy still lists it upstream."
+        }
+      ]
+    },
+    {
+      "platform": "claude-code",
+      "client_version": "2.1.276",
+      "captured_at": "2026-09-18",
+      "method": [
+        "A real routed call in a live session, taken from the append-only log.",
+        "This is the pair the correlation has to match: one tool call, seen",
+        "once by the hook and once by the proxy."
+      ],
+      "routed_call": {
+        "hook": {
+          "interceptor": "claude-code-hook",
+          "session_id": "<agent session>",
+          "tool_call_id": "toolu_01BWzDA9uN94mAP3SrKokFyb",
+          "tool_name": "mcp__plugin_omnodex-cowork_omnodex__filesystem__read_text_file",
+          "mcp_server_as_recorded": "builtin",
+          "mcp_server_correct": "plugin_omnodex-cowork_omnodex",
+          "occurred_at": "2026-09-18T14:57:41.951Z",
+          "parameters": { "path": "/home/case/repo/PROJECT_TRACKER.md", "head": 3 }
+        },
+        "proxy": {
+          "interceptor": "mcp-proxy",
+          "session_id": "<proxy's own uuid, unrelated to the agent session>",
+          "tool_call_id": "64af70a6-c58b-4a32-9737-11e4b2d26174",
+          "tool_name": "filesystem__read_text_file",
+          "mcp_server": "filesystem",
+          "occurred_at": "2026-09-18T14:57:43.360Z",
+          "parameters": { "path": "/home/case/repo/PROJECT_TRACKER.md", "head": 3 }
+        },
+        "observations": [
+          "The hook name ends with '__' + the proxy's tool_name exactly.",
+          "The parameters are byte-identical, because the proxy forwards the agent's arguments unchanged.",
+          "The session ids are unrelated: the proxy mints a fresh uuid per process and never learns the agent's.",
+          "The hook is 1.409s earlier. PreToolUse fires before the call reaches the proxy, and the hook's occurred_at is the shim's own clock, so the gap includes subprocess startup.",
+          "mcp_server was recorded as 'builtin' because the old regex could not split a server name containing underscores. Fixed alongside this fixture."
+        ]
+      }
+    },
+    {
+      "platform": "codex",
+      "captured_at": null,
+      "status": "NOT CAPTURED",
+      "note": [
+        "Attempted on 2026-09-18 with Codex CLI v0.154.0 via `codex exec` and an",
+        "`-c mcp_servers.omnodex={...}` override. The proxy was launched (it",
+        "wrote a session.started to the event log) but none of its tools,",
+        "including the built-in omnodex_status, were offered to the model.",
+        "Consistent with Codex requiring a trust or approval step for a new MCP",
+        "server before its tools are exposed, which a non-interactive run has no",
+        "way to grant.",
+        "",
+        "Needs an interactive Codex session to complete. The correlation does",
+        "not depend on this: it matches on the proxy's tool name being a suffix",
+        "of the agent's, which holds for any prefix scheme, and assumes only",
+        "that the platform does not rewrite characters. That assumption is",
+        "measured for Claude Code and unverified for Codex."
+      ]
+    }
+  ]
+}

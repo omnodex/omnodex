@@ -144,6 +144,12 @@ export class InMemoryReadModelStore implements ReadModelStore {
       .map((r) => ({ ...r }));
   }
 
+  async listAllToolCalls(): Promise<ToolCallRow[]> {
+    return [...this.toolCalls.values()]
+      .sort((a, b) => a.started_at.localeCompare(b.started_at))
+      .map((r) => ({ ...r }));
+  }
+
   async listFileEvents(sessionId: string): Promise<FileEventRow[]> {
     return this.fileEvents
       .filter((e) => e.session_id === sessionId)
