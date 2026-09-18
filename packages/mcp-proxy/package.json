@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -b",
     "clean": "rm -rf dist",
-    "test": "node --test test/config.test.mjs test/event-emitter.test.mjs test/upstream-client.test.mjs test/proxy-server.test.mjs test/upstream-resilience.test.mjs test/bin.test.mjs"
+    "test": "node --test test/config.test.mjs test/event-emitter.test.mjs test/upstream-client.test.mjs test/proxy-server.test.mjs test/upstream-resilience.test.mjs test/cloud-push.test.mjs test/background-sync.test.mjs test/bin.test.mjs"
   },
   "bin": {
     "omnodex-mcp-proxy": "./dist/bin/omnodex-mcp-proxy.js"

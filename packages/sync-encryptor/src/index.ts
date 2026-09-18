@@ -42,8 +42,10 @@ export {
   startBackgroundSync,
   runAutoSync,
   readAutoSyncState,
+  readAutoSyncIntervalMs,
   includesSessionEnd,
   AUTO_SYNC_CHILD_ENV,
   DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS,
+  DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
 export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions } from "./auto-sync.js";

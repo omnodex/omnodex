@@ -175,3 +175,41 @@ test("the proxy answers the host while its upstreams are failing or still starti
     await rm(home, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Background sync child mode
+// ---------------------------------------------------------------------------
+
+test("with OMNODEX_AUTO_SYNC_CHILD=1 the bin syncs and exits instead of speaking MCP", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-bin-autosync-"));
+  try {
+    // No stream credentials, so runAutoSync bails at its first guard. What is
+    // under test is the branch itself: a running proxy respawns this binary
+    // to do the sync, and that child must never start an MCP server or sit
+    // waiting on a stdin nobody is writing to.
+    const child = spawn(process.execPath, [BIN], {
+      env: {
+        ...process.env,
+        OMNODEX_HOME: home,
+        OMNODEX_AUTO_SYNC_CHILD: "1",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    child.stdout.on("data", (c) => (stdout += c.toString()));
+    const exited = new Promise((resolve) => child.on("exit", (code) => resolve(code)));
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("sync child did not exit")), 15000).unref()
+    );
+
+    assert.equal(await Promise.race([exited, timeout]), 0);
+    assert.equal(stdout, "", "the sync child must not write MCP traffic to stdout");
+
+    // An MCP session would have written session.started; this child did not
+    // open one, so there is no event log at all.
+    await assert.rejects(readdir(path.join(home, "event-log", "sessions")));
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

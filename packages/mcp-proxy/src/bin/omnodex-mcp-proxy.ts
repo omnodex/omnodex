@@ -20,18 +20,39 @@
  * The process communicates via stdio MCP (JSON-RPC 2.0, newline-delimited).
  * It exits when the agent closes the connection (stdin EOF).
  *
+ * It is also its own background-sync worker: started with
+ * OMNODEX_AUTO_SYNC_CHILD=1 it runs one sync blob push and exits instead of
+ * speaking MCP. A running proxy re-spawns itself that way on a timer and once
+ * the agent disconnects.
+ *
  * Environment:
- *   OMNODEX_HOME          event log root parent; defaults to ~/.omnodex
- *   OMNODEX_PROJECT_PATH  project path recorded in session.started events
+ *   OMNODEX_HOME               event log root parent; defaults to ~/.omnodex
+ *   OMNODEX_PROJECT_PATH       project path recorded in session.started events
+ *   OMNODEX_AUTO_SYNC_CHILD=1  run one background sync and exit
  */
 
 import * as os from "node:os";
 import * as path from "node:path";
 import { EventLog } from "@omnodex/event-log";
+import {
+  AUTO_SYNC_CHILD_ENV,
+  runAutoSync,
+  startBackgroundSync,
+} from "@omnodex/sync-encryptor";
 import { loadProxyConfig } from "../config.js";
 import { MCPProxy } from "../mcp-proxy.js";
 
 async function main(): Promise<void> {
+  // Resolve the event log root using the same convention as the hooks shim.
+  const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
+
+  // Detached sync child spawned by a running proxy, not an agent connection.
+  // Checked before anything touches stdio: this process has no MCP peer.
+  if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
+    await runAutoSync(home);
+    return;
+  }
+
   // Parse --config flag if present.
   const args = process.argv.slice(2);
   let configPath: string | undefined;
@@ -42,14 +63,15 @@ async function main(): Promise<void> {
 
   const config = await loadProxyConfig(configPath, { allowMissing: true });
 
-  // Resolve the event log root using the same convention as the hooks shim.
-  const home = process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const eventLogRoot = path.join(home, "event-log");
   const log = new EventLog({ root: eventLogRoot });
   await log.init();
 
+  const scriptPath = process.argv[1] ?? "";
   const proxy = new MCPProxy(config, {
     projectPath: process.env.OMNODEX_PROJECT_PATH ?? process.cwd(),
+    home,
+    autoSyncScriptPath: scriptPath,
   });
 
   const emit = log.append.bind(log);
@@ -58,6 +80,10 @@ async function main(): Promise<void> {
   async function shutdown(): Promise<void> {
     await stop();
     await log.close();
+    // One last blob refresh, after the log is closed so the detached child
+    // reads a file with session.ended already in it. Subject to the usual
+    // guards, so a sync from the timer moments ago wins and this is a no-op.
+    await startBackgroundSync({ home, scriptPath });
   }
 
   // Normal end: the agent closes stdin.
