@@ -25,6 +25,9 @@ const fixture = JSON.parse(
 const claudeCapture = fixture.captures.find(
   (c) => c.platform === "claude-code" && Array.isArray(c.tools),
 );
+const codexCapture = fixture.captures.find(
+  (c) => c.platform === "codex" && Array.isArray(c.tools),
+);
 
 test("the fixture still describes claude-code", () => {
   assert.ok(claudeCapture, "expected a claude-code capture with tools");
@@ -53,6 +56,63 @@ test("a name the agent dropped has no model-visible form to map", () => {
   assert.ok(dropped.length > 0, "fixture should record at least one dropped name");
   for (const tool of dropped) {
     assert.equal(tool.model_visible_name, null);
+  }
+});
+
+test("the fixture carries a complete Codex Desktop capture", () => {
+  assert.ok(codexCapture, "expected a codex capture with tools");
+  assert.equal(codexCapture.surface, "chatgpt-desktop");
+  assert.equal(codexCapture.tools.length, 4);
+  assert.equal(codexCapture.routed_calls.length, 4);
+  assert.ok(codexCapture.tools.every((tool) => tool.reaches_model));
+});
+
+test("Codex normalises punctuation and disambiguates colliding names", () => {
+  const byUpstreamName = Object.fromEntries(
+    codexCapture.tools.map((tool) => [tool.upstream_name, tool]),
+  );
+
+  assert.equal(
+    byUpstreamName["read.file"].model_visible_name,
+    "mcp__capture_dot__demo__read_file",
+  );
+  assert.equal(
+    byUpstreamName["read/file"].model_visible_name,
+    "mcp__capture_slash__demo__read_file",
+  );
+
+  for (const upstreamName of ["read_file", "read-file"]) {
+    assert.match(
+      byUpstreamName[upstreamName].model_visible_name,
+      /^mcp__capture_valid__demo__read_file_[0-9a-f]{12}$/,
+    );
+  }
+  assert.notEqual(
+    byUpstreamName.read_file.model_visible_name,
+    byUpstreamName["read-file"].model_visible_name,
+  );
+});
+
+test("Codex model-visible names do not preserve the proxy suffix", () => {
+  for (const tool of codexCapture.tools) {
+    assert.equal(
+      tool.model_visible_name.endsWith(tool.proxy_tool_name),
+      false,
+      `${tool.upstream_name} unexpectedly preserved the proxy suffix`,
+    );
+  }
+});
+
+test("every captured Codex route pairs matching parameters", () => {
+  for (const route of codexCapture.routed_calls) {
+    const tool = codexCapture.tools.find(
+      (candidate) => candidate.upstream_name === route.upstream_name,
+    );
+    assert.ok(tool, `missing tool mapping for ${route.upstream_name}`);
+    assert.equal(route.hook.tool_name, tool.model_visible_name);
+    assert.equal(route.proxy.tool_name, tool.proxy_tool_name);
+    assert.equal(route.hook.interceptor, "codex-hook");
+    assert.equal(route.proxy.interceptor, "mcp-proxy");
   }
 });
 

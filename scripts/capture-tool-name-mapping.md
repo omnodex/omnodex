@@ -106,11 +106,23 @@ OMNODEX_HOME="$CAPTURE_HOME" codex exec \
   "Print the exact verbatim name of every tool available to you, one per line, including tools from MCP servers. Do not call any tool."
 ```
 
-As of Codex CLI v0.154.0 this launches the proxy but exposes none of its
-tools, not even the built-in `omnodex_status`, which points at the trust or
-approval step a non-interactive run cannot grant. Finish this capture from an
-interactive Codex session with the proxy configured in `~/.codex/config.toml`,
-then record the result in the fixture.
+As of Codex CLI v0.155.0-alpha.9.2, `/mcp verbose` lists the proxy tools in an
+interactive CLI session, but the CLI does not make local MCP tools callable by
+the model. Capture the model-visible mapping in ChatGPT Desktop instead:
+
+1. Register three temporary MCP servers that each launch the proxy with a
+   separate `OMNODEX_HOME`: one exposing `read_file` plus `read-file`, one
+   exposing `read.file`, and one exposing `read/file`.
+2. Fully restart ChatGPT Desktop. Starting a new task without restarting the
+   app does not refresh its MCP registry.
+3. Inspect the callable tool names, then call each tool with a unique input so
+   its Codex hook and proxy events can be paired without relying on the name.
+4. Restore the previous MCP configuration and restart Desktop again.
+
+The measured result is that Codex replaces hyphen, dot, and slash with
+underscore. If two names then collide, both receive different 12-hex suffixes.
+The MCP inventory retains the original names, but the model-callable and hook
+names do not. See the fixture for the exact capture.
 
 ## 4. Record it
 

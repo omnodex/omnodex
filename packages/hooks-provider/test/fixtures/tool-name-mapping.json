@@ -94,22 +94,120 @@
     },
     {
       "platform": "codex",
-      "captured_at": null,
-      "status": "NOT CAPTURED",
-      "note": [
-        "Attempted on 2026-09-18 with Codex CLI v0.154.0 via `codex exec` and an",
-        "`-c mcp_servers.omnodex={...}` override. The proxy was launched (it",
-        "wrote a session.started to the event log) but none of its tools,",
-        "including the built-in omnodex_status, were offered to the model.",
-        "Consistent with Codex requiring a trust or approval step for a new MCP",
-        "server before its tools are exposed, which a non-interactive run has no",
-        "way to grant.",
-        "",
-        "Needs an interactive Codex session to complete. The correlation does",
-        "not depend on this: it matches on the proxy's tool name being a suffix",
-        "of the agent's, which holds for any prefix scheme, and assumes only",
-        "that the platform does not rewrite characters. That assumption is",
-        "measured for Claude Code and unverified for Codex."
+      "surface": "chatgpt-desktop",
+      "client_version": "0.155.0-alpha.9.2",
+      "captured_at": "2026-09-18",
+      "method": [
+        "Three isolated MCP registrations put the fixture upstream behind the",
+        "proxy: one for read_file plus read-file, one for read.file, and one",
+        "for read/file. ChatGPT Desktop was restarted so it discovered them",
+        "at app startup. Each model-visible tool was then called once, and the",
+        "hook and proxy event logs were paired by their unique input value.",
+        "The parameter values below are generic labels for the captured inputs."
+      ],
+      "proxy_tool_name_separator": "__",
+      "findings": [
+        "The MCP inventory retains every proxy tool name verbatim.",
+        "The model-callable name replaces hyphen, dot, and slash with underscore.",
+        "When read_file and read-file collide after normalisation, Codex appends a different 12-hex suffix to both names.",
+        "All four tools remain callable, but none of the captured model-visible names ends with the proxy tool name exactly.",
+        "Suffix matching therefore cannot correlate Codex hook and proxy observations in the general case."
+      ],
+      "tools": [
+        {
+          "upstream_name": "read_file",
+          "proxy_tool_name": "demo__read_file",
+          "model_visible_name": "mcp__capture_valid__demo__read_file_3ba7769949e4",
+          "reaches_model": true
+        },
+        {
+          "upstream_name": "read-file",
+          "proxy_tool_name": "demo__read-file",
+          "model_visible_name": "mcp__capture_valid__demo__read_file_371d10a383fe",
+          "reaches_model": true
+        },
+        {
+          "upstream_name": "read.file",
+          "proxy_tool_name": "demo__read.file",
+          "model_visible_name": "mcp__capture_dot__demo__read_file",
+          "reaches_model": true
+        },
+        {
+          "upstream_name": "read/file",
+          "proxy_tool_name": "demo__read/file",
+          "model_visible_name": "mcp__capture_slash__demo__read_file",
+          "reaches_model": true
+        }
+      ],
+      "routed_calls": [
+        {
+          "upstream_name": "read_file",
+          "parameters": { "input": "capture-underscore" },
+          "hook": {
+            "interceptor": "codex-hook",
+            "tool_call_id": "exec-df56c227-55ba-4fce-8d51-7660ba0505a7",
+            "tool_name": "mcp__capture_valid__demo__read_file_3ba7769949e4",
+            "occurred_at": "2026-09-18T21:18:41.515Z"
+          },
+          "proxy": {
+            "interceptor": "mcp-proxy",
+            "tool_call_id": "83ac3338-f03c-4cc4-9ec4-075a5ab58cfb",
+            "tool_name": "demo__read_file",
+            "mcp_server": "demo",
+            "occurred_at": "2026-09-18T21:18:44.099Z"
+          }
+        },
+        {
+          "upstream_name": "read-file",
+          "parameters": { "input": "capture-hyphen" },
+          "hook": {
+            "interceptor": "codex-hook",
+            "tool_call_id": "exec-7d5000c1-4b8a-4c4f-aad2-fb5f4677eeda",
+            "tool_name": "mcp__capture_valid__demo__read_file_371d10a383fe",
+            "occurred_at": "2026-09-18T21:18:38.140Z"
+          },
+          "proxy": {
+            "interceptor": "mcp-proxy",
+            "tool_call_id": "d832b561-ed00-4b17-a646-55edde54e846",
+            "tool_name": "demo__read-file",
+            "mcp_server": "demo",
+            "occurred_at": "2026-09-18T21:18:40.684Z"
+          }
+        },
+        {
+          "upstream_name": "read.file",
+          "parameters": { "input": "capture-dot" },
+          "hook": {
+            "interceptor": "codex-hook",
+            "tool_call_id": "exec-01a5f2da-991a-4231-95d3-cc231f3f3d70",
+            "tool_name": "mcp__capture_dot__demo__read_file",
+            "occurred_at": "2026-09-18T21:18:27.610Z"
+          },
+          "proxy": {
+            "interceptor": "mcp-proxy",
+            "tool_call_id": "eaf069a2-a6a9-43f7-83a8-2f664c57e529",
+            "tool_name": "demo__read.file",
+            "mcp_server": "demo",
+            "occurred_at": "2026-09-18T21:18:33.150Z"
+          }
+        },
+        {
+          "upstream_name": "read/file",
+          "parameters": { "input": "capture-slash" },
+          "hook": {
+            "interceptor": "codex-hook",
+            "tool_call_id": "exec-298c1ebe-c189-44d3-affd-6f9505d0a843",
+            "tool_name": "mcp__capture_slash__demo__read_file",
+            "occurred_at": "2026-09-18T21:18:34.105Z"
+          },
+          "proxy": {
+            "interceptor": "mcp-proxy",
+            "tool_call_id": "39a5a34e-b7e1-4e6c-8ac2-697c41d8af54",
+            "tool_name": "demo__read/file",
+            "mcp_server": "demo",
+            "occurred_at": "2026-09-18T21:18:37.269Z"
+          }
+        }
       ]
     }
   ]
