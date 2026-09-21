@@ -38,7 +38,7 @@ import type {
   ToolInvokedEvent,
   TraceEvent,
 } from "@omnodex/shared";
-import { SCHEMA_VERSION } from "@omnodex/shared";
+import { SCHEMA_VERSION, splitMcpToolName } from "@omnodex/shared";
 
 // ---------------------------------------------------------------------------
 // Event names
@@ -231,7 +231,5 @@ export function mapAntigravityPayload(
 // ---------------------------------------------------------------------------
 
 function mcpServerFor(toolName: string): string {
-  const match = toolName.match(/^mcp__([^_]+)__/);
-  if (match) return match[1];
-  return "builtin";
+  return splitMcpToolName(toolName)?.mcpServer ?? "builtin";
 }

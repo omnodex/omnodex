@@ -163,3 +163,30 @@ test("projector derives mcp_servers from tool.invoked events when SessionStart p
   assert.equal(session.tool_call_count, 4);
   assert.ok(session.last_event_at, "last_event_at should be set");
 });
+
+test("projector repairs legacy builtin attribution during replay", async () => {
+  const store = new InMemoryReadModelStore();
+  const projector = new Projector(store);
+  const at = "2026-09-21T12:00:00.000Z";
+
+  await projector.replay([
+    {
+      schema_version: 1,
+      event_id: "legacy-codex-apps",
+      session_id: "legacy-session",
+      occurred_at: at,
+      recorded_at: at,
+      interceptor: "codex-hook",
+      event_type: "tool.invoked",
+      tool_call_id: "legacy-call",
+      tool_name: "mcp__codex_apps__plane__workitem",
+      mcp_server: "builtin",
+      parameters: { action: "list" },
+    },
+  ]);
+
+  const [row] = await store.listToolCalls("legacy-session");
+  assert.equal(row.mcp_server, "codex_apps");
+  const session = await store.getSession("legacy-session");
+  assert.deepEqual(session.mcp_servers, ["codex_apps"]);
+});
