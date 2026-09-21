@@ -50,7 +50,7 @@ import { MCPProxy, loadProxyConfig } from "@omnodex/mcp-proxy";
 import { DashboardServer } from "./dashboard-server.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
-import { detectRisks } from "@omnodex/analyzer";
+import { detectEventLogs, detectRisks, runBackgroundDetect } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
 import {
@@ -460,46 +460,30 @@ async function cmdDetect(args: string[]): Promise<void> {
   // Analysis has to cover every root a session could have been written to.
   // Scanning only the primary meant a secondary root accumulated tool calls
   // and never a single risk event.
-  const logs = await openRootLogs(resolved.all);
   if (resolved.all.length > 1) {
     console.log(`[detect] roots: ${resolved.all.join(", ")}`);
   }
 
   const targetSession = rest.find((a) => !a.startsWith("--"));
 
-  let totalNew = 0;
-  let totalSkipped = 0;
-  let scanned = 0;
-
-  for (const { log } of logs) {
-    const sessionIds = targetSession
-      ? (await log.listSessions()).filter((id) => id === targetSession)
-      : await log.listSessions();
-
-    for (const sessionId of sessionIds) {
-      const events = await log.readSession(sessionId);
-      if (events.length === 0) continue;
-      scanned++;
-
-      const result = detectRisks(events, newEventId);
-      totalSkipped += result.skipped;
-
-      if (result.newEvents.length > 0) {
-        await log.appendMany(result.newEvents);
-        totalNew += result.newEvents.length;
-        console.log(
-          `[detect] ${sessionId}: ${result.newEvents.length} new risk(s) detected`,
-        );
-        for (const re of result.newEvents) {
+  const result = await detectEventLogs({
+    roots: resolved.all.map((root) => path.join(root, "event-log")),
+    sessionId: targetSession,
+    newEventId,
+    onSession: ({ sessionId, newEvents }) => {
+      if (newEvents.length > 0) {
+        console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);
+        for (const re of newEvents) {
           console.log(`  [${re.severity}] ${re.category}: ${re.description}`);
         }
       } else {
         console.log(`[detect] ${sessionId}: no new risks`);
       }
-    }
-  }
-
-  await closeRootLogs(logs);
+    },
+  });
+  const scanned = result.scanned;
+  const totalNew = result.newEvents.length;
+  const totalSkipped = result.skipped;
 
   if (scanned === 0) {
     console.log(
@@ -1590,7 +1574,7 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
     await stop();
     await log.close();
     // After log.close(), so the detached child sees session.ended.
-    await startBackgroundSync({ home: paths.home, scriptPath });
+    await startBackgroundSync({ home: paths.home, scriptPath, detect: true });
   }
   // Normal end: the agent closes stdin.
   void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
@@ -1804,7 +1788,8 @@ async function main(): Promise<void> {
   // anything else: it has no command, and the update check below would print
   // to a stdout nobody is reading.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
-    await runAutoSync(resolvePaths().home);
+    const { home } = resolvePaths();
+    await runAutoSync(home, { detect: () => runBackgroundDetect(home) });
     return;
   }
 

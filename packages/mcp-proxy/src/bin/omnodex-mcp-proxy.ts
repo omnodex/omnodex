@@ -49,7 +49,9 @@ async function main(): Promise<void> {
   // Detached sync child spawned by a running proxy, not an agent connection.
   // Checked before anything touches stdio: this process has no MCP peer.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
-    await runAutoSync(home);
+    await runAutoSync(home, {
+      detect: async () => (await import("@omnodex/analyzer")).runBackgroundDetect(home),
+    });
     return;
   }
 
@@ -83,7 +85,7 @@ async function main(): Promise<void> {
     // One last blob refresh, after the log is closed so the detached child
     // reads a file with session.ended already in it. Subject to the usual
     // guards, so a sync from the timer moments ago wins and this is a no-op.
-    await startBackgroundSync({ home, scriptPath });
+    await startBackgroundSync({ home, scriptPath, detect: true });
   }
 
   // Normal end: the agent closes stdin.

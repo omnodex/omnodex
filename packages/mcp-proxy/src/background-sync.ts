@@ -20,9 +20,10 @@
  * log through the projector, and node:sqlite is synchronous: doing it here
  * would stall the thread that answers the agent's tools/call requests.
  *
- * startBackgroundSync() applies its own guards (credentials, entitlement,
- * minimum interval, lock file) and never throws, so a tick on an unconnected
- * machine costs two small disk reads.
+ * The child runs rule detection before it syncs, so each tick is also the
+ * proxy's detection pass. Detection runs whether or not this install can
+ * sync; startBackgroundSync() applies the remaining guards (minimum
+ * interval, lock file) and never throws.
  */
 
 import {
@@ -42,7 +43,8 @@ export interface AutoSyncTimerOptions {
   home: string;
   /**
    * Script the detached child runs. Entrypoints pass process.argv[1], and
-   * must handle AUTO_SYNC_CHILD_ENV by calling runAutoSync() and exiting.
+   * must handle AUTO_SYNC_CHILD_ENV by calling runAutoSync() with a
+   * `detect` callback and exiting.
    */
   scriptPath: string;
   /** Period override. Read from stream-config.json when omitted. */
@@ -68,7 +70,7 @@ export async function startAutoSyncTimer(
   const intervalMs = opts.intervalMs ?? (await readAutoSyncIntervalMs(opts.home));
 
   const timer = setInterval(() => {
-    void startSync({ home: opts.home, scriptPath: opts.scriptPath }).catch(
+    void startSync({ home: opts.home, scriptPath: opts.scriptPath, detect: true }).catch(
       () => undefined,
     );
   }, intervalMs);

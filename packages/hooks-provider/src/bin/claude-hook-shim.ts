@@ -41,6 +41,7 @@ import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
 import {
   AUTO_SYNC_CHILD_ENV,
+  backgroundPassDue,
   includesSessionEnd,
   pushEventsToCloud,
   runAutoSync,
@@ -54,7 +55,10 @@ async function main(): Promise<number> {
 
   // Detached background sync started by a SessionEnd hook, not a hook call.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
-    await runAutoSync(home);
+    await runAutoSync(home, {
+      // The analyzer loads here only, never on the per-event hook path.
+      detect: async () => (await import("@omnodex/analyzer")).runBackgroundDetect(home),
+    });
     return 0;
   }
 
@@ -160,9 +164,15 @@ async function main(): Promise<number> {
     await pushEventsToCloud(events, home);
 
     // Refresh the hosted dashboard's sync blob in the background.
-    if (includesSessionEnd(events)) {
-      const decision = await startBackgroundSync({ home, scriptPath: process.argv[1] ?? "" });
-      if (debug) console.error(`[omnodex-hook] background sync: ${decision}`);
+    // The same detached child runs detection first, so it also starts
+    // mid-session once the last pass is older than the timer period.
+    if (includesSessionEnd(events) || (await backgroundPassDue(home))) {
+      const decision = await startBackgroundSync({
+        home,
+        scriptPath: process.argv[1] ?? "",
+        detect: true,
+      });
+      if (debug) console.error(`[omnodex-hook] background pass: ${decision}`);
     }
 
     return 0;

@@ -17,6 +17,9 @@
     },
     {
       "path": "../sync-encryptor"
+    },
+    {
+      "path": "../analyzer"
     }
   ]
 }

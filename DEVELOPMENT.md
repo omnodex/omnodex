@@ -103,7 +103,7 @@ Every new package and feature must include unit tests using `node:test` (`.mjs` 
 
 ## Risk detection rules
 
-The rule engine (`packages/analyzer`) evaluates declarative `RuleDefinition` objects against event logs. Rules are invoked by `omnodex detect` and `omnodex dashboard`.
+The rule engine (`packages/analyzer`) evaluates declarative `RuleDefinition` objects against event logs. Rules are invoked by `omnodex detect`, by `omnodex dashboard`, and by the background pass that hook shims and the MCP proxy start (detection runs first, then the sync if the host is connected). `detectEventLogs()` in `packages/analyzer/src/detect-log.ts` is the shared entry point; the background pass keeps a per-session watermark in `detect-state.json` so it only reads sessions that grew.
 
 **Community rules (19 rules across 8 categories):**
 

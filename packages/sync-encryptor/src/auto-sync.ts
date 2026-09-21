@@ -20,6 +20,16 @@
  * the agent disconnects. Spawning rather than syncing in-process keeps the
  * projector's synchronous SQLite replay off the thread answering tools/call.
  *
+ * The same child also runs rule detection before it syncs, when the caller
+ * asks for it (`detect: true` here, a `detect` callback in runAutoSync).
+ * Detection is not gated on sync: an install with no stream, no entitlement
+ * or sync turned off still gets its activity analyzed, and only the upload
+ * is skipped. Findings are appended to the local log, pushed to the live
+ * relay when streaming is set up, and carried by the blob sync that follows.
+ * Hook shims also start the pass mid-session once backgroundPassDue() says
+ * the last one is older than the timer period, so a session that runs all
+ * day is not analyzed only at its end.
+ *
  * Files under OMNODEX_HOME:
  *   - auto-sync-state.json  last attempt, last success, last error
  *   - auto-sync.lock        held while a sync runs; stale after 10 minutes
@@ -27,8 +37,10 @@
  * Settings (stream-config.json):
  *   - auto_sync: false                      turn automatic sync off
  *   - auto_sync_min_interval_seconds: <n>   minimum gap between syncs (default 60)
- *   - auto_sync_interval_seconds: <n>       proxy timer period (default 900)
- * OMNODEX_AUTO_SYNC=0 in the environment also turns it off.
+ *   - auto_sync_interval_seconds: <n>       proxy timer period, and how stale a
+ *                                           pass may get mid-session (default 900)
+ * OMNODEX_AUTO_SYNC=0 in the environment also turns sync off.
+ * OMNODEX_AUTO_DETECT=0 turns background detection off.
  *
  * Never throws: failures are recorded in auto-sync-state.json.
  */
@@ -38,6 +50,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { TraceEvent } from "@omnodex/shared";
 import { readOrFetchLicense } from "./license-cache.js";
+import { pushEventsToCloud } from "./shim-push.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
 export const AUTO_SYNC_CHILD_ENV = "OMNODEX_AUTO_SYNC_CHILD";
@@ -68,6 +81,15 @@ export interface AutoSyncState {
   last_success_at?: string;
   last_blob_id?: string;
   last_error?: string | null;
+  last_detect_at?: string;
+  last_detect_findings?: number;
+  last_detect_error?: string | null;
+  /**
+   * A pass with detection was asked for but throttled or already running,
+   * so activity since the last one may be unanalyzed. The next hook event
+   * past the minimum interval starts it (backgroundPassDue).
+   */
+  pass_pending?: boolean;
 }
 
 export type AutoSyncDecision =
@@ -79,7 +101,12 @@ export type AutoSyncDecision =
   | "in-progress"
   | "error";
 
-export type AutoSyncOutcome = "synced" | "in-progress" | "no-credentials" | "failed";
+export type AutoSyncOutcome =
+  | "synced"
+  | "in-progress"
+  | "no-credentials"
+  | "disabled"
+  | "failed";
 
 interface SyncSettings {
   apiToken: string;
@@ -105,6 +132,22 @@ export interface StartBackgroundSyncOptions {
   now?: number;
   /** Spawn override for tests. */
   spawnFn?: SpawnFn;
+  /**
+   * The child also runs detection (its runAutoSync call passes a `detect`
+   * callback). Starts the child even when there is nothing to sync.
+   */
+  detect?: boolean;
+}
+
+export interface RunAutoSyncOptions {
+  /**
+   * Detection pass run under the lock before the sync. Returns the findings
+   * it appended to the log. Callers load the analyzer inside it, so the
+   * per-event hook path never imports it.
+   */
+  detect?: () => Promise<TraceEvent[]>;
+  /** Live push override for tests. */
+  pushFn?: (events: TraceEvent[], home: string) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,30 +163,46 @@ export function includesSessionEnd(events: readonly TraceEvent[]): boolean {
  * Start a detached background sync if one is due. Returns what it decided.
  * Records the attempt time before spawning so that sessions ending at the
  * same moment do not each start a sync.
+ *
+ * With `detect`, the child is started whenever detection is enabled, even
+ * if there is nothing to sync; the decision then reports "started".
  */
 export async function startBackgroundSync(
   opts: StartBackgroundSyncOptions,
 ): Promise<AutoSyncDecision> {
   try {
-    if (process.env.OMNODEX_AUTO_SYNC === "0") return "disabled";
+    const syncDecision = await syncGate(opts.home);
+    const detect = opts.detect === true && detectionEnabled();
+    if (typeof syncDecision === "string" && !detect) return syncDecision;
 
-    const settings = await readSyncSettings(opts.home);
-    if (settings === "no-credentials") return "no-credentials";
-    if (settings === "not-entitled") return "not-entitled";
-    if (!settings.enabled) return "disabled";
+    const minIntervalMs =
+      typeof syncDecision === "string"
+        ? DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS * 1000
+        : syncDecision.minIntervalMs;
 
     const now = opts.now ?? Date.now();
-    if (await lockIsHeld(opts.home, now)) return "in-progress";
-
     const state = await readAutoSyncState(opts.home);
+    const markPending = async (): Promise<void> => {
+      if (detect && !state.pass_pending) {
+        await writeAutoSyncState(opts.home, { ...state, pass_pending: true });
+      }
+    };
+
+    if (await lockIsHeld(opts.home, now)) {
+      await markPending();
+      return "in-progress";
+    }
+
     const lastAttempt = state.last_attempt_at ? Date.parse(state.last_attempt_at) : NaN;
-    if (!Number.isNaN(lastAttempt) && now - lastAttempt < settings.minIntervalMs) {
+    if (!Number.isNaN(lastAttempt) && now - lastAttempt < minIntervalMs) {
+      await markPending();
       return "too-soon";
     }
 
     await writeAutoSyncState(opts.home, {
       ...state,
       last_attempt_at: new Date(now).toISOString(),
+      pass_pending: false,
     });
 
     const spawnFn = opts.spawnFn ?? spawnDetached;
@@ -158,14 +217,46 @@ export async function startBackgroundSync(
 }
 
 /**
- * Run one sync in the foreground, guarded by the lock. Called by the
- * detached child. Records the outcome in auto-sync-state.json.
+ * True when a hook should start a background pass mid-session: there has
+ * never been one, the last attempt is older than the timer period, or a
+ * pass was throttled (a session ending moments after the last one) and the
+ * minimum interval has now passed. Costs two small file reads, so it is
+ * cheap enough for every hook event.
  */
-export async function runAutoSync(home: string): Promise<AutoSyncOutcome> {
+export async function backgroundPassDue(home: string, now = Date.now()): Promise<boolean> {
+  try {
+    if (!detectionEnabled() && process.env.OMNODEX_AUTO_SYNC === "0") return false;
+    const state = await readAutoSyncState(home);
+    const lastAttempt = state.last_attempt_at ? Date.parse(state.last_attempt_at) : NaN;
+    if (Number.isNaN(lastAttempt)) return true;
+    const since = now - lastAttempt;
+    if (state.pass_pending && since >= DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS * 1000) return true;
+    return since >= (await readAutoSyncIntervalMs(home));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run one background pass in the foreground, guarded by the lock: detection
+ * first when a `detect` callback is given, then the sync if this install is
+ * set up and entitled for it. Called by the detached child. Records both
+ * outcomes in auto-sync-state.json.
+ */
+export async function runAutoSync(
+  home: string,
+  opts: RunAutoSyncOptions = {},
+): Promise<AutoSyncOutcome> {
   if (!(await acquireLock(home))) return "in-progress";
   try {
+    if (opts.detect && detectionEnabled()) {
+      await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
+    }
+
+    if (process.env.OMNODEX_AUTO_SYNC === "0") return "disabled";
     const settings = await readSyncSettings(home);
     if (typeof settings === "string") return "no-credentials";
+    if (!settings.enabled) return "disabled";
 
     // Loaded lazily: hook shims import this module on every event, but
     // only the background child needs SQLite and the projector.
@@ -228,8 +319,56 @@ export async function readAutoSyncIntervalMs(home: string): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Detection
+// ---------------------------------------------------------------------------
+
+function detectionEnabled(): boolean {
+  return process.env.OMNODEX_AUTO_DETECT !== "0";
+}
+
+/**
+ * Run the caller's detection pass and push what it found to the live relay.
+ * Never throws: a failure is recorded and the sync still runs.
+ */
+async function runDetection(
+  home: string,
+  detect: () => Promise<TraceEvent[]>,
+  push: (events: TraceEvent[], home: string) => Promise<boolean>,
+): Promise<void> {
+  try {
+    const findings = await detect();
+    // pushEventsToCloud is a no-op without credentials or live_streaming.
+    if (findings.length > 0) await push(findings, home).catch(() => false);
+    await updateAutoSyncState(home, {
+      last_detect_at: new Date().toISOString(),
+      last_detect_findings: findings.length,
+      last_detect_error: null,
+    });
+  } catch (err) {
+    await updateAutoSyncState(home, {
+      last_detect_at: new Date().toISOString(),
+      last_detect_error: (err as Error)?.message ?? String(err),
+    }).catch(() => undefined);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+
+/**
+ * Whether a sync may run: the settings when it may, or why it may not, in
+ * the order startBackgroundSync has always reported them.
+ */
+async function syncGate(
+  home: string,
+): Promise<SyncSettings | "disabled" | "no-credentials" | "not-entitled"> {
+  if (process.env.OMNODEX_AUTO_SYNC === "0") return "disabled";
+  const settings = await readSyncSettings(home);
+  if (typeof settings === "string") return settings;
+  if (!settings.enabled) return "disabled";
+  return settings;
+}
 
 async function readJson(file: string): Promise<Record<string, unknown> | null> {
   try {

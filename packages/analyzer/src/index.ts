@@ -23,6 +23,18 @@
 // Core detection function
 export { detectRisks } from "./detect.js";
 
+// Detection over event logs on disk (omnodex detect, background pass)
+export {
+  detectEventLogs,
+  runBackgroundDetect,
+  DETECT_STATE_FILE,
+} from "./detect-log.js";
+export type {
+  DetectLogOptions,
+  DetectLogResult,
+  SessionDetectReport,
+} from "./detect-log.js";
+
 // Engine and registry (used by the streaming detect loop and custom integrations)
 export { RuleEngine } from "./engine.js";
 export { RuleRegistry } from "./registry.js";
