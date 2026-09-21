@@ -57,6 +57,22 @@ test("PreToolUse with mcp__ tool name extracts server name", () => {
   assert.equal(events[0].mcp_server, "filesystem");
 });
 
+test("PreToolUse preserves underscores in MCP server names", () => {
+  const events = mapAntigravityPayload(
+    "PreToolUse",
+    {
+      ...COMMON,
+      toolCall: {
+        name: "mcp__server_with_underscores__read_file",
+        args: { path: "/tmp/foo.txt" },
+      },
+      stepIdx: 6,
+    },
+    makeOptions(),
+  );
+  assert.equal(events[0].mcp_server, "server_with_underscores");
+});
+
 test("PreToolUse uses workspacePaths[0] as cwd", () => {
   const events = mapAntigravityPayload(
     "PreToolUse",

@@ -19,6 +19,29 @@
 
 export const SCHEMA_VERSION = 1 as const;
 
+/**
+ * Split a model-visible MCP tool name into its server and tool components.
+ *
+ * MCP clients compose names as `mcp__<server>__<tool>`. Both components may
+ * contain single underscores, so the first double underscore after the
+ * prefix is the only safe boundary. The tool component keeps later double
+ * underscores because proxies use the same delimiter for upstream names.
+ */
+export function splitMcpToolName(
+  toolName: string,
+): { mcpServer: string; upstreamToolName: string } | null {
+  if (!toolName.startsWith("mcp__")) return null;
+  const rest = toolName.slice("mcp__".length);
+  const separator = rest.indexOf("__");
+  if (separator <= 0) return null;
+  const upstreamToolName = rest.slice(separator + 2);
+  if (!upstreamToolName) return null;
+  return {
+    mcpServer: rest.slice(0, separator),
+    upstreamToolName,
+  };
+}
+
 /** Severity levels used for risk events. */
 export type RiskSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 

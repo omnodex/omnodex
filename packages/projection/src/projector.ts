@@ -23,7 +23,7 @@ import type {
   ToolInvokedEvent,
   TraceEvent,
 } from "@omnodex/shared";
-import { riskScoreFor } from "@omnodex/shared";
+import { riskScoreFor, splitMcpToolName } from "@omnodex/shared";
 import type { ReadModelStore, SessionRow } from "./read-model.js";
 
 export class Projector {
@@ -135,11 +135,15 @@ export class Projector {
 
   private async onToolInvoked(event: ToolInvokedEvent): Promise<void> {
     await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    const mcpServer =
+      event.mcp_server === "builtin"
+        ? splitMcpToolName(event.tool_name)?.mcpServer ?? event.mcp_server
+        : event.mcp_server;
     const inserted = await this.store.insertToolCall({
       tool_call_id: event.tool_call_id,
       session_id: event.session_id,
       tool_name: event.tool_name,
-      mcp_server: event.mcp_server,
+      mcp_server: mcpServer,
       parameters_json: JSON.stringify(event.parameters),
       started_at: event.occurred_at,
       ended_at: null,
@@ -164,8 +168,8 @@ export class Projector {
     // Derive mcp_servers from tool events rather than relying on the
     // SessionStart payload, which Claude Code does not reliably populate.
     // "builtin" is Claude Code's own tool runtime, not an MCP server.
-    if (event.mcp_server !== "builtin") {
-      await this.store.addMcpServer(event.session_id, event.mcp_server);
+    if (mcpServer !== "builtin") {
+      await this.store.addMcpServer(event.session_id, mcpServer);
     }
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }

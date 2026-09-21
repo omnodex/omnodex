@@ -26,6 +26,18 @@ const PROXY_SESSION = "6ed63f79-proxy";
 const HOOK_AT = "2026-09-18T14:57:41.951Z";
 const PROXY_AT = "2026-09-18T14:57:43.360Z"; // 1.409s later, as measured
 const PARAMS = { path: "/home/case/repo/PROJECT_TRACKER.md", head: 3 };
+const TOOL_NAME_FIXTURE = JSON.parse(
+  await fs.readFile(
+    new URL(
+      "../../hooks-provider/test/fixtures/tool-name-mapping.json",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+);
+const CODEX_CAPTURE = TOOL_NAME_FIXTURE.captures.find(
+  (entry) => entry.platform === "codex",
+);
 
 async function mkTmp() {
   return await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-corr-"));
@@ -301,6 +313,192 @@ test("a proxy row is claimed by at most one hook row", async () => {
 
   assert.equal(result.length, 1);
   assert.equal(result[0].hook_tool_call_id, "hook-1", "earliest hook wins");
+});
+
+test("pairs all captured Codex hook and proxy observations", async () => {
+  const events = [
+    sessionEvent(HOOK_SESSION, "codex-hook", CODEX_CAPTURE.routed_calls[0].hook.occurred_at),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", CODEX_CAPTURE.routed_calls[0].hook.occurred_at),
+  ];
+  for (const routed of CODEX_CAPTURE.routed_calls) {
+    events.push(
+      invoked({
+        eventId: `hook-${routed.upstream_name}`,
+        sessionId: HOOK_SESSION,
+        interceptor: "codex-hook",
+        toolCallId: routed.hook.tool_call_id,
+        toolName: routed.hook.tool_name,
+        mcpServer: "capture",
+        at: routed.hook.occurred_at,
+        parameters: routed.parameters,
+      }),
+      invoked({
+        eventId: `proxy-${routed.upstream_name}`,
+        sessionId: PROXY_SESSION,
+        interceptor: "mcp-proxy",
+        toolCallId: routed.proxy.tool_call_id,
+        toolName: routed.proxy.tool_name,
+        mcpServer: routed.proxy.mcp_server,
+        at: routed.proxy.occurred_at,
+        parameters: routed.parameters,
+      }),
+    );
+  }
+
+  const store = await project(events, new InMemoryReadModelStore());
+  const result = correlateToolCalls({
+    sessions: await store.listSessions(),
+    toolCalls: await store.listAllToolCalls(),
+  });
+  assert.equal(result.length, 4);
+  const pairs = Object.fromEntries(
+    result.map((entry) => [entry.hook_tool_call_id, entry.proxy_tool_call_id]),
+  );
+  for (const routed of CODEX_CAPTURE.routed_calls) {
+    assert.equal(
+      pairs[routed.hook.tool_call_id],
+      routed.proxy.tool_call_id,
+      routed.upstream_name,
+    );
+  }
+});
+
+test("Codex collision hashes disambiguate identical calls", async () => {
+  const events = [
+    sessionEvent(HOOK_SESSION, "codex-hook", "2026-09-18T21:18:38.000Z"),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", "2026-09-18T21:18:38.000Z"),
+    invoked({
+      eventId: "collision-hook-underscore", sessionId: HOOK_SESSION,
+      interceptor: "codex-hook", toolCallId: "hook-underscore",
+      toolName: "mcp__capture_valid__demo__read_file_3ba7769949e4",
+      mcpServer: "capture_valid", at: "2026-09-18T21:18:38.000Z",
+      parameters: { input: "same" },
+    }),
+    invoked({
+      eventId: "collision-hook-hyphen", sessionId: HOOK_SESSION,
+      interceptor: "codex-hook", toolCallId: "hook-hyphen",
+      toolName: "mcp__capture_valid__demo__read_file_371d10a383fe",
+      mcpServer: "capture_valid", at: "2026-09-18T21:18:38.100Z",
+      parameters: { input: "same" },
+    }),
+    invoked({
+      eventId: "collision-proxy-underscore", sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy", toolCallId: "proxy-underscore",
+      toolName: "demo__read_file", mcpServer: "demo",
+      at: "2026-09-18T21:18:38.500Z", parameters: { input: "same" },
+    }),
+    invoked({
+      eventId: "collision-proxy-hyphen", sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy", toolCallId: "proxy-hyphen",
+      toolName: "demo__read-file", mcpServer: "demo",
+      at: "2026-09-18T21:18:38.600Z", parameters: { input: "same" },
+    }),
+  ];
+
+  const store = await project(events, new InMemoryReadModelStore());
+  const result = correlateToolCalls({
+    sessions: await store.listSessions(),
+    toolCalls: await store.listAllToolCalls(),
+  });
+  assert.deepEqual(
+    Object.fromEntries(
+      result.map((entry) => [entry.hook_tool_call_id, entry.proxy_tool_call_id]),
+    ),
+    {
+      "hook-underscore": "proxy-underscore",
+      "hook-hyphen": "proxy-hyphen",
+    },
+  );
+});
+
+test("ambiguous loose Codex matches do not correlate", async () => {
+  const events = [
+    sessionEvent(HOOK_SESSION, "codex-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    invoked({
+      eventId: "loose-hook", sessionId: HOOK_SESSION,
+      interceptor: "codex-hook", toolCallId: "hook-loose",
+      toolName: "mcp__server_name__demo__read_file_deadbeefcafe",
+      mcpServer: "server_name", at: HOOK_AT, parameters: { input: "same" },
+    }),
+    invoked({
+      eventId: "loose-proxy-hyphen", sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy", toolCallId: "proxy-hyphen",
+      toolName: "demo__read-file", mcpServer: "demo",
+      at: PROXY_AT, parameters: { input: "same" },
+    }),
+    invoked({
+      eventId: "loose-proxy-dot", sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy", toolCallId: "proxy-dot",
+      toolName: "demo__read.file", mcpServer: "demo",
+      at: PROXY_AT, parameters: { input: "same" },
+    }),
+  ];
+  const store = await project(events, new InMemoryReadModelStore());
+  assert.deepEqual(
+    correlateToolCalls({
+      sessions: await store.listSessions(),
+      toolCalls: await store.listAllToolCalls(),
+    }),
+    [],
+  );
+});
+
+test("direct Codex Apps calls never pair with unrelated proxy rows", async () => {
+  const events = [
+    sessionEvent(HOOK_SESSION, "codex-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    invoked({
+      eventId: "apps-hook", sessionId: HOOK_SESSION,
+      interceptor: "codex-hook", toolCallId: "hook-apps",
+      toolName: "mcp__codex_apps__plane__workitem",
+      mcpServer: "codex_apps", at: HOOK_AT, parameters: { action: "list" },
+    }),
+    invoked({
+      eventId: "apps-proxy", sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy", toolCallId: "proxy-apps",
+      toolName: "plane__workitem", mcpServer: "plane",
+      at: PROXY_AT, parameters: { action: "list" },
+    }),
+  ];
+  const store = await project(events, new InMemoryReadModelStore());
+  assert.deepEqual(
+    correlateToolCalls({
+      sessions: await store.listSessions(),
+      toolCalls: await store.listAllToolCalls(),
+    }),
+    [],
+  );
+});
+
+test("Codex calls still correlate near the ten-second window", async () => {
+  const store = await project(
+    [
+      sessionEvent(HOOK_SESSION, "codex-hook", "2026-09-18T21:18:00.000Z"),
+      sessionEvent(PROXY_SESSION, "mcp-proxy", "2026-09-18T21:18:00.000Z"),
+      invoked({
+        eventId: "window-hook", sessionId: HOOK_SESSION,
+        interceptor: "codex-hook", toolCallId: "hook-window",
+        toolName: "mcp__capture_dot__demo__read_file",
+        mcpServer: "capture_dot", at: "2026-09-18T21:18:00.000Z",
+        parameters: { input: "window" },
+      }),
+      invoked({
+        eventId: "window-proxy", sessionId: PROXY_SESSION,
+        interceptor: "mcp-proxy", toolCallId: "proxy-window",
+        toolName: "demo__read.file", mcpServer: "demo",
+        at: "2026-09-18T21:18:09.000Z", parameters: { input: "window" },
+      }),
+    ],
+    new InMemoryReadModelStore(),
+  );
+  assert.equal(
+    correlateToolCalls({
+      sessions: await store.listSessions(),
+      toolCalls: await store.listAllToolCalls(),
+    }).length,
+    1,
+  );
 });
 
 // ---------------------------------------------------------------------------

@@ -9,4 +9,5 @@ export * from "./in-memory-store.js";
 export * from "./sqlite-store.js";
 export * from "./projector.js";
 export * from "./correlate.js";
+export * from "./codex-tool-name.js";
 export * from "./run-correlation.js";

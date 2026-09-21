@@ -41,7 +41,7 @@ import type {
   ToolInvokedEvent,
   TraceEvent,
 } from "@omnodex/shared";
-import { SCHEMA_VERSION } from "@omnodex/shared";
+import { SCHEMA_VERSION, splitMcpToolName } from "@omnodex/shared";
 
 // ---------------------------------------------------------------------------
 // Payload types
@@ -313,13 +313,7 @@ export function mapCodexPayload(
 // ---------------------------------------------------------------------------
 
 function mcpServerFor(toolName: string): string {
-  if (!toolName.startsWith("mcp__")) return "builtin";
-  const rest = toolName.slice("mcp__".length);
-  const separator = rest.indexOf("__");
-  if (separator > 0 && separator < rest.length - 2) {
-    return rest.slice(0, separator);
-  }
-  return "builtin";
+  return splitMcpToolName(toolName)?.mcpServer ?? "builtin";
 }
 
 function applyPatchFileEvents(

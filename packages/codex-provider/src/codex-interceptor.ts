@@ -109,6 +109,13 @@ const EVENT_NAMES = [
   "Interrupt",
 ] as const;
 
+type CodexHookEventName = (typeof EVENT_NAMES)[number];
+
+const THREE_SECOND_TIMEOUT_EVENTS = new Set<CodexHookEventName>([
+  "SessionEnd",
+  "Interrupt",
+]);
+
 export class CodexInterceptor implements Interceptor {
   readonly name = "codex-hooks";
   readonly kind = "codex-hook" as const;
@@ -157,7 +164,7 @@ export class CodexInterceptor implements Interceptor {
 
     for (const eventName of EVENT_NAMES) {
       const groups = [...(next.hooks[eventName] ?? [])];
-      groups.push(this.makeMatcherGroup());
+      groups.push(this.makeMatcherGroup(eventName));
       next.hooks[eventName] = groups;
     }
 
@@ -189,11 +196,14 @@ export class CodexInterceptor implements Interceptor {
     await this.writeHooks(hooksPath, next);
   }
 
-  private makeMatcherGroup(): HookMatcherGroup {
+  private makeMatcherGroup(eventName: CodexHookEventName): HookMatcherGroup {
+    const timeout = THREE_SECOND_TIMEOUT_EVENTS.has(eventName)
+      ? Math.min(this.options.timeoutSeconds, 3)
+      : this.options.timeoutSeconds;
     const handler: HookHandler = {
       type: "command",
       command: this.shimCommand(),
-      timeout: this.options.timeoutSeconds,
+      timeout,
       [OMNODEX_TAG]: true,
     };
     return {
