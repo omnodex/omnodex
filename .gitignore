@@ -7,5 +7,11 @@ coverage/
 *.db-journal
 .DS_Store
 
-# Generated hook configs (machine-specific, created by omnodex install)
+# Generated hook configs (machine-specific, created by omnodex install).
+# Only the exact files install writes: .codex/ and .agents/ can also hold
+# project configuration that is meant to be committed.
 demo/project/.claude/settings.local.json
+/.claude/settings.local.json
+/.codex/hooks.json
+/.agents/hooks.json
+/.agents/mcp_config.json
