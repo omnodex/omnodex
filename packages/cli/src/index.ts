@@ -84,6 +84,7 @@ import type { LauncherPlatform } from "./launcher-template.js";
 import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
+import { bootstrapCloudConnection, describeBootstrap } from "./cloud-bootstrap.js";
 // ValidateResult type available if needed for future use
 
 interface Paths {
@@ -653,6 +654,24 @@ async function cmdDashboard(args: string[]): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * Cache the license in this home and upload existing sessions once, so
+ * hooks and the proxy stream and sync without a manual `omnodex sync`.
+ */
+async function finishCloudConnection(
+  omnodexHome: string,
+  prefix: string,
+  opts: { apiToken: string; apiUrl: string; refresh: boolean },
+): Promise<void> {
+  try {
+    const result = await bootstrapCloudConnection({ home: omnodexHome, ...opts });
+    for (const line of describeBootstrap(prefix, result)) console.log(line);
+  } catch (err) {
+    console.warn(`[${prefix}] could not finish cloud setup: ${(err as Error).message}`);
+    console.warn(`[${prefix}] run \`omnodex sync\` once to upload existing sessions`);
+  }
+}
+
+/**
  * After install: run device code flow if no token exists, otherwise offer a
  * claim link. Shared by all install commands.
  */
@@ -689,6 +708,11 @@ async function connectAfterInstall(
         api_url: result.apiUrl,
         last_used_at: new Date().toISOString(),
       });
+      await finishCloudConnection(omnodexHome, "connect", {
+        apiToken: result.apiToken,
+        apiUrl: result.apiUrl,
+        refresh: true,
+      });
     } catch (err) {
       console.warn(`[connect] could not complete device authorization: ${(err as Error).message}`);
       console.warn(`[connect] you can retry with: omnodex connect`);
@@ -699,6 +723,11 @@ async function connectAfterInstall(
   // Token and passphrase both exist: already connected, just confirm status
   if (creds.passphrase) {
     console.log(`[connect] already connected (use \`omnodex connect\` to manage)`);
+    await finishCloudConnection(omnodexHome, "connect", {
+      apiToken: creds.apiToken,
+      apiUrl: creds.apiUrl,
+      refresh: false,
+    });
     return;
   }
 
@@ -719,6 +748,11 @@ async function connectAfterInstall(
     apiUrl: creds.apiUrl,
     platform: opts.platform,
     projectLabel: opts.projectLabel,
+  });
+  await finishCloudConnection(omnodexHome, "connect", {
+    apiToken: creds.apiToken,
+    apiUrl: creds.apiUrl,
+    refresh: false,
   });
 }
 
@@ -817,6 +851,11 @@ async function cmdConnect(args: string[]): Promise<void> {
         api_url: result.apiUrl,
         last_used_at: new Date().toISOString(),
       });
+      await finishCloudConnection(paths.home, "connect", {
+        apiToken: result.apiToken,
+        apiUrl: result.apiUrl,
+        refresh: true,
+      });
     } catch (err) {
       console.error(`[connect] ${(err as Error).message}`);
       process.exitCode = 1;
@@ -846,6 +885,12 @@ async function cmdConnect(args: string[]): Promise<void> {
     passphrase: creds.passphrase,
     apiUrl: creds.apiUrl,
     platform: flagPlatform,
+  });
+  await finishCloudConnection(paths.home, "connect", {
+    apiToken: creds.apiToken,
+    apiUrl: creds.apiUrl,
+    // A token passed on the command line may differ from the cached one.
+    refresh: Boolean(flagToken),
   });
 }
 
@@ -1724,7 +1769,7 @@ async function cmdSync(args: string[]): Promise<void> {
   }
 
   // Validate the license + tier before doing any work.
-  const license = await validateLicense({ apiBaseUrl: apiUrl, apiToken });
+  const license = await validateLicense({ apiBaseUrl: apiUrl, apiToken, cacheDir: paths.home });
   const { customer_id, tier, features } = license.license;
   if (!features.includes("encrypted_sync")) {
     console.error(`[sync] tier "${tier}" does not include encrypted sync. Upgrade to Hosted or above.`);

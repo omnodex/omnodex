@@ -13,6 +13,9 @@
       "path": "../shared"
     },
     {
+      "path": "../license-client"
+    },
+    {
       "path": "../projection"
     },
     {
