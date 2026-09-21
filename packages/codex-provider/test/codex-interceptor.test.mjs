@@ -72,6 +72,36 @@ test("install keeps hooks synchronous to preserve ordering and delivery", async 
   }
 });
 
+test("install caps SessionEnd and Interrupt handlers at three seconds", async (t) => {
+  const projectPath = await fresh(t);
+  await makeInterceptor(projectPath).install();
+  const hooks = JSON.parse(
+    await readFile(path.join(projectPath, ".codex", "hooks.json"), "utf8"),
+  );
+
+  assert.equal(hooks.hooks.SessionEnd[0].hooks[0].timeout, 3);
+  assert.equal(hooks.hooks.Interrupt[0].hooks[0].timeout, 3);
+  assert.equal(hooks.hooks.PreToolUse[0].hooks[0].timeout, 30);
+});
+
+test("lifecycle timeout cap respects a lower configured timeout", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = new CodexInterceptor({
+    projectPath,
+    shimPath: "/opt/omnodex/codex-shim.js",
+    omnodexHome: path.join(projectPath, ".omnodex-home"),
+    timeoutSeconds: 2,
+  });
+  await interceptor.install();
+  const hooks = JSON.parse(
+    await readFile(interceptor.hooksFilePath(), "utf8"),
+  );
+
+  assert.equal(hooks.hooks.SessionEnd[0].hooks[0].timeout, 2);
+  assert.equal(hooks.hooks.Interrupt[0].hooks[0].timeout, 2);
+  assert.equal(hooks.hooks.PreToolUse[0].hooks[0].timeout, 2);
+});
+
 test("reinstall removes stale managed event names and preserves other hooks", async (t) => {
   const projectPath = await fresh(t);
   const codexDir = path.join(projectPath, ".codex");
