@@ -2,7 +2,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { mapCodexPayload } from "../dist/codex-payload.js";
+
+const capturedMatrix = JSON.parse(
+  await readFile(
+    new URL("./fixtures/codex-tool-outcomes.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 let counter = 0;
 function makeOptions() {
@@ -78,6 +86,12 @@ test("PreToolUse with mcp__ tool name extracts server name", () => {
   assert.equal(events[0].mcp_server, "filesystem");
 });
 
+test("PreToolUse preserves underscores in MCP server names", () => {
+  const fixture = capturedMatrix.cases.find((c) => c.name === "mcp_success");
+  const events = mapCodexPayload(fixture.payloads[0], makeOptions());
+  assert.equal(events[0].mcp_server, "server_with_underscores");
+});
+
 // ── PostToolUse ───────────────────────────────────────────────────────────────
 
 test("PostToolUse maps to tool.completed with status success", () => {
@@ -132,6 +146,37 @@ test("PostToolUse with null response gives response_bytes=0", () => {
   assert.equal(events[0].response_bytes, 0);
 });
 
+test("captured apply_patch success emits tool.completed and file.written", () => {
+  const fixture = capturedMatrix.cases.find(
+    (c) => c.name === "apply_patch_success",
+  );
+  const events = mapCodexPayload(fixture.payloads[1], makeOptions());
+  assert.deepEqual(events.map((e) => e.event_type), [
+    "tool.completed",
+    "file.written",
+  ]);
+  assert.equal(events[0].status, "success");
+  assert.equal(events[1].path, "C:\\Users\\case\\repo\\fixture.txt");
+  assert.equal(events[1].bytes, 0);
+});
+
+test("captured failure cases never fabricate an error completion", () => {
+  for (const fixture of capturedMatrix.cases.filter((c) =>
+    c.expected_outcome.startsWith("failure"),
+  )) {
+    const mapped = fixture.payloads.flatMap((payload) =>
+      mapCodexPayload(payload, makeOptions()),
+    );
+    assert.ok(
+      mapped.every(
+        (event) =>
+          event.event_type !== "tool.completed" || event.status === "success",
+      ),
+      fixture.name,
+    );
+  }
+});
+
 // ── Stop ─────────────────────────────────────────────────────────────────────
 
 test("Stop maps to session.ended with status completed", () => {
@@ -152,6 +197,15 @@ test("Stop maps to session.ended with status completed", () => {
   assert.equal(ev.duration_ms, 0);
 });
 
+test("SessionEnd reason other maps to the only supported terminal status", () => {
+  const events = mapCodexPayload(
+    { ...BASE, hook_event_name: "SessionEnd", reason: "other" },
+    makeOptions(),
+  );
+  assert.equal(events[0].event_type, "session.ended");
+  assert.equal(events[0].status, "completed");
+});
+
 // ── UserPromptSubmit ──────────────────────────────────────────────────────────
 
 test("UserPromptSubmit returns empty array (no TraceEvent type yet)", () => {
@@ -165,6 +219,16 @@ test("UserPromptSubmit returns empty array (no TraceEvent type yet)", () => {
     makeOptions(),
   );
   assert.equal(events.length, 0);
+});
+
+test("compact and interrupt lifecycle payloads return empty arrays", () => {
+  for (const hook_event_name of ["PreCompact", "PostCompact", "Interrupt"]) {
+    const events = mapCodexPayload(
+      { ...BASE, hook_event_name, trigger: "auto" },
+      makeOptions(),
+    );
+    assert.deepEqual(events, [], hook_event_name);
+  }
 });
 
 // ── Common fields ─────────────────────────────────────────────────────────────

@@ -27,8 +27,9 @@
  *   OMNODEX_HOME   location of the event log (defaults to ~/.omnodex)
  *   OMNODEX_DEBUG  set to "1" for verbose stderr logging
  *
- * Note: Codex hooks do not support async:true, so this shim must be fast.
- * Typical wall-clock time is <30ms (EventLog append is an O(1) JSONL write).
+ * Codex supports asynchronous command hooks, but may run them out of order or
+ * cancel them when a session ends. Omnodex keeps its hooks synchronous so
+ * tool invocation/completion ordering and lifecycle capture remain reliable.
  */
 
 import * as fs from "node:fs/promises";
@@ -108,10 +109,7 @@ async function main(): Promise<number> {
     // Codex does not send duration_ms, so we measure it ourselves.
     if (payload.hook_event_name === "PreToolUse") {
       await saveInvokeTime(payload.tool_use_id);
-    } else if (
-      payload.hook_event_name === "PostToolUse" ||
-      payload.hook_event_name === "PostToolUseFailure"
-    ) {
+    } else if (payload.hook_event_name === "PostToolUse") {
       if (!payload.duration_ms) {
         const computed = await consumeInvokeTime(payload.tool_use_id);
         if (computed !== null) {

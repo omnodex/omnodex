@@ -1013,7 +1013,8 @@ async function installCodex(args: string[]): Promise<void> {
   if (!useLegacy) await checkLauncherShim("codex", paths.home, CODEX_HOOK_SHIM_PATH);
   logHookCommandForm("codex", portable, useLegacy);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
-  console.log(`[install] note: ensure hooks = true in ~/.codex/config.toml`);
+  console.log(`[install] hooks are enabled by default; this project will ask you to trust new hook commands`);
+  console.log(`[install] next: register the Omnodex MCP server in Codex for proxied MCP visibility`);
   console.log(
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );

@@ -6,21 +6,25 @@
 // A commercial license is available for use without copyleft obligations.
 /**
  * Codex hook payload schema (from https://developers.openai.com/codex/hooks,
- * captured 2026-05-14) plus a pure mapper from payloads to TraceEvents.
+ * verified against Codex Desktop on 2026-09-21) plus a pure mapper from
+ * payloads to TraceEvents.
  *
- * Coverage notes (updated 2026-08-12):
+ * Coverage notes:
  *
- *   - PreToolUse only fires for Bash/shell tool calls. File edits (apply_patch),
- *     MCP tools, WebSearch, and unified_exec are NOT interceptable via hooks.
- *   - SessionEnd fires when the session terminates (maps to session.ended).
- *   - PostToolUseFailure fires on tool errors (maps to tool.completed status=error).
+ *   - Local Bash/unified-exec, apply_patch, MCP and function tools are visible.
+ *     Hosted tools are not visible to local hooks.
+ *   - Current SessionEnd payloads report reason "other".
+ *   - Codex has no PostToolUseFailure event. In live failure captures, failed
+ *     apply_patch, MCP and local function calls emitted PreToolUse only. A
+ *     nonzero Bash call emitted PostToolUse without an exit code. The mapper
+ *     therefore does not invent error completions from unreliable evidence.
  *   - Stop also maps to session.ended (Codex fires both; duplicates are harmless).
  *   - UserPromptSubmit fires before each user turn. No TraceEvent type exists
  *     for it yet, so the mapper returns [] and the shim discards it cleanly.
  *   - SubagentStart/SubagentStop fire on subagent lifecycle (added 2026-07).
  *     No TraceEvent type yet; mapper returns [].
- *   - PermissionRequest fires when the agent requests user permission for an
- *     action. No TraceEvent type yet; mapper returns [].
+ *   - PermissionRequest, PreCompact, PostCompact and Interrupt have no
+ *     TraceEvent types yet; the mapper returns [].
  *   - Hooks are enabled by default in recent versions (no config.toml toggle needed).
  *
  * When Codex expands hook coverage, add the new tool names to the appropriate
@@ -30,6 +34,7 @@
  */
 
 import type {
+  FileWrittenEvent,
   SessionEndedEvent,
   SessionStartedEvent,
   ToolCompletedEvent,
@@ -47,12 +52,14 @@ export type CodexHookEventName =
   | "SessionEnd"
   | "PreToolUse"
   | "PostToolUse"
-  | "PostToolUseFailure"
   | "UserPromptSubmit"
   | "Stop"
   | "SubagentStart"
   | "SubagentStop"
-  | "PermissionRequest";
+  | "PermissionRequest"
+  | "PreCompact"
+  | "PostCompact"
+  | "Interrupt";
 
 /** Fields present on every Codex hook invocation. */
 export interface CodexHookBase {
@@ -72,8 +79,8 @@ export interface CodexSessionStartPayload extends CodexHookBase {
 
 export interface CodexSessionEndPayload extends CodexHookBase {
   hook_event_name: "SessionEnd";
-  /** How the session ended. */
-  reason?: "completed" | "errored" | "interrupted";
+  /** Codex currently reports "other" for every session end. */
+  reason?: "other";
   duration_ms?: number;
 }
 
@@ -81,7 +88,7 @@ export interface CodexPreToolUsePayload extends CodexHookBase {
   hook_event_name: "PreToolUse";
   /** Codex-specific turn identifier. */
   turn_id?: string;
-  /** Tool name. Currently always "Bash" in Codex. */
+  /** Local tool name, including Bash, apply_patch, MCP and local functions. */
   tool_name: string;
   tool_use_id: string;
   /** For Bash: { command: string }. Typed loosely for future tool expansion. */
@@ -96,17 +103,6 @@ export interface CodexPostToolUsePayload extends CodexHookBase {
   tool_input: Record<string, unknown>;
   tool_response: unknown;
   /** Not sent by Codex; injected by the shim via wall-clock timing. */
-  duration_ms?: number;
-}
-
-export interface CodexPostToolUseFailurePayload extends CodexHookBase {
-  hook_event_name: "PostToolUseFailure";
-  turn_id?: string;
-  tool_name: string;
-  tool_use_id: string;
-  tool_input: Record<string, unknown>;
-  error: string;
-  is_interrupt?: boolean;
   duration_ms?: number;
 }
 
@@ -149,17 +145,33 @@ export interface CodexPermissionRequestPayload extends CodexHookBase {
   permission_type?: string;
 }
 
+export interface CodexPreCompactPayload extends CodexHookBase {
+  hook_event_name: "PreCompact";
+  trigger?: "manual" | "auto";
+}
+
+export interface CodexPostCompactPayload extends CodexHookBase {
+  hook_event_name: "PostCompact";
+  trigger?: "manual" | "auto";
+}
+
+export interface CodexInterruptPayload extends CodexHookBase {
+  hook_event_name: "Interrupt";
+}
+
 export type CodexHookPayload =
   | CodexSessionStartPayload
   | CodexSessionEndPayload
   | CodexPreToolUsePayload
   | CodexPostToolUsePayload
-  | CodexPostToolUseFailurePayload
   | CodexUserPromptSubmitPayload
   | CodexStopPayload
   | CodexSubagentStartPayload
   | CodexSubagentStopPayload
-  | CodexPermissionRequestPayload;
+  | CodexPermissionRequestPayload
+  | CodexPreCompactPayload
+  | CodexPostCompactPayload
+  | CodexInterruptPayload;
 
 // ---------------------------------------------------------------------------
 // Mapper options
@@ -171,15 +183,20 @@ export interface MapperOptions {
 }
 
 // ---------------------------------------------------------------------------
-// Tool classification (extend when Codex expands hook coverage)
+// Tool coverage
 // ---------------------------------------------------------------------------
 
 /**
- * Tools that Codex currently intercepts via hooks.
- * Today this is only "Bash". Apply_patch, MCP tools, and WebSearch are
- * not yet intercepted (documented gap, see issue #20204).
+ * Local tool families observed in real Codex Desktop hook payloads. This is
+ * documentation, not an allowlist: arbitrary local function names also pass
+ * through the wildcard tool hooks.
  */
-export const CODEX_INTERCEPTED_TOOLS = new Set(["Bash"]);
+export const CODEX_INTERCEPTED_TOOL_FAMILIES = [
+  "Bash and unified exec",
+  "apply_patch",
+  "MCP tools",
+  "local functions",
+] as const;
 
 // ---------------------------------------------------------------------------
 // Mapper
@@ -238,6 +255,7 @@ export function mapCodexPayload(
     }
 
     case "PostToolUse": {
+      const out: TraceEvent[] = [];
       const completed: ToolCompletedEvent = {
         ...base,
         event_id: options.newEventId(),
@@ -247,36 +265,22 @@ export function mapCodexPayload(
         status: "success",
         response_bytes: estimateResponseBytes(payload.tool_response),
       };
-      return [completed];
-      // TODO: add file.read / file.written here when Codex expands
-      // hook coverage to apply_patch and other file tools.
+      out.push(completed);
+      out.push(...applyPatchFileEvents(payload, base, options.newEventId));
+      return out;
     }
 
     case "SessionEnd": {
-      const p = payload as CodexSessionEndPayload;
       const event: SessionEndedEvent = {
         ...base,
         event_id: options.newEventId(),
         event_type: "session.ended",
-        duration_ms: p.duration_ms ?? 0,
-        status: p.reason ?? "completed",
+        duration_ms: payload.duration_ms ?? 0,
+        // Current Codex payloads only expose reason "other", which cannot
+        // distinguish success, error or interruption.
+        status: "completed",
       };
       return [event];
-    }
-
-    case "PostToolUseFailure": {
-      const p = payload as CodexPostToolUseFailurePayload;
-      const completed: ToolCompletedEvent = {
-        ...base,
-        event_id: options.newEventId(),
-        event_type: "tool.completed",
-        tool_call_id: p.tool_use_id,
-        duration_ms: p.duration_ms ?? 0,
-        status: "error",
-        response_bytes: 0,
-        error_message: p.error,
-      };
-      return [completed];
     }
 
     case "Stop": {
@@ -294,6 +298,9 @@ export function mapCodexPayload(
     case "SubagentStart":
     case "SubagentStop":
     case "PermissionRequest":
+    case "PreCompact":
+    case "PostCompact":
+    case "Interrupt":
       // No TraceEvent types for these yet. Capture the payload so the
       // shim does not warn, but emit nothing until the shared schema
       // gains subagent, prompt, and permission event types.
@@ -306,10 +313,40 @@ export function mapCodexPayload(
 // ---------------------------------------------------------------------------
 
 function mcpServerFor(toolName: string): string {
-  // Codex may encode MCP tools with a similar prefix in the future.
-  const match = toolName.match(/^mcp__([^_]+)__/);
-  if (match) return match[1];
+  if (!toolName.startsWith("mcp__")) return "builtin";
+  const rest = toolName.slice("mcp__".length);
+  const separator = rest.indexOf("__");
+  if (separator > 0 && separator < rest.length - 2) {
+    return rest.slice(0, separator);
+  }
   return "builtin";
+}
+
+function applyPatchFileEvents(
+  payload: CodexPostToolUsePayload,
+  base: Omit<TraceEvent, "event_id" | "event_type">,
+  newEventId: () => string,
+): FileWrittenEvent[] {
+  if (payload.tool_name !== "apply_patch") return [];
+  const patch = payload.tool_input.command;
+  if (typeof patch !== "string") return [];
+
+  const events: FileWrittenEvent[] = [];
+  const header = /^\*\*\* (?:Add|Update) File: (.+)$/gm;
+  for (const match of patch.matchAll(header)) {
+    const filePath = match[1]?.trim();
+    if (!filePath) continue;
+    events.push({
+      ...base,
+      event_id: newEventId(),
+      event_type: "file.written",
+      path: filePath,
+      // The patch result does not report bytes written. Zero is explicit
+      // unknown data rather than a response-size proxy.
+      bytes: 0,
+    });
+  }
+  return events;
 }
 
 function estimateResponseBytes(response: unknown): number {
