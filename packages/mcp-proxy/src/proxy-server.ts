@@ -168,7 +168,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   });
 
   // ── tools/call ────────────────────────────────────────────────────────────
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const prefixedName = request.params.name;
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
@@ -245,6 +245,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         args,
         toolCallId,
         sessionId,
+        signal: extra.signal,
       });
       return {
         content: outcome.result.content as Array<{ type: string }>,
@@ -286,6 +287,11 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     user: process.env.USER ?? process.env.USERNAME ?? "unknown",
     project_path: projectPath,
     mcp_servers: config.upstream_servers.map((s) => s.name),
+    mcp_server_transports: config.upstream_servers.map((s) =>
+      s.transport === "http"
+        ? { name: s.name, transport: "http" as const, host: new URL(s.url).host }
+        : { name: s.name, transport: "stdio" as const }
+    ),
   };
   // Awaited so session.started is always written before any later event.
   await emit(startedEvent);

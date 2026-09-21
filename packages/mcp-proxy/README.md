@@ -24,9 +24,9 @@ Agent (Cowork / Codex / any MCP runtime)
   v
 Omnodex MCP Proxy  ──[tool.invoked]──▶  Local event log
   |                ──[tool.completed]─▶  Local event log
-  | stdio MCP (one connection per upstream)
+  | stdio or Streamable HTTP (one connection per upstream)
   v
-Your real MCP servers (filesystem, github, slack, ...)
+Your real MCP servers (local processes, or remote servers over HTTPS)
 ```
 
 The agent sees one unified tool surface. Each real server is invisible to it
@@ -45,10 +45,10 @@ and does not record.
 | Tool name | ✅ Yes | e.g. `filesystem__read_file` |
 | Tool call parameters | ✅ Yes (default) | File paths, queries, code snippets. See [Parameter redaction](#parameter-redaction). |
 | Tool call result (content) | ❌ No | Only the byte size of the response is recorded. |
-| Upstream server credentials | ❌ No | API keys and tokens are env vars inside the upstream process -- they never appear in MCP protocol messages. |
+| Upstream server credentials | ❌ No | For stdio upstreams they are env vars inside the upstream process. For HTTP upstreams they come from env vars named in the config and are sent only as request headers; header values are never written to the event log, stderr or `omnodex_status`, and are scrubbed from error text. |
 | MCP handshake messages | ❌ No | `initialize`, `initialized`, ping/pong. |
 | `tools/list` responses | ❌ No | Tool discovery is not a security-relevant event. |
-| Session start / end | ✅ Yes | Timestamp and list of proxied upstream servers. |
+| Session start / end | ✅ Yes | Timestamp, the proxied upstream servers, and each one's transport. For HTTP upstreams only the URL host is recorded, never the path, query string or credentials. |
 | Tool call duration | ✅ Yes | `duration_ms` in `tool.completed` events. |
 | Error messages | ✅ Yes | When upstream returns an error response. |
 
@@ -187,7 +187,16 @@ Full schema for `omnodex-proxy.json`:
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"],
       "env": { "API_KEY": "${API_KEY}" },
       "redact_parameters": false,
-      "name_override": "fs"
+      "name_override": "fs",
+      "tool_timeout_sec": 60
+    },
+    {
+      "name": "remote-server",
+      "transport": "http",
+      "url": "https://mcp.example.com/mcp",
+      "bearer_token_env_var": "EXAMPLE_API_KEY",
+      "http_headers": { "X-Workspace": "my-workspace" },
+      "env_http_headers": { "X-Api-Key": "EXAMPLE_HEADER_KEY" }
     }
   ],
   "upstream_connection": {
@@ -210,6 +219,11 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].env` | object | `{}` | Env vars; values support `${VAR}` interpolation |
 | `upstream_servers[].redact_parameters` | boolean | inherits global | Per-server override |
 | `upstream_servers[].name_override` | string | (none) | Use a shorter prefix instead of `name` |
+| `upstream_servers[].tool_timeout_sec` | number | `60` | Limit for one tool call on this upstream |
+| `upstream_servers[].url` | string | required for http | Streamable HTTP endpoint (`http` or `https`) |
+| `upstream_servers[].bearer_token_env_var` | string | (none) | Env var holding a bearer token, sent as `Authorization: Bearer <token>`. Overrides any `Authorization` header from the two fields below. The upstream fails to connect if the variable is unset |
+| `upstream_servers[].http_headers` | object | (none) | Static request headers. Not for secrets |
+| `upstream_servers[].env_http_headers` | object | (none) | Headers read from env vars, as `{ "Header-Name": "ENV_VAR" }`. A header whose variable is unset is not sent |
 | `upstream_connection.discovery_window_ms` | number | `15000` | Ceiling on how long the first `tools/list` waits for upstreams still connecting, from proxy start. See [Sizing the discovery window](#sizing-the-discovery-window) |
 | `upstream_connection.connect_timeout_ms` | number | `30000` | Limit for one connection attempt (start plus tool listing) |
 | `upstream_connection.retry_initial_delay_ms` | number | `1000` | First retry delay for a failed upstream; doubles on each retry |
@@ -219,6 +233,13 @@ Full schema for `omnodex-proxy.json`:
 
 `${VAR}` in `env` values is resolved from the proxy's process environment. Secrets
 stay out of the config file.
+
+HTTP upstream keys match Codex's `config.toml` (`url`, `bearer_token_env_var`,
+`http_headers`, `env_http_headers`, `tool_timeout_sec`), so entries can move between
+the two. Credentials come from environment variables only. Desktop apps may not
+inherit variables set in an interactive shell, so check that they reach the proxy:
+an upstream whose `bearer_token_env_var` is unset reports that by name in
+`omnodex_status`.
 
 ---
 
@@ -238,9 +259,10 @@ the background. Upstreams that connect after the discovery window are announced 
 `notifications/tools/list_changed`; agents that ignore that notification see their tools
 after a reconnect or a new conversation.
 
-**HTTP upstream transport.** The `transport: "http"` config field is accepted by the
-schema but not implemented; the proxy stops with an error if it is used. Use `stdio`
-upstreams.
+**HTTP upstreams.** Remote servers are supported over Streamable HTTP with bearer
+tokens and headers from environment variables. OAuth sign-in for remote servers is
+not supported yet; use a server's token-based endpoint where it has one. The legacy
+HTTP+SSE transport is not supported.
 
 ---
 
@@ -266,10 +288,17 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   limit.
 - **Calls to a down upstream** return an error saying the upstream is connecting, is
   retrying, or has stopped retrying, with its last error.
-- **Status.** `omnodex_status` reports each upstream's state (`connecting`,
-  `connected`, `failed`), last error, tool count, last attempt time and next retry.
-  Call it with `retry_failed: true` to retry every failed upstream immediately with a
-  fresh count, or restart the agent.
+- **Rejected credentials.** An HTTP upstream that answers 401 or 403, while
+  connecting or on a later call, moves to `needs_auth`, its tools are removed, and it
+  is not retried on a timer, since only new credentials can fix it.
+- **Lost sessions.** When a remote server no longer recognizes the session (HTTP 404),
+  the proxy starts a new session and retries the call once.
+- **Timeouts and cancellation.** Each tool call is limited to `tool_timeout_sec`
+  (default 60). When the agent cancels a call, the proxy cancels it at the upstream.
+- **Status.** `omnodex_status` reports each upstream's transport, state (`connecting`,
+  `connected`, `failed`, `needs_auth`), last error, tool count, last attempt time and
+  next retry. Call it with `retry_failed: true` to retry every failed or `needs_auth`
+  upstream immediately with a fresh count, or restart the agent.
 
 ### Sizing the discovery window
 
@@ -335,7 +364,8 @@ events identically to hook-sourced events, distinguished only by the `intercepto
 field on each event.
 
 The proxy is both an MCP server (accepts inbound stdio from the agent) and an MCP
-client pool (maintains outbound stdio connections to each upstream server). Tool names
+client pool (maintains an outbound stdio or Streamable HTTP connection to each
+upstream server). Tool names
 from upstream servers are namespaced with a prefix (`filesystem__read_file`) to avoid
 collisions and to make the `mcp_server` field in every TraceEvent unambiguous. The
 separator is `__` because MCP clients only accept letters, digits, `_` and `-` in tool
@@ -358,4 +388,4 @@ npm test               # unit + integration tests
 ```
 
 Tests use Node's built-in test runner (`node:test`). Integration tests in
-`test/upstream-client.test.mjs` spawn a real mock MCP server subprocess and verify end-to-end request routing, parameter logging, and error handling.
+`test/upstream-client.test.mjs` spawn a real mock MCP server subprocess and verify end-to-end request routing, parameter logging, and error handling. `test/http-upstream.test.mjs` runs an in-process Streamable HTTP server to cover headers, bearer tokens, `needs_auth`, session loss, timeouts, cancellation and credential redaction.

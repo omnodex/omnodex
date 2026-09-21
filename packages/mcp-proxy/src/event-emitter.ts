@@ -45,6 +45,8 @@ export interface CallToolOptions {
   toolCallId: string;
   /** Session the call belongs to */
   sessionId: string;
+  /** Aborts the upstream call when the agent cancels its request. */
+  signal?: AbortSignal;
 }
 
 export interface CallToolOutcome {
@@ -71,7 +73,7 @@ export async function callToolWithEvents(
   emit: EmitFn,
   opts: CallToolOptions
 ): Promise<CallToolOutcome> {
-  const { prefixedName, args, toolCallId, sessionId } = opts;
+  const { prefixedName, args, toolCallId, sessionId, signal } = opts;
 
   const serverName = pool.getServerName(prefixedName);
   // Resolve before emitting -- if the tool doesn't exist we bail early.
@@ -112,7 +114,7 @@ export async function callToolWithEvents(
   let errorMessage: string | undefined;
 
   try {
-    result = await pool.callTool(prefixedName, args);
+    result = await pool.callTool(prefixedName, args, signal ? { signal } : undefined);
     if (result.isError) {
       status = "error";
       errorMessage = extractErrorMessage(result.content);

@@ -9,7 +9,8 @@
  *
  * Manages a pool of MCP client connections to upstream servers. Responsible
  * for:
- *   1. Spawning upstream stdio subprocesses (or connecting to HTTP servers)
+ *   1. Spawning upstream stdio subprocesses, or connecting to remote servers
+ *      over Streamable HTTP
  *   2. Calling tools/list on each to build a unified, prefixed tool index
  *   3. Routing tools/call to the correct upstream by prefixed name
  *   4. Returning raw call results for the event-emitter layer to wrap
@@ -28,6 +29,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  StreamableHTTPClientTransport,
+  StreamableHTTPError,
+} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
@@ -37,6 +42,8 @@ import {
   type UpstreamServer,
   ProxyConfigSchema,
   TOOL_NAME_SEPARATOR,
+  redactSecrets,
+  resolveHttpHeaders,
   resolveUpstreamEnv,
   toolNamePrefix,
 } from "./config.js";
@@ -72,11 +79,17 @@ export interface UpstreamCallResult {
   isError?: boolean;
 }
 
-export type UpstreamState = "connecting" | "connected" | "failed";
+/**
+ * needs_auth: a remote upstream answered 401 or 403. It is not retried on a
+ * timer, because only new credentials can fix it; omnodex_status with
+ * retry_failed: true tries again.
+ */
+export type UpstreamState = "connecting" | "connected" | "failed" | "needs_auth";
 
 /** Connection state of one upstream, as reported by omnodex_status. */
 export interface UpstreamStatus {
   name: string;
+  transport: UpstreamServer["transport"];
   state: UpstreamState;
   tool_count: number;
   /** Error from the most recent failure; null once connected. */
@@ -106,6 +119,12 @@ const SUPPORTED_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
  * forever.
  */
 const STABLE_CONNECTION_MS = 30_000;
+
+/** Per-call limit when an upstream sets no tool_timeout_sec (the SDK default). */
+const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
+
+/** Error text kept for status and events; upstream bodies can be long. */
+const MAX_ERROR_LENGTH = 500;
 
 /**
  * Removes a top-level "$schema" declaration that names a dialect other than
@@ -181,12 +200,14 @@ class UpstreamConnection {
    */
   async callTool(
     originalName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    options?: RequestOptions
   ): Promise<UpstreamCallResult> {
-    const result = await this.client.callTool({
-      name: originalName,
-      arguments: args,
-    });
+    const result = await this.client.callTool(
+      { name: originalName, arguments: args },
+      undefined,
+      options
+    );
     return {
       content: result.content as unknown[],
       ...(result.structuredContent !== undefined
@@ -217,6 +238,8 @@ interface UpstreamEntry {
   nextRetryAt: number | null;
   retryTimer: NodeJS.Timeout | undefined;
   retriesExhausted: boolean;
+  /** Credential values in use for this upstream, scrubbed from errors. */
+  secrets: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +300,7 @@ export class UpstreamClientPool {
         nextRetryAt: null,
         retryTimer: undefined,
         retriesExhausted: false,
+        secrets: [],
       });
     }
     this.initialAttempts = Promise.all(this.entries.map((e) => this.attempt(e))).then(
@@ -367,13 +391,14 @@ export class UpstreamClientPool {
   }
 
   /**
-   * Retries every failed upstream now, including those whose retries were
-   * exhausted, with a fresh failure count. Returns the names retried.
+   * Retries every failed or needs_auth upstream now, including those whose
+   * retries were exhausted, with a fresh failure count. Returns the names
+   * retried.
    */
   retryFailed(): string[] {
     const retried: string[] = [];
     for (const entry of this.entries) {
-      if (entry.state !== "failed") continue;
+      if (entry.state !== "failed" && entry.state !== "needs_auth") continue;
       clearTimeout(entry.retryTimer);
       entry.failedAttempts = 0;
       entry.retriesExhausted = false;
@@ -390,10 +415,12 @@ export class UpstreamClientPool {
    */
   async callTool(
     prefixedName: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    options?: { signal?: AbortSignal }
   ): Promise<UpstreamCallResult> {
     const conn = this.toolIndex.get(prefixedName);
-    if (!conn) {
+    const entry = conn && this.entries.find((e) => e.connection === conn);
+    if (!conn || !entry) {
       const unavailable = this.findUnavailableUpstream(prefixedName);
       if (unavailable) throw new McpUpstreamUnavailableError(unavailable);
       throw new McpToolNotFoundError(
@@ -405,8 +432,34 @@ export class UpstreamClientPool {
     // Derive original name: strip the prefix and the separator.
     const prefix = toolNamePrefix(conn.server);
     const originalName = prefixedName.slice(prefix.length + TOOL_NAME_SEPARATOR.length);
+    const requestOptions: RequestOptions = {
+      timeout: (entry.server.tool_timeout_sec ?? DEFAULT_TOOL_TIMEOUT_MS / 1000) * 1000,
+      ...(options?.signal ? { signal: options.signal } : {}),
+    };
 
-    return conn.callTool(originalName, args);
+    try {
+      return await conn.callTool(originalName, args, requestOptions);
+    } catch (err) {
+      if (isAuthError(err)) {
+        this.markNeedsAuth(entry, conn, this.cleanError(entry, err));
+        throw new McpUpstreamUnavailableError(toStatus(entry));
+      }
+      // A Streamable HTTP server that no longer knows the session answers
+      // 404; the client must start a new session. Reconnect once and retry.
+      if (isSessionNotFound(entry, err)) {
+        await this.reconnect(entry, conn);
+        const fresh = entry.connection as UpstreamConnection | undefined;
+        if (entry.state !== "connected" || !fresh) {
+          throw new McpUpstreamUnavailableError(toStatus(entry));
+        }
+        try {
+          return await fresh.callTool(originalName, args, requestOptions);
+        } catch (retryErr) {
+          throw new Error(this.cleanError(entry, retryErr));
+        }
+      }
+      throw new Error(this.cleanError(entry, err));
+    }
   }
 
   /** Gracefully closes all upstream connections and cancels retries. */
@@ -441,7 +494,7 @@ export class UpstreamClientPool {
     const options: RequestOptions = { timeout: this.settings.connect_timeout_ms };
 
     try {
-      await client.connect(createTransport(entry.server), options);
+      await client.connect(this.createTransport(entry), options);
       const connection = new UpstreamConnection(entry.server, client);
       client.onclose = () => this.handleDisconnect(entry, connection);
       const tools = await connection.discoverTools(options);
@@ -464,8 +517,85 @@ export class UpstreamClientPool {
       // finish the handshake in time.
       await client.close().catch(() => undefined);
       if (this.closed) return;
-      this.recordFailure(entry, err instanceof Error ? err.message : String(err));
+      const message = this.cleanError(entry, err);
+      if (isAuthError(err)) {
+        this.recordNeedsAuth(entry, message);
+      } else {
+        this.recordFailure(entry, message);
+      }
     }
+  }
+
+  private createTransport(entry: UpstreamEntry): Transport {
+    const server = entry.server;
+    if (server.transport === "stdio") {
+      return new StdioClientTransport({
+        command: server.command,
+        args: server.args ?? [],
+        env: resolveUpstreamEnv(server.env),
+        cwd: server.cwd,
+        // Inherit stderr so upstream server error output is visible in the
+        // proxy's own stderr stream (visible in Cowork's session log).
+        stderr: "inherit",
+      });
+    }
+    // Resolved on every attempt, so a retry picks up a changed variable.
+    const { headers, secrets } = resolveHttpHeaders(server);
+    entry.secrets = secrets;
+    return new StreamableHTTPClientTransport(new URL(server.url), {
+      requestInit: { headers },
+    });
+  }
+
+  /** Error text safe for stderr, status and the event log. */
+  private cleanError(entry: UpstreamEntry, err: unknown): string {
+    let raw = err instanceof Error ? err.message : String(err);
+    // The SDK's message omits the status code, which is the useful part.
+    if (err instanceof StreamableHTTPError && err.code !== undefined && err.code > 0) {
+      raw = `HTTP ${err.code}: ${raw}`;
+    }
+    const url = entry.server.transport === "http" ? entry.server.url : undefined;
+    const clean = redactSecrets(raw, entry.secrets, url);
+    return clean.length > MAX_ERROR_LENGTH ? `${clean.slice(0, MAX_ERROR_LENGTH)}...` : clean;
+  }
+
+  /** Drops a connection without counting a failure, then connects again. */
+  private async reconnect(entry: UpstreamEntry, connection: UpstreamConnection): Promise<void> {
+    if (entry.connection === connection) {
+      entry.connection = undefined;
+      entry.connectedAt = null;
+      entry.tools = [];
+      this.rebuildToolIndex();
+    }
+    await connection.close().catch(() => undefined);
+    if (this.closed) return;
+    await this.attempt(entry);
+  }
+
+  private markNeedsAuth(
+    entry: UpstreamEntry,
+    connection: UpstreamConnection,
+    message: string
+  ): void {
+    if (entry.connection === connection) {
+      entry.connection = undefined;
+      entry.connectedAt = null;
+      entry.tools = [];
+      this.rebuildToolIndex();
+    }
+    void connection.close().catch(() => undefined);
+    this.recordNeedsAuth(entry, message);
+  }
+
+  private recordNeedsAuth(entry: UpstreamEntry, message: string): void {
+    clearTimeout(entry.retryTimer);
+    entry.retryTimer = undefined;
+    entry.state = "needs_auth";
+    entry.lastError = message;
+    entry.nextRetryAt = null;
+    const status = toStatus(entry);
+    process.stderr.write(`[omnodex-mcp-proxy] WARNING: ${describeUnavailable(status)}\n`);
+    for (const listener of this.exhaustedListeners) listener(status);
   }
 
   private handleDisconnect(entry: UpstreamEntry, connection: UpstreamConnection): void {
@@ -535,30 +665,20 @@ export class UpstreamClientPool {
   }
 }
 
-function createTransport(server: UpstreamServer): Transport {
-  if (server.transport === "stdio") {
-    return new StdioClientTransport({
-      command: server.command,
-      args: server.args ?? [],
-      env: resolveUpstreamEnv(server.env),
-      cwd: server.cwd,
-      // Inherit stderr so upstream server error output is visible in the
-      // proxy's own stderr stream (visible in Cowork's session log).
-      stderr: "inherit",
-    });
-  }
-  // HTTP+SSE transport: deferred to v0.5+. The config schema accepts http
-  // upstreams so configs written now will be valid when we add support.
-  throw new Error(
-    `HTTP upstream transport is not yet supported (server: "${server.name}"). ` +
-      `Use transport: "stdio" for now.`
-  );
+function isAuthError(err: unknown): boolean {
+  if (err instanceof StreamableHTTPError) return err.code === 401 || err.code === 403;
+  return err instanceof Error && err.name === "UnauthorizedError";
+}
+
+function isSessionNotFound(entry: UpstreamEntry, err: unknown): boolean {
+  return entry.server.transport === "http" && err instanceof StreamableHTTPError && err.code === 404;
 }
 
 function toStatus(entry: UpstreamEntry): UpstreamStatus {
   const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
   return {
     name: entry.server.name,
+    transport: entry.server.transport,
     state: entry.state,
     tool_count: entry.tools.length,
     last_error: entry.lastError,
@@ -578,6 +698,14 @@ export function describeUnavailable(status: UpstreamStatus): string {
   const base = `Upstream MCP server "${status.name}"`;
   if (status.state === "connecting") {
     return `${base} is still connecting. Try again shortly.`;
+  }
+  if (status.state === "needs_auth") {
+    const error = status.last_error ? ` Last error: ${status.last_error}.` : "";
+    return (
+      `${base} needs authorization: it rejected the proxy's credentials.${error} ` +
+      `Check the variables named by bearer_token_env_var or env_http_headers, ` +
+      `then restart the MCP host or call omnodex_status with retry_failed: true.`
+    );
   }
   const error = status.last_error ? ` Last error: ${status.last_error}.` : "";
   if (status.retries_exhausted) {
