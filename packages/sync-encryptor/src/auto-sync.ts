@@ -37,6 +37,7 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { TraceEvent } from "@omnodex/shared";
+import { readOrFetchLicense } from "./license-cache.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
 export const AUTO_SYNC_CHILD_ENV = "OMNODEX_AUTO_SYNC_CHILD";
@@ -55,6 +56,9 @@ const MIN_AUTO_SYNC_INTERVAL_SECONDS = 30;
 
 /** A lock older than this is assumed to belong to a crashed sync. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
+
+/** Bound on the one-time license fetch for a home that has no cache yet. */
+const LICENSE_FETCH_TIMEOUT_MS = 3000;
 
 const STATE_FILE = "auto-sync-state.json";
 const LOCK_FILE = "auto-sync.lock";
@@ -244,23 +248,26 @@ async function readSyncSettings(
   const passphrase = typeof config?.passphrase === "string" ? config.passphrase : "";
   if (!config || !apiToken || !passphrase) return "no-credentials";
 
+  const apiUrl = typeof config.api_url === "string" && config.api_url
+    ? config.api_url
+    : "https://api.omnodex.com";
+
   // The license cache written by `omnodex connect` and license validation
-  // carries the customer ID the blob is encrypted for.
-  const license = await readJson(path.join(home, "license-cache.json"));
-  const response = license?.response as
-    | { customer_id?: unknown; features?: unknown }
-    | undefined;
-  const customerId = typeof response?.customer_id === "string" ? response.customer_id : "";
-  const features = Array.isArray(response?.features) ? response.features : [];
-  if (!customerId || !features.includes("encrypted_sync")) return "not-entitled";
+  // carries the customer ID the blob is encrypted for. A home without one
+  // fetches it here rather than staying unsynced.
+  const license = await readOrFetchLicense(home, {
+    apiToken,
+    apiUrl,
+    timeoutMs: LICENSE_FETCH_TIMEOUT_MS,
+  });
+  const customerId = license?.customer_id ?? "";
+  if (!customerId || !license?.features.includes("encrypted_sync")) return "not-entitled";
 
   const intervalSeconds = config.auto_sync_min_interval_seconds;
   return {
     apiToken,
     passphrase,
-    apiUrl: typeof config.api_url === "string" && config.api_url
-      ? config.api_url
-      : "https://api.omnodex.com",
+    apiUrl,
     customerId,
     enabled: config.auto_sync !== false,
     minIntervalMs:

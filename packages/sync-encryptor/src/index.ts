@@ -37,6 +37,8 @@ export { computeMachineId, readMachineLabel } from "./machine-id.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
 
 export { pushEventsToCloud } from "./shim-push.js";
+export { readOrFetchLicense } from "./license-cache.js";
+export type { CachedLicense, LicenseCredentials } from "./license-cache.js";
 
 export {
   startBackgroundSync,
