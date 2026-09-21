@@ -102,6 +102,20 @@ function routedCallEvents(overrides = {}) {
   ];
 }
 
+async function openStore(kind) {
+  if (kind === "sqlite") {
+    const root = await mkTmp();
+    const store = new SqliteReadModelStore({ dbPath: path.join(root, "traces.db") });
+    await store.init();
+    return store;
+  }
+  return new InMemoryReadModelStore();
+}
+
+async function sessionById(store, sessionId) {
+  return (await store.listSessions()).find((s) => s.session_id === sessionId);
+}
+
 async function project(events, store) {
   const projector = new Projector(store);
   for (const e of events) await projector.apply(e);
@@ -560,6 +574,66 @@ for (const kind of ["in-memory", "sqlite"]) {
     assert.equal(second.rowsUpdated, 0, "a second pass has nothing to change");
     assert.deepEqual(await store.listToolCalls(HOOK_SESSION), first);
 
+    await store.close();
+  });
+
+  test(`a routed call moves the session from the proxy's name to the upstream (${kind})`, async () => {
+    const store = await openStore(kind);
+    await project(routedCallEvents(), store);
+    const before = await sessionById(store, HOOK_SESSION);
+    assert.deepEqual(before.mcp_servers, ["omnodex"], "the hook only saw the proxy");
+
+    const summary = await runCorrelation(store);
+    assert.equal(summary.sessionsUpdated, 1);
+    assert.deepEqual((await sessionById(store, HOOK_SESSION)).mcp_servers, ["filesystem"]);
+
+    const again = await runCorrelation(store);
+    assert.equal(again.sessionsUpdated, 0, "a second pass has nothing to change");
+    assert.deepEqual((await sessionById(store, HOOK_SESSION)).mcp_servers, ["filesystem"]);
+
+    await store.close();
+  });
+
+  test(`the proxy's name stays while a call still stands under it (${kind})`, async () => {
+    const store = await openStore(kind);
+    await project(
+      [
+        ...routedCallEvents(),
+        invoked({
+          eventId: "e-status", sessionId: HOOK_SESSION, interceptor: "claude-code-hook",
+          toolCallId: "toolu_status", toolName: "mcp__omnodex__omnodex_status",
+          mcpServer: "omnodex", at: PROXY_AT, parameters: {},
+        }),
+      ],
+      store,
+    );
+    await runCorrelation(store);
+
+    // omnodex_status is the proxy's own tool, never routed, so the session
+    // did talk to "omnodex" as well as to the upstream.
+    assert.deepEqual(
+      (await sessionById(store, HOOK_SESSION)).mcp_servers,
+      ["omnodex", "filesystem"],
+    );
+    await store.close();
+  });
+
+  test(`a session with no routed calls keeps its list (${kind})`, async () => {
+    const store = await openStore(kind);
+    await project(
+      [
+        sessionEvent(HOOK_SESSION, "claude-code-hook", HOOK_AT),
+        invoked({
+          eventId: "e-status", sessionId: HOOK_SESSION, interceptor: "claude-code-hook",
+          toolCallId: "toolu_status", toolName: "mcp__omnodex__omnodex_status",
+          mcpServer: "omnodex", at: HOOK_AT, parameters: {},
+        }),
+      ],
+      store,
+    );
+    const summary = await runCorrelation(store);
+    assert.equal(summary.sessionsUpdated, 0);
+    assert.deepEqual((await sessionById(store, HOOK_SESSION)).mcp_servers, ["omnodex"]);
     await store.close();
   });
 
