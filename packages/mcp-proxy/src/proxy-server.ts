@@ -7,8 +7,9 @@
 /**
  * @omnodex/mcp-proxy -- proxy-server
  *
- * Inbound MCP server: the face the agent talks to. Accepts the agent's
- * MCP connection on stdin/stdout (stdio transport), exposes the merged,
+ * Inbound MCP server: the face the agent talks to. Serves one MCP session
+ * over any transport (stdin/stdout by default, or one Streamable HTTP
+ * session from http-server.ts), exposes the merged,
  * prefixed tool list from all configured upstream servers, and routes
  * tools/call requests through the event-emitter layer to the upstream pool.
  *
@@ -30,7 +31,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { SCHEMA_VERSION, type EmitFn, type SessionStartedEvent, type SessionEndedEvent } from "@omnodex/shared";
+import { type EmitFn } from "@omnodex/shared";
 import {
   type UpstreamClientPool,
   McpUpstreamUnavailableError,
@@ -39,6 +40,7 @@ import {
 import { callToolWithEvents } from "./event-emitter.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
+import { buildSessionEndedEvent, buildSessionStartedEvent } from "./core/events.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -51,8 +53,17 @@ export interface ProxyServerOptions {
   sessionId: string;
   /** Human-readable project path for session.started event. */
   projectPath?: string;
-  /** Inbound transport. Defaults to stdio; tests pass an in-memory transport. */
+  /**
+   * Inbound transport. Defaults to stdio. The HTTP front end passes one
+   * Streamable HTTP transport per MCP session; tests pass an in-memory one.
+   */
   transport?: Transport;
+  /**
+   * Called once the server is connected to the transport, before the agent's
+   * messages are handled. The HTTP front end waits for it before passing the
+   * session's first request on.
+   */
+  onConnected?: () => void;
 }
 
 /**
@@ -276,23 +287,17 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   const sessionStart = new Date().toISOString();
 
   // Emit session.started
-  const startedEvent: SessionStartedEvent = {
-    schema_version: SCHEMA_VERSION,
-    event_id: randomUUID(),
-    session_id: sessionId,
-    occurred_at: sessionStart,
-    recorded_at: sessionStart,
-    interceptor: "mcp-proxy",
-    event_type: "session.started",
+  const startedEvent = buildSessionStartedEvent({
+    sessionId,
+    at: sessionStart,
     user: process.env.USER ?? process.env.USERNAME ?? "unknown",
-    project_path: projectPath,
-    mcp_servers: config.upstream_servers.map((s) => s.name),
-    mcp_server_transports: config.upstream_servers.map((s) =>
+    projectPath,
+    servers: config.upstream_servers.map((s) =>
       s.transport === "http"
         ? { name: s.name, transport: "http" as const, host: new URL(s.url).host }
         : { name: s.name, transport: "stdio" as const }
     ),
-  };
+  });
   // Awaited so session.started is always written before any later event.
   await emit(startedEvent);
 
@@ -312,22 +317,17 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     server.onclose = () => resolve();
   });
   await server.connect(transport);
+  opts.onConnected?.();
   await closed;
   unsubscribeTools();
   unsubscribeExhausted();
 
   const endedAt = new Date().toISOString();
-  const endedEvent: SessionEndedEvent = {
-    schema_version: SCHEMA_VERSION,
-    event_id: randomUUID(),
-    session_id: sessionId,
-    occurred_at: endedAt,
-    recorded_at: endedAt,
-    interceptor: "mcp-proxy",
-    event_type: "session.ended",
-    duration_ms: Date.now() - connectStart,
-    status: "completed",
-  };
+  const endedEvent = buildSessionEndedEvent({
+    sessionId,
+    at: endedAt,
+    durationMs: Date.now() - connectStart,
+  });
   // Awaited so the event is written before the caller shuts the process down.
   await emit(endedEvent);
 }

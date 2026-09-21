@@ -40,6 +40,28 @@ export type {
 export { callToolWithEvents } from "./event-emitter.js";
 export type { CallToolOptions, CallToolOutcome } from "./event-emitter.js";
 export { runProxyServer } from "./proxy-server.js";
+export {
+  startProxyHttpServer,
+  parseHttpListen,
+  isLoopbackHost,
+  HTTP_MCP_PATH,
+} from "./http-server.js";
+export type { HttpServeOptions, ProxyHttpServer, ProxyHttpServerOptions } from "./http-server.js";
+export {
+  TOOL_NAME_SEPARATOR,
+  normalizeSchemaDialect,
+  prefixedToolName,
+  prefixToolDefinition,
+  resolvePrefixedName,
+} from "./core/tool-routing.js";
+export {
+  REDACTED_SENTINEL,
+  redactParameters,
+  buildSessionStartedEvent,
+  buildSessionEndedEvent,
+  buildToolInvokedEvent,
+  buildToolCompletedEvent,
+} from "./core/events.js";
 export type { ProxyServerOptions } from "./proxy-server.js";
 export { handleConnect, checkConnectionStatus } from "./connect-tool.js";
 export type { ConnectionStatus } from "./connect-tool.js";
@@ -49,6 +71,8 @@ export {
   resolveUpstreamEnv,
   shouldRedactParams,
   toolNamePrefix,
+  resolveHttpHeaders,
+  redactSecrets,
 } from "./config.js";
 export type {
   ProxyConfig,

@@ -162,6 +162,10 @@ Use absolute paths: desktop apps may not share your terminal's `PATH` or expand 
 # run manually to debug or verify upstream connections)
 omnodex mcp-proxy start [--config <path>]
 
+# Serve the proxy over Streamable HTTP at http://<host:port>/mcp, for hosts
+# that connect to MCP servers by URL
+omnodex mcp-proxy serve --http 127.0.0.1:8787 [--config <path>] [--allow-remote]
+
 # Create a config template if none exists
 omnodex mcp-proxy install
 
@@ -264,6 +268,21 @@ tokens and headers from environment variables. OAuth sign-in for remote servers 
 not supported yet; use a server's token-based endpoint where it has one. The legacy
 HTTP+SSE transport is not supported.
 
+### Serving over HTTP
+
+`omnodex mcp-proxy serve --http <host:port>` (or `omnodex-mcp-proxy --http <host:port>`)
+serves the proxy over Streamable HTTP at `/mcp` instead of stdin/stdout, and runs until
+stopped. Each client session is its own proxy session, with its own `session.started`
+and `session.ended` events; all sessions share one set of upstream connections.
+
+- **Loopback only by default.** It binds to `127.0.0.1`, `localhost` or `::1`, and
+  rejects requests whose `Host` is not a loopback name or whose `Origin` is not a
+  loopback origin, so a web page cannot reach it through DNS rebinding.
+- **Beyond loopback** requires `--allow-remote` and a token in
+  `OMNODEX_PROXY_HTTP_TOKEN`; clients send it as `Authorization: Bearer <token>`. The
+  proxy calls upstream tools with your credentials, so do not expose it without one.
+  The token can also be set on loopback.
+
 ---
 
 ## Upstream Connections
@@ -363,9 +382,13 @@ projector, analyzer, and dashboard are interceptor-agnostic: they handle proxy-s
 events identically to hook-sourced events, distinguished only by the `interceptor: "mcp-proxy"`
 field on each event.
 
-The proxy is both an MCP server (accepts inbound stdio from the agent) and an MCP
-client pool (maintains an outbound stdio or Streamable HTTP connection to each
-upstream server). Tool names
+The proxy is both an MCP server (accepts the agent over stdio, or clients over
+Streamable HTTP) and an MCP client pool (maintains an outbound stdio or Streamable
+HTTP connection to each upstream server).
+
+Tool naming and routing (`src/core/tool-routing.ts`) and the events the proxy
+records (`src/core/events.ts`) use no Node APIs, so a proxy on another runtime can
+share them. A test enforces this. Tool names
 from upstream servers are namespaced with a prefix (`filesystem__read_file`) to avoid
 collisions and to make the `mcp_server` field in every TraceEvent unambiguous. The
 separator is `__` because MCP clients only accept letters, digits, `_` and `-` in tool

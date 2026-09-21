@@ -277,15 +277,8 @@ export function shouldRedactParams(
   return server.redact_parameters ?? config.redact_parameters;
 }
 
-/**
- * Joins the upstream prefix and the upstream tool name in the name the agent
- * sees. Clients restrict tool names to letters, digits, "_" and "-" (the
- * Claude API enforces ^[a-zA-Z0-9_-]{1,64}$), so the separator must stay
- * inside that set. A "/" separator gets rewritten by some clients, which
- * breaks per-tool approval because the approved name no longer matches the
- * called name.
- */
-export const TOOL_NAME_SEPARATOR = "__";
+/** Separator between an upstream prefix and its tool names (see core/tool-routing). */
+export { TOOL_NAME_SEPARATOR } from "./core/tool-routing.js";
 
 /**
  * Returns the tool name prefix for an upstream server.

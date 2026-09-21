@@ -43,6 +43,11 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type ProxyConfig } from "./config.js";
 import { UpstreamClientPool } from "./upstream-client.js";
 import { runProxyServer } from "./proxy-server.js";
+import {
+  startProxyHttpServer,
+  type HttpServeOptions,
+  type ProxyHttpServer,
+} from "./http-server.js";
 import { createCloudPushQueue, type CloudPushFn } from "./cloud-push.js";
 import {
   startAutoSyncTimer,
@@ -63,6 +68,12 @@ export interface MCPProxyOptions {
   autoSyncScriptPath?: string;
   /** Inbound transport. Defaults to stdio; tests pass an in-memory pair. */
   transport?: Transport;
+  /**
+   * Serve over Streamable HTTP instead of stdio. Each client session is a
+   * separate proxy session over one shared upstream pool. Ignored when
+   * transport is set.
+   */
+  http?: HttpServeOptions;
   /** Overrides for tests. */
   hooks?: {
     pushFn?: CloudPushFn;
@@ -82,8 +93,10 @@ export class MCPProxy implements Interceptor {
   private readonly home: string;
   private readonly autoSyncScriptPath: string | undefined;
   private readonly transport: Transport | undefined;
+  private readonly http: HttpServeOptions | undefined;
   private readonly hooks: MCPProxyOptions["hooks"];
   private serverDone: Promise<void> | undefined;
+  private httpServer: ProxyHttpServer | undefined;
 
   constructor(config: ProxyConfig, options?: MCPProxyOptions) {
     this.config = config;
@@ -95,6 +108,7 @@ export class MCPProxy implements Interceptor {
       path.join(os.homedir(), ".omnodex");
     this.autoSyncScriptPath = options?.autoSyncScriptPath;
     this.transport = options?.transport;
+    this.http = options?.transport ? undefined : options?.http;
     this.hooks = options?.hooks;
   }
 
@@ -140,20 +154,35 @@ export class MCPProxy implements Interceptor {
       });
     }
 
-    // runProxyServer resolves when the agent disconnects (stdin EOF).
-    // We don't await it here so we can return the stop function immediately
-    // to the caller. The proxy's main loop is the runProxyServer promise.
-    const serverDone = runProxyServer({
-      pool,
-      config: this.config,
-      emit: emitAndPush,
-      sessionId: this.sessionId,
-      projectPath: this.projectPath,
-      ...(this.transport ? { transport: this.transport } : {}),
-    });
+    // Over stdio, runProxyServer resolves when the agent disconnects (stdin
+    // EOF). Over HTTP, the server runs until stop(), with one session per
+    // client. Neither is awaited here, so the stop function returns at once.
+    let serverDone: Promise<void>;
+    if (this.http) {
+      const httpServer = await startProxyHttpServer({
+        ...this.http,
+        pool,
+        config: this.config,
+        emit: emitAndPush,
+        ...(this.projectPath !== undefined ? { projectPath: this.projectPath } : {}),
+      });
+      this.httpServer = httpServer;
+      serverDone = httpServer.closed;
+    } else {
+      serverDone = runProxyServer({
+        pool,
+        config: this.config,
+        emit: emitAndPush,
+        sessionId: this.sessionId,
+        projectPath: this.projectPath,
+        ...(this.transport ? { transport: this.transport } : {}),
+      });
+    }
     this.serverDone = serverDone;
 
     const stop: StopFn = async () => {
+      // Ends every HTTP session first, so each records session.ended.
+      await this.httpServer?.close();
       syncTimer?.stop();
       // Sends session.ended and anything still batched behind it. Bounded by
       // pushEventsToCloud's own request timeout, so shutdown cannot hang.
@@ -180,6 +209,11 @@ export class MCPProxy implements Interceptor {
    * recorded. Entrypoints use it to run their shutdown (close upstreams and
    * the event log) and exit, since hosts usually just close the pipe.
    */
+  /** The endpoint URL when serving over HTTP, once start() has returned. */
+  httpUrl(): string | undefined {
+    return this.httpServer?.url;
+  }
+
   whenClosed(): Promise<void> {
     if (!this.serverDone) {
       throw new Error("MCPProxy.whenClosed() called before start()");

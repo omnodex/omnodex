@@ -47,6 +47,7 @@ import {
   resolveUpstreamEnv,
   toolNamePrefix,
 } from "./config.js";
+import { prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -105,14 +106,6 @@ export interface UpstreamStatus {
 }
 
 /**
- * JSON Schema dialect that MCP clients validate tool schemas against. Schemas
- * declaring any other "$schema" (commonly draft-07, emitted by
- * zod-to-json-schema) are rejected by clients whose validator only supports
- * this dialect.
- */
-const SUPPORTED_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
-
-/**
  * A connection that closes sooner than this after connecting keeps its
  * earlier failure count, so an upstream that crashes right after starting
  * still reaches the retry limit instead of retrying at the shortest delay
@@ -126,24 +119,8 @@ const DEFAULT_TOOL_TIMEOUT_MS = 60_000;
 /** Error text kept for status and events; upstream bodies can be long. */
 const MAX_ERROR_LENGTH = 500;
 
-/**
- * Removes a top-level "$schema" declaration that names a dialect other than
- * JSON Schema 2020-12, so the schema is validated under the client's default
- * dialect. The keywords MCP servers use in tool schemas (type, properties,
- * required, items, enum, additionalProperties, description) behave the same
- * in draft-07 and 2020-12. Returns the input unchanged when there is nothing
- * to remove.
- */
-export function normalizeSchemaDialect<T>(schema: T): T {
-  if (schema === null || typeof schema !== "object" || !("$schema" in schema)) {
-    return schema;
-  }
-  const { $schema, ...rest } = schema as Record<string, unknown>;
-  if (typeof $schema === "string" && $schema.replace(/#$/, "") === SUPPORTED_SCHEMA_DIALECT) {
-    return schema;
-  }
-  return rest as T;
-}
+// Kept exported from here for existing callers; defined in core/tool-routing.
+export { normalizeSchemaDialect } from "./core/tool-routing.js";
 
 // ---------------------------------------------------------------------------
 // Internal: one upstream connection
@@ -171,17 +148,9 @@ class UpstreamConnection {
 
     for (const tool of result.tools) {
       this.toolMap.set(tool.name, tool);
-      const prefixedName = `${this.prefix}${TOOL_NAME_SEPARATOR}${tool.name}`;
-      const definition: Tool = {
-        ...tool,
-        name: prefixedName,
-        inputSchema: normalizeSchemaDialect(tool.inputSchema),
-      };
-      if (tool.outputSchema) {
-        definition.outputSchema = normalizeSchemaDialect(tool.outputSchema);
-      }
+      const definition = prefixToolDefinition(this.prefix, tool);
       prefixed.push({
-        prefixedName,
+        prefixedName: definition.name,
         originalName: tool.name,
         serverName: this.server.name,
         // Return the definition with the agent-visible name so the inbound
@@ -381,12 +350,9 @@ export class UpstreamClientPool {
    * than "tool not found".
    */
   findUnavailableUpstream(prefixedName: string): UpstreamStatus | undefined {
-    let match: UpstreamEntry | undefined;
-    for (const entry of this.entries) {
-      if (entry.state === "connected") continue;
-      if (!prefixedName.startsWith(`${entry.prefix}${TOOL_NAME_SEPARATOR}`)) continue;
-      if (!match || entry.prefix.length > match.prefix.length) match = entry;
-    }
+    const down = this.entries.filter((e) => e.state !== "connected");
+    const resolved = resolvePrefixedName(prefixedName, down.map((e) => e.prefix));
+    const match = resolved && down.find((e) => e.prefix === resolved.prefix);
     return match ? toStatus(match) : undefined;
   }
 
