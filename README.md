@@ -74,7 +74,7 @@ Two independent parts:
    omnodex install codex
    ```
 
-   Writes `.codex/hooks.json`. Hooks are enabled by default in Codex; no feature flag is needed. Trust the Omnodex hooks when Codex asks. Hooks record session lifecycle, shell commands, and `apply_patch` edits as tool calls.
+   Writes `.codex/hooks.json`. Hooks are enabled by default in Codex; no feature flag is needed. Trust the Omnodex hooks when Codex asks. Local hooks record session lifecycle and local Bash/unified-exec, `apply_patch`, MCP, and function calls. Successful `apply_patch` calls also produce `file.written` events for paths present in the patch.
 
 2. **The Omnodex MCP server**, once per host. `omnodex install codex` does not register it. In ChatGPT Desktop use **Settings > MCP servers > Add server** (STDIO), or from the CLI:
 
@@ -240,7 +240,7 @@ One pre-existing timing flake in the CLI streaming suite (`tailSession`) that on
 ## Known limitations
 
 - **npm release** - The published npm package (0.2.0) does not include the hook handlers or the MCP proxy entry point, so hooks installed from it record nothing and the Cowork and Codex plugins cannot start the proxy. Install from source.
-- **Codex hook coverage** - `apply_patch` edits are recorded as tool calls, not yet as `file.written` events. Hosted tools such as web search are not visible to local hooks.
+- **Codex hook outcomes** - Hosted tools such as web search are not visible to local hooks. Codex currently provides no failure hook. Some failed calls emit only `PreToolUse`, and nonzero Bash responses omit the exit code, so Omnodex records only statuses that the hook payload proves instead of inferring an error.
 - **Cowork built-in tools** - Cowork does not run plugin-contributed hooks ([#27398](https://github.com/anthropics/claude-code/issues/27398), [#40495](https://github.com/anthropics/claude-code/issues/40495)), so only MCP tool calls routed through the proxy are recorded.
 - **One host's hooks per project folder** - Hook commands contain the installing host's paths. Installing from native Windows and from WSL in the same project folder replaces the other host's hooks.
 - **MCP proxy upstreams** - The proxy needs at least one upstream, stops if any upstream fails to start, and supports `stdio` upstreams only.

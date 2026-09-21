@@ -17,23 +17,20 @@
  *   SessionEnd
  *   PreToolUse          (matcher "*")
  *   PostToolUse         (matcher "*")
- *   PostToolUseFailure  (matcher "*")
  *   UserPromptSubmit
  *   Stop
  *   SubagentStart
  *   SubagentStop
  *   PermissionRequest
+ *   PreCompact
+ *   PostCompact
+ *   Interrupt
  *
- * Note: Codex hooks are enabled by default in recent versions. Older
- * versions may require `hooks = true` in `~/.codex/config.toml` (or the project-local equivalent). The
- * interceptor cannot set this flag automatically because config.toml uses
- * TOML format and is outside our managed JSON scope.
+ * Note: Codex hooks are enabled by default. Users can disable them with the
+ * documented `features.hooks = false` setting.
  *
- * Note: Codex does not support `async: true` on hook handlers. All hooks
- * run synchronously. The shim is designed to be fast (<50ms typical).
- *
- * Note: PreToolUse only fires for Bash/shell tool calls. File edits,
- * MCP calls, and web search are not yet interceptable via hooks.
+ * Tool hooks cover local Bash/unified-exec, apply_patch, MCP and local
+ * function calls. Hosted tools do not pass through local hooks.
  */
 
 import { promises as fs } from "node:fs";
@@ -90,6 +87,7 @@ interface HookHandler {
   type: "command";
   command: string;
   timeout?: number;
+  async?: boolean;
   statusMessage?: string;
   [key: string]: unknown;
 }
@@ -101,12 +99,14 @@ const EVENT_NAMES = [
   "SessionEnd",
   "PreToolUse",
   "PostToolUse",
-  "PostToolUseFailure",
   "UserPromptSubmit",
   "Stop",
   "SubagentStart",
   "SubagentStop",
   "PermissionRequest",
+  "PreCompact",
+  "PostCompact",
+  "Interrupt",
 ] as const;
 
 export class CodexInterceptor implements Interceptor {
@@ -146,17 +146,19 @@ export class CodexInterceptor implements Interceptor {
     const next: HooksFile = { ...existing };
     next.hooks = { ...(existing.hooks ?? {}) };
 
+    // Clean every event, including names removed from current Codex. This
+    // makes a reinstall delete stale managed entries such as the historical
+    // PostToolUseFailure subscription while preserving third-party handlers.
+    for (const [eventName, groups] of Object.entries(next.hooks)) {
+      const filtered = cleanManagedHandlers(groups);
+      if (filtered.length > 0) next.hooks[eventName] = filtered;
+      else delete next.hooks[eventName];
+    }
+
     for (const eventName of EVENT_NAMES) {
       const groups = [...(next.hooks[eventName] ?? [])];
-      // Strip any prior Omnodex handlers to keep install idempotent.
-      const filtered = groups
-        .map((g) => ({
-          ...g,
-          hooks: (g.hooks ?? []).filter((h) => h[OMNODEX_TAG] !== true),
-        }))
-        .filter((g) => g.hooks.length > 0);
-      filtered.push(this.makeMatcherGroup());
-      next.hooks[eventName] = filtered;
+      groups.push(this.makeMatcherGroup());
+      next.hooks[eventName] = groups;
     }
 
     await this.writeHooks(hooksPath, next);
@@ -188,16 +190,15 @@ export class CodexInterceptor implements Interceptor {
   }
 
   private makeMatcherGroup(): HookMatcherGroup {
+    const handler: HookHandler = {
+      type: "command",
+      command: this.shimCommand(),
+      timeout: this.options.timeoutSeconds,
+      [OMNODEX_TAG]: true,
+    };
     return {
       matcher: "*",
-      hooks: [
-        {
-          type: "command",
-          command: this.shimCommand(),
-          timeout: this.options.timeoutSeconds,
-          [OMNODEX_TAG]: true,
-        },
-      ],
+      hooks: [handler],
     };
   }
 
@@ -242,6 +243,17 @@ export class CodexInterceptor implements Interceptor {
   private async writeHooks(hooksPath: string, hooks: HooksFile): Promise<void> {
     await fs.writeFile(hooksPath, JSON.stringify(hooks, null, 2) + "\n", "utf8");
   }
+}
+
+function cleanManagedHandlers(groups: HookMatcherGroup[]): HookMatcherGroup[] {
+  return (groups ?? [])
+    .map((group) => ({
+      ...group,
+      hooks: (group.hooks ?? []).filter(
+        (handler) => handler[OMNODEX_TAG] !== true,
+      ),
+    }))
+    .filter((group) => group.hooks.length > 0);
 }
 
 /**

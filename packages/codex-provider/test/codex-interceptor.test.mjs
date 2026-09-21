@@ -22,7 +22,7 @@ function makeInterceptor(projectPath) {
   });
 }
 
-test("install writes the four hook events", async (t) => {
+test("install writes every supported hook event", async (t) => {
   const projectPath = await fresh(t);
   const interceptor = makeInterceptor(projectPath);
   await interceptor.install();
@@ -30,7 +30,20 @@ test("install writes the four hook events", async (t) => {
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const hooks = JSON.parse(raw);
 
-  for (const eventName of ["SessionStart", "PreToolUse", "PostToolUse", "Stop"]) {
+  for (const eventName of [
+    "SessionStart",
+    "SessionEnd",
+    "PreToolUse",
+    "PostToolUse",
+    "UserPromptSubmit",
+    "Stop",
+    "SubagentStart",
+    "SubagentStop",
+    "PermissionRequest",
+    "PreCompact",
+    "PostCompact",
+    "Interrupt",
+  ]) {
     assert.ok(hooks.hooks[eventName], `expected ${eventName} group`);
     const [group] = hooks.hooks[eventName];
     assert.equal(group.matcher, "*");
@@ -42,7 +55,7 @@ test("install writes the four hook events", async (t) => {
   }
 });
 
-test("install does NOT write async:true (not in Codex spec)", async (t) => {
+test("install keeps hooks synchronous to preserve ordering and delivery", async (t) => {
   const projectPath = await fresh(t);
   await makeInterceptor(projectPath).install();
   const raw = await readFile(
@@ -50,8 +63,46 @@ test("install does NOT write async:true (not in Codex spec)", async (t) => {
     "utf8",
   );
   const hooks = JSON.parse(raw);
-  const handler = hooks.hooks.PreToolUse[0].hooks[0];
-  assert.equal(handler.async, undefined);
+  for (const groups of Object.values(hooks.hooks)) {
+    for (const group of groups) {
+      for (const handler of group.hooks) {
+        assert.equal(handler.async, undefined);
+      }
+    }
+  }
+});
+
+test("reinstall removes stale managed event names and preserves other hooks", async (t) => {
+  const projectPath = await fresh(t);
+  const codexDir = path.join(projectPath, ".codex");
+  await mkdir(codexDir, { recursive: true });
+  await writeFile(
+    path.join(codexDir, "hooks.json"),
+    JSON.stringify({
+      hooks: {
+        PostToolUseFailure: [
+          {
+            matcher: "*",
+            hooks: [
+              { type: "command", command: "old-omnodex", "omnodex-managed": true },
+              { type: "command", command: "team-handler" },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+
+  await makeInterceptor(projectPath).install();
+  const hooks = JSON.parse(
+    await readFile(path.join(codexDir, "hooks.json"), "utf8"),
+  );
+  assert.deepEqual(hooks.hooks.PostToolUseFailure, [
+    {
+      matcher: "*",
+      hooks: [{ type: "command", command: "team-handler" }],
+    },
+  ]);
 });
 
 test("install is idempotent", async (t) => {
@@ -164,7 +215,7 @@ test("hooksFilePath returns .codex/hooks.json inside projectPath", (t) => {
   });
   assert.equal(
     interceptor.hooksFilePath(),
-    "/home/case/myrepo/.codex/hooks.json",
+    path.join("/home/case/myrepo", ".codex", "hooks.json"),
   );
 });
 

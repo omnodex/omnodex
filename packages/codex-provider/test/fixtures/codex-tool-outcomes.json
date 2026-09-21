@@ -1,0 +1,159 @@
+{
+  "captured_at": "2026-09-21",
+  "client": "Codex Desktop on native Windows",
+  "notes": [
+    "Paths, session identifiers, turn identifiers, and tool-use identifiers are sanitized.",
+    "A PostToolUse payload was not observed for apply_patch validation failure, MCP isError, MCP transport failure, or local function failure.",
+    "A nonzero Bash command did produce PostToolUse, but its string response did not contain an exit code or another reliable machine-readable failure signal."
+  ],
+  "cases": [
+    {
+      "name": "bash_success",
+      "expected_outcome": "success",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "Bash",
+          "tool_input": { "command": "Write-Output fixture-ok" },
+          "tool_use_id": "tool-bash-success"
+        },
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_input": { "command": "Write-Output fixture-ok" },
+          "tool_response": "fixture-ok\r\n",
+          "tool_use_id": "tool-bash-success"
+        }
+      ]
+    },
+    {
+      "name": "bash_nonzero",
+      "expected_outcome": "failure_without_reliable_hook_signal",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "Bash",
+          "tool_input": { "command": "Write-Error fixture-failure; exit 7" },
+          "tool_use_id": "tool-bash-nonzero"
+        },
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PostToolUse",
+          "tool_name": "Bash",
+          "tool_input": { "command": "Write-Error fixture-failure; exit 7" },
+          "tool_response": "Write-Error: fixture-failure\r\n",
+          "tool_use_id": "tool-bash-nonzero"
+        }
+      ]
+    },
+    {
+      "name": "apply_patch_success",
+      "expected_outcome": "success",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "apply_patch",
+          "tool_input": { "command": "*** Begin Patch\n*** Add File: C:\\Users\\case\\repo\\fixture.txt\n+fixture content\n*** End Patch" },
+          "tool_use_id": "tool-patch-success"
+        },
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PostToolUse",
+          "tool_name": "apply_patch",
+          "tool_input": { "command": "*** Begin Patch\n*** Add File: C:\\Users\\case\\repo\\fixture.txt\n+fixture content\n*** End Patch" },
+          "tool_response": "Exit code: 0\nWall time: 0.1 seconds\nOutput:\nSuccess. Updated the following files:\nA C:\\Users\\case\\repo\\fixture.txt\n",
+          "tool_use_id": "tool-patch-success"
+        }
+      ]
+    },
+    {
+      "name": "apply_patch_failure",
+      "expected_outcome": "failure_without_post_hook",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "apply_patch",
+          "tool_input": { "command": "*** Begin Patch\n*** Update File: C:\\Users\\case\\repo\\fixture.txt\n@@\n-missing line\n+replacement\n*** End Patch" },
+          "tool_use_id": "tool-patch-failure"
+        }
+      ]
+    },
+    {
+      "name": "mcp_success",
+      "expected_outcome": "success",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "mcp__server_with_underscores__success",
+          "tool_input": { "marker": "fixture-mcp-success" },
+          "tool_use_id": "tool-mcp-success"
+        },
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PostToolUse",
+          "tool_name": "mcp__server_with_underscores__success",
+          "tool_input": { "marker": "fixture-mcp-success" },
+          "tool_response": { "content": [{ "type": "text", "text": "success:fixture-mcp-success" }] },
+          "tool_use_id": "tool-mcp-success"
+        }
+      ]
+    },
+    {
+      "name": "mcp_is_error",
+      "expected_outcome": "failure_without_post_hook",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "mcp__server_with_underscores__is_error",
+          "tool_input": { "marker": "fixture-mcp-is-error" },
+          "tool_use_id": "tool-mcp-is-error"
+        }
+      ]
+    },
+    {
+      "name": "mcp_transport_failure",
+      "expected_outcome": "failure_without_post_hook",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "mcp__server_with_underscores__transport_failure",
+          "tool_input": { "marker": "fixture-mcp-transport-failure" },
+          "tool_use_id": "tool-mcp-transport-failure"
+        }
+      ]
+    },
+    {
+      "name": "local_function_failure",
+      "expected_outcome": "failure_without_post_hook",
+      "payloads": [
+        {
+          "session_id": "session-fixture",
+          "cwd": "C:\\Users\\case\\repo",
+          "hook_event_name": "PreToolUse",
+          "tool_name": "view_image",
+          "tool_input": { "path": "C:\\Users\\case\\repo\\missing.png" },
+          "tool_use_id": "tool-local-failure"
+        }
+      ]
+    }
+  ]
+}
