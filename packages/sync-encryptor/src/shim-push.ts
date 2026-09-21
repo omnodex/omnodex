@@ -32,6 +32,7 @@ import type { TraceEvent } from "@omnodex/shared";
 import { deriveStreamingKey, computeKeyId } from "./crypto.js";
 import type { AesGcmKey } from "./crypto.js";
 import { encrypt } from "./crypto.js";
+import { readOrFetchLicense } from "./license-cache.js";
 
 const subtle = webcrypto.subtle;
 
@@ -43,15 +44,6 @@ interface StreamConfig {
   api_token: string;
   passphrase: string;
   api_url?: string;
-}
-
-interface LicenseCacheFile {
-  response: {
-    customer_id: string;
-    tier: string;
-    features: string[];
-  };
-  fetched_at: number;
 }
 
 interface KeyCache {
@@ -104,17 +96,6 @@ async function readStreamConfig(
     const parsed = JSON.parse(raw) as StreamConfig;
     if (!parsed.api_token || !parsed.passphrase) return null;
     return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function readLicenseCache(
-  omnodexHome: string,
-): Promise<LicenseCacheFile | null> {
-  try {
-    const raw = await readFile(join(omnodexHome, "license-cache.json"), "utf-8");
-    return JSON.parse(raw) as LicenseCacheFile;
   } catch {
     return null;
   }
@@ -212,11 +193,21 @@ export async function pushEventsToCloud(
     const config = await readStreamConfig(omnodexHome);
     if (!config) return false;
 
-    // 2. Read cached license for customer_id and feature check
-    const licenseCache = await readLicenseCache(omnodexHome);
-    if (!licenseCache?.response) return false;
+    const apiUrl = (config.api_url || "https://api.omnodex.com").replace(
+      /\/$/,
+      "",
+    );
 
-    const { customer_id, features } = licenseCache.response;
+    // 2. Read the cached license for customer_id and feature check,
+    //    fetching it once if this home has none yet
+    const license = await readOrFetchLicense(omnodexHome, {
+      apiToken: config.api_token,
+      apiUrl,
+      timeoutMs,
+    });
+    if (!license) return false;
+
+    const { customer_id, features } = license;
     if (!features.includes("live_streaming")) return false;
 
     // 3. Resolve streaming key (cached or freshly derived)
@@ -248,10 +239,6 @@ export async function pushEventsToCloud(
     }
 
     // 5. POST to cloud API (fire-and-forget with timeout)
-    const apiUrl = (config.api_url || "https://api.omnodex.com").replace(
-      /\/$/,
-      "",
-    );
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 

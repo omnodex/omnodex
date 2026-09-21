@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@omnodex/shared": "*",
+    "@omnodex/license-client": "*",
     "@omnodex/projection": "*",
     "@omnodex/event-log": "*",
     "hash-wasm": "^4.11.0"
