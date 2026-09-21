@@ -33,13 +33,13 @@
  *
  * Three things have to agree.
  *
- * **The tool name.** The proxy composes `<server>__<tool>`; the platform
- * composes `mcp__<server>__<whatever the proxy offered>`. So the proxy's
- * tool_name is a suffix of the hook's, after a `__`. This is deliberately not
- * a per-platform rule: it holds for any prefixing scheme, and assumes only
- * that the platform passes characters through rather than rewriting them.
- * That assumption is measured for Claude Code, and recorded in
- * `hooks-provider/test/fixtures/tool-name-mapping.json`.
+ * **The tool name.** The proxy composes `<server>__<tool>`. Claude Code keeps
+ * that offered name verbatim beneath its own MCP namespace. Codex instead
+ * sanitizes punctuation, hashes collisions and truncates long names, so its
+ * matcher reproduces that deterministic mapping. Exact matches outrank
+ * derived matches, and derived matches outrank conservative loose fallbacks.
+ * Ambiguous loose matches are left unpaired. The captured evidence for both
+ * platforms lives in `hooks-provider/test/fixtures/tool-name-mapping.json`.
  *
  * **The arguments.** The proxy forwards the agent's arguments unchanged, so
  * the two parameter objects are normally identical. They are not always
@@ -63,6 +63,12 @@
  * is the better one precisely because the hook cannot see it.
  */
 
+import { splitMcpToolName } from "@omnodex/shared";
+import {
+  matchCodexToolName,
+  sanitizeCodexToolNamePart,
+  type CodexNameMatch,
+} from "./codex-tool-name.js";
 import type { SessionRow, ToolCallRow } from "./read-model.js";
 
 /**
@@ -127,15 +133,23 @@ export function correlateToolCalls(
   }
   if (proxyRows.length === 0 || hookRows.length === 0) return [];
 
-  // Index the proxy side by tool name: the suffix test is the cheap filter,
-  // and a proxy tool_name is exactly the suffix a hook name would carry.
+  // Keep both the raw and Codex-normalized indexes. Claude Code passes proxy
+  // names through verbatim, while Codex sanitizes punctuation before putting
+  // a tool in the model-visible namespace.
   const byToolName = new Map<string, ToolCallRow[]>();
+  const bySanitizedToolName = new Map<string, ToolCallRow[]>();
   for (const row of proxyRows) {
-    const bucket = byToolName.get(row.tool_name);
-    if (bucket) bucket.push(row);
-    else byToolName.set(row.tool_name, [row]);
+    addToIndex(byToolName, row.tool_name, row);
+    addToIndex(
+      bySanitizedToolName,
+      sanitizeCodexToolNamePart(row.tool_name),
+      row,
+    );
   }
-  for (const bucket of byToolName.values()) {
+  for (const bucket of [
+    ...byToolName.values(),
+    ...bySanitizedToolName.values(),
+  ]) {
     bucket.sort((a, b) => a.started_at.localeCompare(b.started_at));
   }
 
@@ -147,15 +161,28 @@ export function correlateToolCalls(
   );
 
   for (const hook of orderedHooks) {
+    const hookInterceptor =
+      hook.interceptor ?? interceptorOf.get(hook.session_id) ?? "unknown";
     const suffix = upstreamSuffix(hook.tool_name);
     if (suffix === null) continue;
 
-    const candidates = byToolName.get(suffix);
-    if (!candidates) continue;
+    const candidates = candidatesForHook(
+      hook,
+      hookInterceptor,
+      suffix,
+      proxyRows,
+      byToolName,
+      bySanitizedToolName,
+    );
+    if (candidates.length === 0) continue;
 
     const hookStart = Date.parse(hook.started_at);
     if (Number.isNaN(hookStart)) continue;
 
+    const matches: Array<{
+      proxy: ToolCallRow;
+      tier: Exclude<CodexNameMatch, null>;
+    }> = [];
     for (const proxy of candidates) {
       if (claimed.has(proxy.tool_call_id)) continue;
 
@@ -167,16 +194,20 @@ export function correlateToolCalls(
       if (proxyStart - hookStart > windowMs) break; // sorted: later ones too
 
       if (!parametersMatch(hook.parameters_json, proxy.parameters_json)) continue;
-
-      claimed.add(proxy.tool_call_id);
-      out.push({
-        correlation_id: hook.tool_call_id,
-        hook_tool_call_id: hook.tool_call_id,
-        proxy_tool_call_id: proxy.tool_call_id,
-        upstream_mcp_server: proxy.mcp_server,
-      });
-      break;
+      const tier = nameMatch(hookInterceptor, hook.tool_name, proxy.tool_name);
+      if (tier) matches.push({ proxy, tier });
     }
+
+    const best = bestUnambiguousMatch(matches);
+    if (!best) continue;
+
+    claimed.add(best.tool_call_id);
+    out.push({
+      correlation_id: hook.tool_call_id,
+      hook_tool_call_id: hook.tool_call_id,
+      proxy_tool_call_id: best.tool_call_id,
+      upstream_mcp_server: best.mcp_server,
+    });
   }
 
   return out;
@@ -193,12 +224,76 @@ export function correlateToolCalls(
  * its upstream prefix.
  */
 export function upstreamSuffix(toolName: string): string | null {
-  if (!toolName.startsWith("mcp__")) return null;
-  const rest = toolName.slice("mcp__".length);
-  const sep = rest.indexOf("__");
-  if (sep <= 0) return null;
-  const suffix = rest.slice(sep + 2);
-  return suffix.length > 0 ? suffix : null;
+  return splitMcpToolName(toolName)?.upstreamToolName ?? null;
+}
+
+type MatchTier = Exclude<CodexNameMatch, null>;
+
+const MATCH_RANK: Readonly<Record<MatchTier, number>> = {
+  exact: 3,
+  derived: 2,
+  loose: 1,
+};
+
+function addToIndex(
+  index: Map<string, ToolCallRow[]>,
+  key: string,
+  row: ToolCallRow,
+): void {
+  const bucket = index.get(key);
+  if (bucket) bucket.push(row);
+  else index.set(key, [row]);
+}
+
+function candidatesForHook(
+  hook: ToolCallRow,
+  interceptor: string,
+  suffix: string,
+  proxyRows: ToolCallRow[],
+  byToolName: Map<string, ToolCallRow[]>,
+  bySanitizedToolName: Map<string, ToolCallRow[]>,
+): ToolCallRow[] {
+  if (interceptor !== "codex-hook") {
+    return byToolName.get(suffix) ?? [];
+  }
+
+  const withoutHash = suffix.replace(/_[0-9a-f]{12}$/, "");
+  const exactBucket = bySanitizedToolName.get(withoutHash);
+  if (exactBucket) return exactBucket;
+
+  // Codex truncates only when the complete model-visible name reaches its
+  // 128-character ceiling. In that rare case the hook carries only a prefix
+  // of the sanitized proxy name, so a bounded fallback scan is necessary.
+  if (hook.tool_name.length === 128) {
+    return proxyRows
+      .filter((row) =>
+        sanitizeCodexToolNamePart(row.tool_name).startsWith(withoutHash),
+      )
+      .sort((a, b) => a.started_at.localeCompare(b.started_at));
+  }
+
+  return [];
+}
+
+function nameMatch(
+  interceptor: string,
+  hookToolName: string,
+  proxyToolName: string,
+): MatchTier | null {
+  if (interceptor === "codex-hook") {
+    return matchCodexToolName(hookToolName, proxyToolName);
+  }
+  return upstreamSuffix(hookToolName) === proxyToolName ? "exact" : null;
+}
+
+function bestUnambiguousMatch(
+  matches: Array<{ proxy: ToolCallRow; tier: MatchTier }>,
+): ToolCallRow | null {
+  if (matches.length === 0) return null;
+  const bestRank = Math.max(...matches.map(({ tier }) => MATCH_RANK[tier]));
+  const best = matches.filter(({ tier }) => MATCH_RANK[tier] === bestRank);
+  if (new Set(best.map(({ proxy }) => proxy.tool_name)).size > 1) return null;
+  return best[0]?.proxy ?? null;
 }
 
 const REDACTED_SENTINEL = "[REDACTED]";
