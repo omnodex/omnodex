@@ -222,6 +222,17 @@ export interface RiskDetectedEvent extends BaseEvent {
   related_event_id: string;
   /** Rule id that fired. */
   rule_id: string;
+  /**
+   * Tier of the rule that fired. Absent on findings recorded before it was
+   * added; readers treat absence as "community".
+   */
+  rule_tier?: "community" | "advanced";
+  /**
+   * For rules that match a sequence of events: every tool_call_id in the
+   * pattern, earliest first, ending with `related_event_id`. Absent for
+   * single-event findings.
+   */
+  related_event_ids?: string[];
 }
 
 

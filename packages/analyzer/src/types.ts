@@ -101,7 +101,8 @@ export type Condition =
   | SessionFirstSeenCondition
   | RateThresholdCondition
   | DomainMatchCondition
-  | CwdBoundaryCondition;
+  | CwdBoundaryCondition
+  | SequenceCondition;
 
 /**
  * Matches when at least one file path extracted from the event matches at
@@ -314,6 +315,30 @@ export interface CwdBoundaryCondition {
   type: "cwd_boundary";
 }
 
+/**
+ * Stateful condition for patterns that exist only across events: it
+ * matches when an earlier tool.invoked event in the same session satisfied
+ * every condition in `prior`. The rule's other conditions apply to the
+ * current event, so the rule reads as "this event, after that one" (for
+ * example, an outbound call after a credential file was read).
+ *
+ * The engine keeps a bounded window of each session's recent events for
+ * this. `prior` conditions must be stateless. The finding cites the earlier
+ * event as well as the current one (RiskDetectedEvent.related_event_ids).
+ *
+ * Yields a single MatchContext naming the most recent qualifying earlier
+ * event, or nothing.
+ */
+export interface SequenceCondition {
+  type: "sequence";
+  /** Conditions an earlier event must all satisfy. Stateless types only. */
+  prior: Condition[];
+  /** Look back at most this many earlier events (capped by the engine's window). */
+  within_events?: number;
+  /** Look back at most this many seconds before the current event. */
+  within_seconds?: number;
+}
+
 // ---------------------------------------------------------------------------
 // Engine-internal types
 // ---------------------------------------------------------------------------
@@ -344,6 +369,8 @@ export interface MatchContext {
   rate_window?: number;
   /** Populated by domain_match conditions: the matched hostname. */
   matched_domain?: string;
+  /** Populated by sequence conditions: tool_call_ids of the earlier events. */
+  related_event_ids?: string[];
 }
 
 /** A single detection result produced by the rule engine. */
@@ -353,6 +380,10 @@ export interface RiskFinding {
   /** Rendered description string (template variables already substituted). */
   description: string;
   rule_id: string;
+  /** Tier of the rule that fired. */
+  tier: "community" | "advanced";
+  /** Earlier events a sequence rule matched, in addition to the current one. */
+  related_event_ids?: string[];
 }
 
 /** Return value of detectRisks(). */

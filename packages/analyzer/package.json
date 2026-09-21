@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./evaluator": {
+      "import": "./dist/evaluator.js",
+      "types": "./dist/evaluator.d.ts"
     }
   },
   "scripts": {

@@ -18,6 +18,7 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { CredentialMatchCondition, MatchContext } from "../types.js";
+import { compiled } from "./regex-cache.js";
 
 /**
  * Scan a string for credential patterns and return the unique set of
@@ -35,7 +36,7 @@ export function findCredentialTypes(
   const types = new Set<string>();
 
   for (const { regex, type, group } of patterns) {
-    const re = new RegExp(regex, "gi");
+    const re = compiled(regex, "gi");
     let m;
     while ((m = re.exec(text)) !== null) {
       const value = group !== undefined ? (m[group] ?? "") : m[0];

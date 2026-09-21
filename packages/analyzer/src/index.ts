@@ -7,8 +7,10 @@
 /**
  * @omnodex/analyzer -- public API.
  *
- * Primary entry point:
- *   detectRisks(events, newEventId)  -- batch risk detection for a session
+ * Primary entry points:
+ *   createEvaluator({ host, newEventId }) -- judge events one at a time
+ *   detectRisks(events, newEventId)       -- batch risk detection for a session
+ *   detectEventLogs({ roots })            -- detection over event logs on disk
  *
  * For custom use (e.g. streaming detection or custom integrations):
  *   RuleEngine       -- evaluate rules against individual events
@@ -35,7 +37,23 @@ export type {
   SessionDetectReport,
 } from "./detect-log.js";
 
-// Engine and registry (used by the streaming detect loop and custom integrations)
+// The evaluator: the one place risk.detected events are made. Hot paths
+// import it from "@omnodex/analyzer/evaluator" instead of this index.
+export {
+  createEvaluator,
+  classifyRule,
+  loadRegistry,
+  HOST_CLASSES,
+} from "./evaluator.js";
+export type {
+  Evaluator,
+  EvaluatorHost,
+  EvaluatorOptions,
+  EvaluatorStats,
+  EvaluationClass,
+} from "./evaluator.js";
+
+// Engine and registry (custom integrations)
 export { RuleEngine } from "./engine.js";
 export { RuleRegistry } from "./registry.js";
 
@@ -51,6 +69,7 @@ export type {
   CredentialMatchCondition,
   CredentialPattern,
   OutboundCallCondition,
+  SequenceCondition,
   MatchContext,
   RiskFinding,
   DetectionResult,

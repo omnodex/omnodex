@@ -105,6 +105,8 @@ Every new package and feature must include unit tests using `node:test` (`.mjs` 
 
 The rule engine (`packages/analyzer`) evaluates declarative `RuleDefinition` objects against event logs. Rules are invoked by `omnodex detect`, by `omnodex dashboard`, and by the background pass that hook shims and the MCP proxy start (detection runs first, then the sync if the host is connected). `detectEventLogs()` in `packages/analyzer/src/detect-log.ts` is the shared entry point; the background pass keeps a per-session watermark in `detect-state.json` so it only reads sessions that grew.
 
+Every host builds findings through one evaluator, `createEvaluator()` in `packages/analyzer/src/evaluator.ts` (hot paths import it as `@omnodex/analyzer/evaluator`). It classifies each rule by the state it needs: `event` rules judge one call, `session` rules need earlier events of the session (first-seen, rate and `sequence` conditions). A host runs the classes it can afford: `hook` runs event rules only, `proxy` and `batch` run everything. Deduplication is on rule plus `tool_call_id` and is seeded from every `risk.detected` the evaluator sees, so hosts sharing a log never repeat each other. A `sequence` condition matches when an earlier event in the session satisfied its `prior` conditions; such findings list every event in the pattern in `related_event_ids`. `node scripts/time-evaluator.mjs` measures what the evaluator costs a fresh hook process.
+
 **Community rules (19 rules across 8 categories):**
 
 Credential detection:

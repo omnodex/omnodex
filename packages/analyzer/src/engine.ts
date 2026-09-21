@@ -24,10 +24,11 @@
  *
  * Session state:
  *   The engine maintains per-session seen-sets for session_first_seen
- *   conditions, keyed by "<session_id>:<track>". A single engine instance
- *   can safely be shared across multiple concurrent sessions. Seen-sets
- *   accumulate for the engine's lifetime; for very long-running processes
- *   with thousands of sessions, prefer one engine per session.
+ *   conditions, keyed by "<session_id>:<track>", rate state for
+ *   rate_threshold, and, when any rule uses a sequence condition, a bounded
+ *   window of each session's recent tool.invoked events. A single engine
+ *   instance can safely be shared across multiple concurrent sessions.
+ *   Long-running hosts call endSession() when a session ends to release it.
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
@@ -47,6 +48,7 @@ import {
   evaluateRateThreshold,
   evaluateDomainMatch,
   evaluateCwdBoundary,
+  evaluateSequence,
 } from "./conditions/index.js";
 import {
   type RateThresholdState,
@@ -57,10 +59,30 @@ import {
 // Condition dispatch
 // ---------------------------------------------------------------------------
 
+/** Default number of recent events kept per session for sequence rules. */
+export const DEFAULT_SEQUENCE_WINDOW = 50;
+
+/** Conditions that keep state across events. */
+export const STATEFUL_CONDITION_TYPES: ReadonlySet<Condition["type"]> = new Set([
+  "session_first_seen",
+  "rate_threshold",
+  "sequence",
+]);
+
+/** A stateless condition against one event; used for sequence priors. */
+function evaluateStateless(
+  condition: Condition,
+  event: ToolInvokedEvent,
+): Partial<MatchContext>[] {
+  if (STATEFUL_CONDITION_TYPES.has(condition.type)) return [];
+  return evaluateCondition(condition, event, new Map(), []);
+}
+
 function evaluateCondition(
   condition: Condition,
   event: ToolInvokedEvent,
   sessionState: Map<string, Set<string>>,
+  window: readonly ToolInvokedEvent[],
 ): Partial<MatchContext>[] {
   switch (condition.type) {
     case "path_match":
@@ -85,6 +107,8 @@ function evaluateCondition(
       return evaluateDomainMatch(condition, event);
     case "cwd_boundary":
       return evaluateCwdBoundary(condition, event);
+    case "sequence":
+      return evaluateSequence(condition, event, window, evaluateStateless);
     case "rate_threshold":
       // Handled specially in the rule loop (needs rule_id for state key).
       // This case should not be reached; it exists for exhaustive switch.
@@ -139,7 +163,29 @@ export class RuleEngine {
    */
   private readonly rateState = new Map<string, RateThresholdState>();
 
-  constructor(private readonly rules: RuleDefinition[]) {}
+  /** Recent tool.invoked events per session, for sequence conditions. */
+  private readonly windows = new Map<string, ToolInvokedEvent[]>();
+  private readonly windowSize: number;
+
+  constructor(
+    private readonly rules: RuleDefinition[],
+    opts: { windowSize?: number } = {},
+  ) {
+    const usesSequence = rules.some((r) => r.conditions.some((c) => c.type === "sequence"));
+    this.windowSize = usesSequence ? (opts.windowSize ?? DEFAULT_SEQUENCE_WINDOW) : 0;
+  }
+
+  /** Release everything held for a session. */
+  endSession(sessionId: string): void {
+    this.windows.delete(sessionId);
+    const prefix = `${sessionId}:`;
+    for (const key of this.sessionState.keys()) {
+      if (key.startsWith(prefix)) this.sessionState.delete(key);
+    }
+    for (const key of this.rateState.keys()) {
+      if (key.startsWith(prefix)) this.rateState.delete(key);
+    }
+  }
 
   /**
    * Evaluate all rules against a single tool.invoked event.
@@ -147,6 +193,7 @@ export class RuleEngine {
    */
   evaluate(event: ToolInvokedEvent): RiskFinding[] {
     const findings: RiskFinding[] = [];
+    const window = this.windows.get(event.session_id) ?? [];
 
     for (const rule of this.rules) {
       // Skip rules not applicable to this event type.
@@ -175,7 +222,7 @@ export class RuleEngine {
             this.rateState.get(rateKey)!,
           );
         } else {
-          partials = evaluateCondition(condition, event, this.sessionState);
+          partials = evaluateCondition(condition, event, this.sessionState, window);
         }
         if (partials.length === 0) {
           allMatched = false;
@@ -196,13 +243,23 @@ export class RuleEngine {
       // Emit one finding per accumulated context.
       for (const partial of accumulated) {
         const ctx: MatchContext = { ...baseCtx, ...partial };
-        findings.push({
+        const finding: RiskFinding = {
           severity: rule.severity,
           category: rule.category,
           description: renderTemplate(rule.description_template, ctx),
           rule_id: rule.rule_id,
-        });
+          tier: rule.tier,
+        };
+        if (ctx.related_event_ids?.length) finding.related_event_ids = ctx.related_event_ids;
+        findings.push(finding);
       }
+    }
+
+    // Only after every rule has run: an event is never its own prior step.
+    if (this.windowSize > 0) {
+      window.push(event);
+      if (window.length > this.windowSize) window.shift();
+      this.windows.set(event.session_id, window);
     }
 
     return findings;

@@ -14,6 +14,7 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext, PathMatchCondition } from "../types.js";
+import { compiled } from "./regex-cache.js";
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -86,7 +87,7 @@ export function evaluatePathMatch(
 
   for (const p of paths) {
     for (const { regex, label } of condition.patterns) {
-      if (new RegExp(regex).test(p)) {
+      if (compiled(regex).test(p)) {
         matched.push({ matched_path: p, matched_label: label });
         break; // One finding per path -- first matching pattern wins.
       }

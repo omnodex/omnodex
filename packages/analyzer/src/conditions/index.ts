@@ -15,3 +15,4 @@ export { evaluateRateThreshold, createRateThresholdState, type RateThresholdStat
 export { evaluateDomainMatch, extractDomains } from "./domain-match.js";
 
 export { evaluateCwdBoundary } from "./cwd-boundary.js";
+export { evaluateSequence, type StatelessConditionFn } from "./sequence.js";

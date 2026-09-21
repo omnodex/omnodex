@@ -17,10 +17,9 @@
  * detect loop in @omnodex/cli/src/streaming.ts.
  */
 
-import type { RiskDetectedEvent, TraceEvent } from "@omnodex/shared";
-import { SCHEMA_VERSION } from "@omnodex/shared";
+import type { TraceEvent } from "@omnodex/shared";
 import type { DetectionResult } from "./types.js";
-import { RuleEngine } from "./engine.js";
+import { createEvaluator } from "./evaluator.js";
 import { RuleRegistry } from "./registry.js";
 
 /**
@@ -38,52 +37,18 @@ export function detectRisks(
   registry: RuleRegistry = new RuleRegistry(),
 ): DetectionResult {
   const sessionId = events[0]?.session_id ?? "unknown";
+  const evaluator = createEvaluator({ host: "batch", registry, newEventId });
 
-  // Build a set of (rule_id, related_event_id) pairs that already exist in
-  // the log so we can skip re-emitting them.
-  const existing = new Set<string>();
+  // Findings already in the log come after the calls they describe, so they
+  // are all seeded before any call is judged.
   for (const e of events) {
-    if (e.event_type === "risk.detected") {
-      existing.add(`${e.rule_id}::${e.related_event_id}`);
-    }
+    if (e.event_type === "risk.detected") evaluator.evaluate(e);
   }
 
-  const engine = new RuleEngine(registry.getRules());
-  const newEvents: RiskDetectedEvent[] = [];
-  let skipped = 0;
-
-  for (const event of events) {
-    if (event.event_type !== "tool.invoked") continue;
-
-    const findings = engine.evaluate(event);
-
-    for (const finding of findings) {
-      const dedupKey = `${finding.rule_id}::${event.tool_call_id}`;
-
-      if (existing.has(dedupKey)) {
-        skipped++;
-        continue;
-      }
-      // Mark as seen so intra-run duplicates are also suppressed.
-      existing.add(dedupKey);
-
-      const now = new Date().toISOString();
-      newEvents.push({
-        schema_version: SCHEMA_VERSION,
-        event_id: newEventId(),
-        session_id: event.session_id,
-        occurred_at: now,
-        recorded_at: now,
-        interceptor: "analyzer",
-        event_type: "risk.detected",
-        severity: finding.severity,
-        category: finding.category,
-        description: finding.description,
-        related_event_id: event.tool_call_id,
-        rule_id: finding.rule_id,
-      });
-    }
+  const newEvents = [];
+  for (const e of events) {
+    if (e.event_type === "tool.invoked") newEvents.push(...evaluator.evaluate(e));
   }
 
-  return { sessionId, newEvents, skipped };
+  return { sessionId, newEvents, skipped: evaluator.stats().skipped };
 }
