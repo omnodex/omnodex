@@ -141,6 +141,30 @@ async function hkdfDerive(
 }
 
 /**
+ * 32 bytes of stream key material for one purpose, named by `info`.
+ *
+ *   1. Argon2id(passphrase, fixed_salt) → master key material (slow)
+ *   2. HKDF-SHA256(master, SHA256(customerId), info) → subkey (fast)
+ *
+ * Distinct `info` labels give independent keys from the same passphrase.
+ */
+export async function deriveStreamSubkeyBytes(
+  passphrase: string,
+  customerId: string,
+  info: Uint8Array,
+): Promise<Uint8Array> {
+  const masterBytes = await argon2id({
+    password: passphrase,
+    salt: STREAMING_FIXED_SALT,
+    ...KDF_PARAMS,
+  });
+  const customerSalt = new Uint8Array(
+    await subtle.digest("SHA-256", new TextEncoder().encode(customerId)),
+  );
+  return hkdfDerive(masterBytes as Uint8Array, customerSalt, info, 32);
+}
+
+/**
  * Derive a 256-bit AES-GCM streaming key from passphrase + customer ID.
  *
  * Two-stage derivation avoids running expensive Argon2id per event:
@@ -153,23 +177,7 @@ export async function deriveStreamingKey(
   passphrase: string,
   customerId: string,
 ): Promise<AesGcmKey> {
-  // Stage 1: Argon2id with fixed salt → raw key material
-  const masterBytes = await argon2id({
-    password: passphrase,
-    salt: STREAMING_FIXED_SALT,
-    ...KDF_PARAMS,
-  });
-
-  // Stage 2: HKDF-SHA256 with customer-specific salt
-  const customerSalt = new Uint8Array(
-    await subtle.digest("SHA-256", new TextEncoder().encode(customerId)),
-  );
-  const streamKeyBytes = await hkdfDerive(
-    masterBytes as Uint8Array,
-    customerSalt,
-    STREAMING_INFO,
-    32,
-  );
+  const streamKeyBytes = await deriveStreamSubkeyBytes(passphrase, customerId, STREAMING_INFO);
 
   return subtle.importKey(
     "raw",

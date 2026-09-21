@@ -22,10 +22,11 @@
     "test": "node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@omnodex/shared": "*",
+    "@hpke/core": "^1.9.0",
+    "@omnodex/event-log": "*",
     "@omnodex/license-client": "*",
     "@omnodex/projection": "*",
-    "@omnodex/event-log": "*",
+    "@omnodex/shared": "*",
     "hash-wasm": "^4.11.0"
   }
 }
