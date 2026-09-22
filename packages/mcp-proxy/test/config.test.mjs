@@ -13,6 +13,8 @@ import {
   shouldRedactParams,
   toolNamePrefix,
   loadProxyConfig,
+  resolveHttpHeaders,
+  redactSecrets,
 } from "../dist/config.js";
 
 // ---------------------------------------------------------------------------
@@ -71,6 +73,69 @@ test("accepts an http upstream", () => {
   });
   assert.ok(result.success, result.error?.message);
   assert.equal(result.data.upstream_servers[0].transport, "http");
+});
+
+test("accepts Codex-style credential keys on an http upstream", () => {
+  const result = ProxyConfigSchema.safeParse({
+    version: 1,
+    upstream_servers: [
+      {
+        name: "plane",
+        transport: "http",
+        url: "https://mcp.example.com/mcp",
+        bearer_token_env_var: "PLANE_API_KEY",
+        http_headers: { "x-workspace-slug": "case" },
+        env_http_headers: { "x-api-key": "SOME_ENV_VAR" },
+        tool_timeout_sec: 30,
+      },
+    ],
+  });
+  assert.ok(result.success, result.error?.message);
+});
+
+test("rejects bad http upstream fields", () => {
+  const base = { name: "r", transport: "http", url: "https://example.com/mcp" };
+  const bad = [
+    { ...base, url: "ftp://example.com/mcp" },
+    { ...base, bearer_token_env_var: "not a var" },
+    { ...base, http_headers: { "bad header": "x" } },
+    { ...base, env_http_headers: { "x-key": "$VAR" } },
+    { ...base, tool_timeout_sec: 0 },
+  ];
+  for (const server of bad) {
+    const result = ProxyConfigSchema.safeParse({ version: 1, upstream_servers: [server] });
+    assert.equal(result.success, false, JSON.stringify(server));
+  }
+});
+
+test("resolveHttpHeaders: static, env and bearer headers, with bearer precedence", () => {
+  const server = {
+    name: "r",
+    transport: "http",
+    url: "https://example.com/mcp",
+    bearer_token_env_var: "TOKEN_VAR",
+    http_headers: { "X-Static": "s", authorization: "Basic static" },
+    env_http_headers: { "X-From-Env": "HEADER_VAR", "X-Unset": "UNSET_VAR", AUTHORIZATION: "HEADER_VAR" },
+  };
+  const { headers, secrets } = resolveHttpHeaders(server, { TOKEN_VAR: "tok123", HEADER_VAR: "hdr456" });
+  assert.deepEqual(headers, { "X-Static": "s", Authorization: "Bearer tok123", "X-From-Env": "hdr456" });
+  assert.deepEqual(secrets.sort(), ["hdr456", "hdr456", "tok123"].sort());
+});
+
+test("resolveHttpHeaders: an unset bearer variable throws and names only the variable", () => {
+  const server = { name: "r", transport: "http", url: "https://example.com/mcp", bearer_token_env_var: "TOKEN_VAR" };
+  assert.throws(() => resolveHttpHeaders(server, {}), /TOKEN_VAR \(bearer_token_env_var\) is not set/);
+  assert.throws(() => resolveHttpHeaders(server, { TOKEN_VAR: "" }), /is not set/);
+});
+
+test("redactSecrets removes credential values and the url query string", () => {
+  const msg = "failed https://h/mcp?key=abc123 with Bearer tok123 and tok123";
+  assert.equal(
+    redactSecrets(msg, ["tok123"], "https://h/mcp?key=abc123"),
+    "failed https://h/mcp?[REDACTED] with Bearer [REDACTED] and [REDACTED]"
+  );
+  // Very short values are left alone rather than shredding ordinary text.
+  assert.equal(redactSecrets("a b c", ["a"]), "a b c");
 });
 
 test("missing upstream_servers defaults to an empty list", () => {

@@ -16,21 +16,14 @@
  * @omnodex/shared. No buffering, no retry logic.
  */
 
-import { randomUUID } from "node:crypto";
-import {
-  SCHEMA_VERSION,
-  type EmitFn,
-  type ToolInvokedEvent,
-  type ToolCompletedEvent,
-} from "@omnodex/shared";
+import { type EmitFn } from "@omnodex/shared";
 import {
   type UpstreamClientPool,
   type UpstreamCallResult,
   McpToolNotFoundError,
 } from "./upstream-client.js";
 import { type ProxyConfig, shouldRedactParams } from "./config.js";
-
-const REDACTED_SENTINEL = "[REDACTED]";
+import { buildToolCompletedEvent, buildToolInvokedEvent } from "./core/events.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -45,6 +38,8 @@ export interface CallToolOptions {
   toolCallId: string;
   /** Session the call belongs to */
   sessionId: string;
+  /** Aborts the upstream call when the agent cancels its request. */
+  signal?: AbortSignal;
 }
 
 export interface CallToolOutcome {
@@ -71,7 +66,7 @@ export async function callToolWithEvents(
   emit: EmitFn,
   opts: CallToolOptions
 ): Promise<CallToolOutcome> {
-  const { prefixedName, args, toolCallId, sessionId } = opts;
+  const { prefixedName, args, toolCallId, sessionId, signal } = opts;
 
   const serverName = pool.getServerName(prefixedName);
   // Resolve before emitting -- if the tool doesn't exist we bail early.
@@ -90,19 +85,15 @@ export async function callToolWithEvents(
   const invokedAt = now();
 
   // Emit tool.invoked (fire-and-forget, non-blocking).
-  const invokedEvent: ToolInvokedEvent = {
-    schema_version: SCHEMA_VERSION,
-    event_id: randomUUID(),
-    session_id: sessionId,
-    occurred_at: invokedAt,
-    recorded_at: invokedAt,
-    interceptor: "mcp-proxy",
-    event_type: "tool.invoked",
-    tool_call_id: toolCallId,
-    tool_name: prefixedName,
-    mcp_server: serverName,
-    parameters: redact ? redactParameters(args) : args,
-  };
+  const invokedEvent = buildToolInvokedEvent({
+    sessionId,
+    toolCallId,
+    at: invokedAt,
+    toolName: prefixedName,
+    mcpServer: serverName,
+    args,
+    redact,
+  });
   void emit(invokedEvent);
 
   // Call upstream and measure duration.
@@ -112,7 +103,7 @@ export async function callToolWithEvents(
   let errorMessage: string | undefined;
 
   try {
-    result = await pool.callTool(prefixedName, args);
+    result = await pool.callTool(prefixedName, args, signal ? { signal } : undefined);
     if (result.isError) {
       status = "error";
       errorMessage = extractErrorMessage(result.content);
@@ -137,20 +128,15 @@ export async function callToolWithEvents(
     "utf8"
   );
 
-  const completedEvent: ToolCompletedEvent = {
-    schema_version: SCHEMA_VERSION,
-    event_id: randomUUID(),
-    session_id: sessionId,
-    occurred_at: completedAt,
-    recorded_at: completedAt,
-    interceptor: "mcp-proxy",
-    event_type: "tool.completed",
-    tool_call_id: toolCallId,
-    duration_ms: durationMs,
+  const completedEvent = buildToolCompletedEvent({
+    sessionId,
+    toolCallId,
+    at: completedAt,
+    durationMs,
     status,
-    response_bytes: responseBytes,
-    ...(errorMessage !== undefined ? { error_message: errorMessage } : {}),
-  };
+    responseBytes,
+    ...(errorMessage !== undefined ? { errorMessage } : {}),
+  });
   void emit(completedEvent);
 
   return { result, durationMs };
@@ -159,21 +145,6 @@ export async function callToolWithEvents(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Replaces every value in the args object with the redaction sentinel.
- * Keys are preserved so rule matchers can still see which parameters were
- * passed, even if their content is hidden.
- */
-function redactParameters(
-  args: Record<string, unknown>
-): Record<string, unknown> {
-  const redacted: Record<string, unknown> = {};
-  for (const key of Object.keys(args)) {
-    redacted[key] = REDACTED_SENTINEL;
-  }
-  return redacted;
-}
 
 /**
  * Tries to extract a human-readable error string from an MCP error content

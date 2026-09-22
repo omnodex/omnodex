@@ -56,15 +56,49 @@ const StdioUpstreamSchema = z.object({
    * Set to true for upstream servers that handle highly sensitive data.
    */
   redact_parameters: z.boolean().optional(),
+  /** Per-call limit for this upstream's tools, in seconds. Default 60. */
+  tool_timeout_sec: z.number().positive().optional(),
 });
 
+/** Header names are case-insensitive tokens; values come from config or env. */
+const HeaderNameSchema = z.string().regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/, "invalid header name");
+/** Environment variable names, as used by bearer_token_env_var and env_http_headers. */
+const EnvVarNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "invalid environment variable name");
+
+/**
+ * A remote MCP server reached over Streamable HTTP. Key names match Codex's
+ * config.toml, so entries can move between the two.
+ *
+ * Credentials come from environment variables only (bearer_token_env_var,
+ * env_http_headers). http_headers is for non-secret values; the proxy never
+ * writes any header value to the event log, stderr or omnodex_status.
+ */
 const HttpUpstreamSchema = z.object({
   name: z.string().min(1),
   transport: z.literal("http"),
-  /** Full URL of the HTTP+SSE MCP server. */
-  url: z.string().url(),
+  /** Full URL of the Streamable HTTP MCP endpoint. */
+  url: z
+    .string()
+    .url()
+    .refine((u) => /^https?:$/.test(new URL(u).protocol), "url must be http or https"),
+  /**
+   * Environment variable holding a bearer token, sent as
+   * "Authorization: Bearer <token>". Overrides any Authorization header set
+   * through http_headers or env_http_headers.
+   */
+  bearer_token_env_var: EnvVarNameSchema.optional(),
+  /** Static headers sent with every request. Do not put secrets here. */
+  http_headers: z.record(HeaderNameSchema, z.string()).optional(),
+  /**
+   * Headers whose values are read from environment variables, as
+   * { "Header-Name": "ENV_VAR_NAME" }. A header whose variable is unset is
+   * not sent.
+   */
+  env_http_headers: z.record(HeaderNameSchema, EnvVarNameSchema).optional(),
   name_override: z.string().optional(),
   redact_parameters: z.boolean().optional(),
+  /** Per-call limit for this upstream's tools, in seconds. Default 60. */
+  tool_timeout_sec: z.number().positive().optional(),
 });
 
 const UpstreamServerSchema = z.discriminatedUnion("transport", [
@@ -166,6 +200,68 @@ export function resolveUpstreamEnv(
   return resolved;
 }
 
+/** Request headers for an HTTP upstream, and the values to keep out of logs. */
+export interface ResolvedHttpHeaders {
+  headers: Record<string, string>;
+  /** Every header value that came from the environment. */
+  secrets: string[];
+}
+
+/**
+ * Builds the request headers for an HTTP upstream: http_headers, then
+ * env_http_headers (skipping unset variables), then the bearer token, which
+ * replaces any Authorization header from the other two. Header names are
+ * matched case-insensitively.
+ *
+ * Throws when bearer_token_env_var names an unset variable, because sending
+ * the request without its credential would fail less clearly. The message
+ * names the variable, never a value.
+ */
+export function resolveHttpHeaders(
+  server: HttpUpstream,
+  env: NodeJS.ProcessEnv = process.env
+): ResolvedHttpHeaders {
+  const headers = new Map<string, [string, string]>(); // lower-case name -> [name, value]
+  const secrets: string[] = [];
+  const set = (name: string, value: string) => headers.set(name.toLowerCase(), [name, value]);
+
+  for (const [name, value] of Object.entries(server.http_headers ?? {})) set(name, value);
+  for (const [name, varName] of Object.entries(server.env_http_headers ?? {})) {
+    const value = env[varName];
+    if (value === undefined || value === "") continue;
+    set(name, value);
+    secrets.push(value);
+  }
+  if (server.bearer_token_env_var) {
+    const token = env[server.bearer_token_env_var];
+    if (token === undefined || token === "") {
+      throw new Error(
+        `environment variable ${server.bearer_token_env_var} (bearer_token_env_var) is not set`
+      );
+    }
+    set("Authorization", `Bearer ${token}`);
+    secrets.push(token);
+  }
+  return { headers: Object.fromEntries([...headers.values()]), secrets };
+}
+
+/**
+ * Replaces credential values in a message with [REDACTED], and drops the
+ * query string from the upstream URL wherever it appears. Error text from an
+ * HTTP client or server can echo either.
+ */
+export function redactSecrets(message: string, secrets: string[], url?: string): string {
+  let out = message;
+  for (const secret of secrets) {
+    if (secret.length >= 4) out = out.split(secret).join("[REDACTED]");
+  }
+  if (url) {
+    const parsed = new URL(url);
+    if (parsed.search) out = out.split(parsed.search).join("?[REDACTED]");
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -181,15 +277,8 @@ export function shouldRedactParams(
   return server.redact_parameters ?? config.redact_parameters;
 }
 
-/**
- * Joins the upstream prefix and the upstream tool name in the name the agent
- * sees. Clients restrict tool names to letters, digits, "_" and "-" (the
- * Claude API enforces ^[a-zA-Z0-9_-]{1,64}$), so the separator must stay
- * inside that set. A "/" separator gets rewritten by some clients, which
- * breaks per-tool approval because the approved name no longer matches the
- * called name.
- */
-export const TOOL_NAME_SEPARATOR = "__";
+/** Separator between an upstream prefix and its tool names (see core/tool-routing). */
+export { TOOL_NAME_SEPARATOR } from "./core/tool-routing.js";
 
 /**
  * Returns the tool name prefix for an upstream server.

@@ -157,6 +157,18 @@ export interface SessionStartedEvent extends BaseEvent {
   user: string;
   project_path: string;
   mcp_servers: string[];
+  /**
+   * How each MCP server is reached, when the interceptor knows (the MCP
+   * proxy does). `host` is the URL host of a remote server; paths, query
+   * strings and credentials are never recorded.
+   */
+  mcp_server_transports?: McpServerTransport[];
+}
+
+export interface McpServerTransport {
+  name: string;
+  transport: "stdio" | "http";
+  host?: string;
 }
 
 export interface SessionEndedEvent extends BaseEvent {

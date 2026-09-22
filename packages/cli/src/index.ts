@@ -46,7 +46,7 @@ import {
   ANTIGRAVITY_HOOK_SHIM_PATH,
   AntigravityInterceptor,
 } from "@omnodex/antigravity-provider";
-import { MCPProxy, loadProxyConfig } from "@omnodex/mcp-proxy";
+import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer } from "./dashboard-server.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
@@ -1523,6 +1523,9 @@ async function cmdMcpProxy(args: string[]): Promise<void> {
     case "start":
       await cmdMcpProxyStart(rest);
       return;
+    case "serve":
+      await cmdMcpProxyServe(rest);
+      return;
     case "install":
       await cmdMcpProxyInstall(rest);
       return;
@@ -1536,6 +1539,12 @@ subcommands:
   start [--config path]   start the MCP proxy server on stdin/stdout.
                           Used by Cowork / Codex plugin mcp.json configs.
                           Defaults to \${OMNODEX_HOME}/omnodex-proxy.json.
+  serve --http <host:port> [--config path] [--allow-remote]
+                          serve the MCP proxy over Streamable HTTP at
+                          http://<host:port>/mcp until stopped. Loopback
+                          only unless --allow-remote, which also requires
+                          OMNODEX_PROXY_HTTP_TOKEN (clients send it as a
+                          bearer token).
   install                 create a template omnodex-proxy.json in
                           \${OMNODEX_HOME} if one does not already exist.
   status                  show configured upstream servers and proxy state.
@@ -1578,6 +1587,49 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
   }
   // Normal end: the agent closes stdin.
   void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
+  process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
+  process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
+}
+
+async function cmdMcpProxyServe(args: string[]): Promise<void> {
+  const httpIdx = args.indexOf("--http");
+  if (httpIdx === -1 || !args[httpIdx + 1]) {
+    console.error("[mcp-proxy] serve requires --http <host:port>, e.g. --http 127.0.0.1:8787");
+    process.exitCode = 1;
+    return;
+  }
+  const listen = parseHttpListen(args[httpIdx + 1]!);
+  const configFlagIdx = args.indexOf("--config");
+  const configPath = configFlagIdx !== -1 ? args[configFlagIdx + 1] : undefined;
+  const authToken = process.env.OMNODEX_PROXY_HTTP_TOKEN || undefined;
+
+  const config = await loadProxyConfig(configPath, { allowMissing: true });
+  const paths = resolvePaths();
+  const log = new EventLog({ root: path.join(paths.home, "event-log") });
+  await log.init();
+
+  const scriptPath = process.argv[1] ?? "";
+  const proxy = new MCPProxy(config, {
+    projectPath: process.cwd(),
+    home: paths.home,
+    autoSyncScriptPath: scriptPath,
+    http: {
+      ...listen,
+      allowRemote: args.includes("--allow-remote"),
+      ...(authToken ? { authToken } : {}),
+    },
+  });
+  const stop = await proxy.start(log.append.bind(log));
+  console.error(`[mcp-proxy] serving MCP over HTTP at ${proxy.httpUrl()} (Ctrl-C to stop)`);
+
+  let shuttingDown: Promise<void> | undefined;
+  const shutdown = (): Promise<void> =>
+    (shuttingDown ??= (async () => {
+      await stop();
+      await log.close();
+      // After log.close(), so the detached child sees session.ended.
+      await startBackgroundSync({ home: paths.home, scriptPath, detect: true });
+    })());
   process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
   process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
 }
@@ -1661,7 +1713,9 @@ async function cmdMcpProxyStatus(_args: string[]): Promise<void> {
       const cmd = [srv.command, ...(srv.args ?? [])].join(" ");
       console.log(`              ${prefix}  [stdio]  ${cmd}`);
     } else {
-      console.log(`              ${prefix}  [http]   ${srv.url}`);
+      // Origin and path only: a query string can carry a credential.
+      const u = new URL(srv.url);
+      console.log(`              ${prefix}  [http]   ${u.origin}${u.pathname}`);
     }
     if (srv.redact_parameters !== undefined) {
       console.log(

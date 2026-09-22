@@ -13,12 +13,17 @@
  *
  * Usage (direct):
  *   omnodex-mcp-proxy [--config /path/to/omnodex-proxy.json]
+ *   omnodex-mcp-proxy --http 127.0.0.1:8787 [--config ...]   serve over HTTP
+ *   omnodex-mcp-proxy --http 0.0.0.0:8787 --allow-remote       beyond loopback;
+ *     requires OMNODEX_PROXY_HTTP_TOKEN, sent by clients as a bearer token
  *
  * Usage (via Cowork plugin mcp.json):
  *   { "command": "omnodex-mcp-proxy", "args": [] }
  *
- * The process communicates via stdio MCP (JSON-RPC 2.0, newline-delimited).
- * It exits when the agent closes the connection (stdin EOF).
+ * By default the process communicates via stdio MCP (JSON-RPC 2.0,
+ * newline-delimited) and exits when the agent closes the connection (stdin
+ * EOF). With --http it serves Streamable HTTP at /mcp until it is signalled,
+ * with one proxy session per client session.
  *
  * It is also its own background-sync worker: started with
  * OMNODEX_AUTO_SYNC_CHILD=1 it runs one sync blob push and exits instead of
@@ -29,6 +34,8 @@
  *   OMNODEX_HOME               event log root parent; defaults to ~/.omnodex
  *   OMNODEX_PROJECT_PATH       project path recorded in session.started events
  *   OMNODEX_AUTO_SYNC_CHILD=1  run one background sync and exit
+ *   OMNODEX_PROXY_HTTP_TOKEN   bearer token required from HTTP clients (optional
+ *                              on loopback, required with --allow-remote)
  */
 
 import * as os from "node:os";
@@ -40,6 +47,7 @@ import {
   startBackgroundSync,
 } from "@omnodex/sync-encryptor";
 import { loadProxyConfig } from "../config.js";
+import { parseHttpListen } from "../http-server.js";
 import { MCPProxy } from "../mcp-proxy.js";
 
 async function main(): Promise<void> {
@@ -63,6 +71,11 @@ async function main(): Promise<void> {
     configPath = args[configFlagIdx + 1];
   }
 
+  const httpFlagIdx = args.indexOf("--http");
+  const httpListen =
+    httpFlagIdx !== -1 ? parseHttpListen(args[httpFlagIdx + 1] ?? "") : undefined;
+  const httpToken = process.env.OMNODEX_PROXY_HTTP_TOKEN || undefined;
+
   const config = await loadProxyConfig(configPath, { allowMissing: true });
 
   const eventLogRoot = path.join(home, "event-log");
@@ -74,10 +87,23 @@ async function main(): Promise<void> {
     projectPath: process.env.OMNODEX_PROJECT_PATH ?? process.cwd(),
     home,
     autoSyncScriptPath: scriptPath,
+    ...(httpListen
+      ? {
+          http: {
+            ...httpListen,
+            allowRemote: args.includes("--allow-remote"),
+            ...(httpToken ? { authToken: httpToken } : {}),
+          },
+        }
+      : {}),
   });
 
   const emit = log.append.bind(log);
   const stop = await proxy.start(emit);
+  const httpUrl = proxy.httpUrl();
+  if (httpUrl) {
+    process.stderr.write(`[omnodex-mcp-proxy] serving MCP over HTTP at ${httpUrl}\n`);
+  }
 
   async function shutdown(): Promise<void> {
     await stop();
@@ -88,12 +114,18 @@ async function main(): Promise<void> {
     await startBackgroundSync({ home, scriptPath, detect: true });
   }
 
-  // Normal end: the agent closes stdin.
-  void proxy.whenClosed().then(shutdown).then(() => process.exit(0));
+  // A signal can arrive while the close path is already shutting down (over
+  // HTTP, the signal is what closes the server), so shut down only once.
+  let shuttingDown: Promise<void> | undefined;
+  const shutdownOnce = (): Promise<void> => (shuttingDown ??= shutdown());
+
+  // Normal end over stdio: the agent closes stdin. Over HTTP this resolves
+  // only after a signal has closed the server.
+  void proxy.whenClosed().then(shutdownOnce).then(() => process.exit(0));
   // Clean up on SIGTERM (sent by Cowork / Codex when the session ends).
-  process.on("SIGTERM", () => void shutdown().then(() => process.exit(0)));
+  process.on("SIGTERM", () => void shutdownOnce().then(() => process.exit(0)));
   // SIGINT (Ctrl-C during local dev).
-  process.on("SIGINT", () => void shutdown().then(() => process.exit(0)));
+  process.on("SIGINT", () => void shutdownOnce().then(() => process.exit(0)));
 }
 
 main().catch((err: unknown) => {
