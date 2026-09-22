@@ -16,6 +16,10 @@
  * host AI agent. The local JSONL event log remains the source of truth;
  * cloud push is best-effort real-time delivery.
  *
+ * Gated: while the relay reports that no dashboard is watching, pushes are
+ * skipped for a growing back-off window (see live-gate.ts), so an unwatched
+ * machine costs a few requests an hour rather than one per event.
+ *
  * Key caching:
  *   - Derived streaming key (raw bytes + key_id) is cached to
  *     OMNODEX_HOME/streaming-key-cache.json.
@@ -33,6 +37,7 @@ import { deriveStreamingKey, computeKeyId } from "./crypto.js";
 import type { AesGcmKey } from "./crypto.js";
 import { encrypt } from "./crypto.js";
 import { readOrFetchLicense } from "./license-cache.js";
+import { livePushAllowed, livePushOutcome, recordLivePush } from "./live-gate.js";
 
 const subtle = webcrypto.subtle;
 
@@ -177,7 +182,8 @@ async function resolveStreamingKey(
  * Designed for hook shims: reads credentials from disk, uses a cached
  * streaming key, encrypts the event, and POSTs it. Fire-and-forget --
  * never throws or blocks the caller. Returns true if the push was
- * attempted, false if skipped (no credentials, wrong tier, etc.).
+ * attempted, false if skipped (no credentials, wrong tier, the live gate
+ * is closed because no one is watching, etc.).
  *
  * @param events - One or more trace events to push.
  * @param omnodexHome - Path to OMNODEX_HOME (e.g. ~/.omnodex).
@@ -189,6 +195,9 @@ export async function pushEventsToCloud(
   timeoutMs = 3000,
 ): Promise<boolean> {
   try {
+    // 0. Skip while the relay has said no one is watching (one small read)
+    if (!(await livePushAllowed(omnodexHome))) return false;
+
     // 1. Read credentials
     const config = await readStreamConfig(omnodexHome);
     if (!config) return false;
@@ -255,11 +264,10 @@ export async function pushEventsToCloud(
         }),
         signal: controller.signal,
       });
-
-      if (!res.ok) {
-        // Consume body to free resources, but don't throw
-        await res.text().catch(() => {});
-      }
+      await recordLivePush(omnodexHome, await livePushOutcome(res));
+    } catch (err) {
+      await recordLivePush(omnodexHome, "failed");
+      throw err;
     } finally {
       clearTimeout(timer);
     }

@@ -19,7 +19,10 @@
  * Fire-and-forget throughout. pushEventsToCloud never throws, and returns
  * false without a network call when the machine has no stream credentials or
  * no live_streaming entitlement, so an unconnected proxy pays two small disk
- * reads per batch and nothing else. Nothing here is on the agent's path: the
+ * reads per batch and nothing else. It also skips the network while the
+ * relay reports no dashboard watching (the machine-wide live gate in
+ * @omnodex/sync-encryptor), so an unwatched proxy costs a few requests an
+ * hour. Nothing here is on the agent's path: the
  * local event log is still the source of truth and is written first.
  */
 
@@ -32,8 +35,12 @@ export type CloudPushFn = (
   home: string,
 ) => Promise<boolean>;
 
-/** Quiet period before a partial batch is sent. */
-const DEFAULT_FLUSH_DELAY_MS = 250;
+/**
+ * Quiet period before a partial batch is sent. A second keeps a burst of tool
+ * calls in one request, each of which counts against the relay's daily
+ * request limits, at the price of a second of live latency.
+ */
+const DEFAULT_FLUSH_DELAY_MS = 1000;
 
 /** A batch this size is sent without waiting for the quiet period. */
 const DEFAULT_MAX_BATCH_SIZE = 50;

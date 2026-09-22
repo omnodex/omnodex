@@ -57,6 +57,14 @@ export { computeMachineId, readMachineLabel } from "./machine-id.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
 
 export { pushEventsToCloud } from "./shim-push.js";
+export {
+  LiveGate,
+  LIVE_BACKOFF_MIN_MS,
+  LIVE_BACKOFF_MAX_MS,
+  livePushAllowed,
+  recordLivePush,
+} from "./live-gate.js";
+export type { LivePushOutcome, LiveGateState } from "./live-gate.js";
 export { readOrFetchLicense } from "./license-cache.js";
 export type { CachedLicense, LicenseCredentials } from "./license-cache.js";
 
