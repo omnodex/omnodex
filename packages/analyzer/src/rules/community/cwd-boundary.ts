@@ -8,8 +8,9 @@
  * Working-directory boundary detection rule.
  *
  * RULE_CWD_BOUNDARY_WRITE (MEDIUM)
- *   Fires when an agent writes to a file outside the session's working
- *   directory. Agents should generally stay within the project they
+ *   Fires when an agent writes to a file outside the session's workspace:
+ *   its working directory, the git checkouts that directory belongs to
+ *   (including sibling worktrees), and any configured workspace_roots. Agents should generally stay within the project they
  *   were invoked in; writes outside the project directory are a signal
  *   of either misconfiguration or malicious activity (config poisoning,
  *   persistence installation, credential access).
@@ -41,12 +42,15 @@ export const RULE_CWD_BOUNDARY_WRITE: RuleDefinition = {
   conditions: [
     {
       type: "cwd_boundary",
+      // Writes only: reading outside the workspace is routine, and the
+      // sensitive reads are the sensitive-path and credential rules' job.
+      access: "write",
     },
   ],
   severity: "MEDIUM",
   category: "cwd_boundary",
   description_template:
-    "{{matched_label}}: {{matched_path}} accessed via {{tool_name}}. " +
-    "This file is outside the session working directory.",
+    "{{matched_label}}: {{matched_path}} written via {{tool_name}}. " +
+    "The session's workspace is its working directory, that directory's git checkouts and any configured workspace roots.",
   blocking_hint: "confirm",
 };

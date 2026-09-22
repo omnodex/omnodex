@@ -58,9 +58,15 @@ export const RULE_THREAT_DESTRUCTIVE_COMMAND: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
-          regex: "\\brm\\s+(?:-[a-zA-Z]*\\s+)*(?:-[a-zA-Z]*r[a-zA-Z]*|--recursive)\\b[^\\n]*(?:\\/[\\s\"\\\\}]|\\/\\*|~\\/)",
+          // Recursive delete of the filesystem root or the home directory:
+          // rm -rf /, /*, ~, ~/, ~/*, $HOME. A recursive delete of anything
+          // under them (a build folder, a scratch directory) is routine.
+          regex: "\\brm\\s+(?:-{1,2}[\\w-]+\\s+)*?(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(?:\\s+[^\\s;&|]+)*?\\s+[\"']?(?:\\/\\*?|~\\/?\\*?|\\$\\{?HOME\\}?\\/?\\*?)[\"']?(?=$|[\\s;&|)])",
           type: "recursive-delete",
         },
         {
@@ -98,6 +104,9 @@ export const RULE_THREAT_ENCODED_PAYLOAD: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\bbase64\\s+(?:-d|--decode)\\b[^\\n]*\\|\\s*(?:bash|sh|zsh|python3?|node|ruby|perl)\\b",
@@ -134,6 +143,9 @@ export const RULE_THREAT_REVERSE_SHELL: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\bmkfifo\\b[^\\n]*\\bnc\\b",
@@ -174,6 +186,8 @@ export const RULE_THREAT_IMDS_ACCESS: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         {
           regex: "169\\.254\\.169\\.254",
@@ -206,6 +220,9 @@ export const RULE_THREAT_CREDENTIAL_ARCHIVE: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\b(?:tar|zip|7z|rar)\\b[^\\n]*(?:\\.ssh|\\.aws|\\.gnupg|\\.config\\/gcloud|\\.azure|\\.kube)",
@@ -234,6 +251,9 @@ export const RULE_THREAT_SSH_TUNNEL: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\bssh\\b[^\\n]*\\s-R\\s+\\d+:",
@@ -266,6 +286,9 @@ export const RULE_THREAT_AUDIT_TRAIL_DESTRUCTION: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\b(?:history\\s+-c|history\\s+-w\\s*\\/dev\\/null)\\b",
@@ -306,6 +329,9 @@ export const RULE_THREAT_PACKAGE_PUBLISH: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "\\bnpm\\s+publish\\b",
@@ -363,6 +389,9 @@ export const RULE_THREAT_API_BASE_URL_OVERRIDE: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run, and the same text written into a script or config
+      // file, where the write itself persists the change.
+      scope: ["exec", "staged"],
       patterns: [
         {
           regex: "(?:OPENAI_BASE_URL|OPENAI_API_BASE|ANTHROPIC_BASE_URL|ANTHROPIC_API_BASE|GEMINI_API_BASE|AZURE_OPENAI_ENDPOINT)\\s*=\\s*https?://",
@@ -376,6 +405,7 @@ export const RULE_THREAT_API_BASE_URL_OVERRIDE: RuleDefinition = {
     },
   ],
   severity: "HIGH",
+  staged_severity: "HIGH",
   category: "threat_command",
   description_template:
     "API base URL override detected via {{tool_name}}: {{credential_types}}. " +

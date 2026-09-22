@@ -63,6 +63,8 @@ export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
     },
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         {
           // Claude Code sandbox settings: "sandbox": false, "toolSandboxing": false
@@ -98,6 +100,9 @@ export const RULE_SANDBOX_DISABLE_BASH: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           // Claude Code CLI flag
@@ -116,7 +121,7 @@ export const RULE_SANDBOX_DISABLE_BASH: RuleDefinition = {
         },
         {
           // sed/cp/mv targeting agent settings files (postinstall-style persistence)
-          regex: "(?:sed|cp|mv)\\b[^\\n]*(?:\\.claude[/\\\\]settings|\\.codex[/\\\\]config|\\.gemini[/\\\\]config)",
+          regex: "\\b(?:sed|cp|mv)\\b[^\\n]*(?:\\.claude[/\\\\]settings|\\.codex[/\\\\]config|\\.gemini[/\\\\]config)",
           type: "settings-file-replace",
         },
       ],

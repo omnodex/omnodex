@@ -50,7 +50,7 @@ import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer } from "./dashboard-server.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
-import { detectEventLogs, detectRisks, runBackgroundDetect } from "@omnodex/analyzer";
+import { detectEventLogs, detectRisks, openMachineState, runBackgroundDetect } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
 import {
@@ -466,10 +466,12 @@ async function cmdDetect(args: string[]): Promise<void> {
 
   const targetSession = rest.find((a) => !a.startsWith("--"));
 
+  const eventLogRoots = resolved.all.map((root) => path.join(root, "event-log"));
   const result = await detectEventLogs({
-    roots: resolved.all.map((root) => path.join(root, "event-log")),
+    roots: eventLogRoots,
     sessionId: targetSession,
     newEventId,
+    machineState: openMachineState(resolvePaths().home, { seedRoots: eventLogRoots }),
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
         console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);
@@ -524,6 +526,11 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // --- Historical processing (batch) ---
   // Run batch detection on any sessions that completed before the dashboard
   // was opened. The streaming loop will handle everything from this point on.
+  // First-seen-on-this-machine state, shared by the batch pass and the
+  // streaming loop so they agree on what is new.
+  const machineState = openMachineState(resolvePaths().home, {
+    seedRoots: resolved.all.map((root) => path.join(root, "event-log")),
+  });
   if (!skipDetect) {
     let detected = 0;
     for (const { log } of logs) {
@@ -531,7 +538,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
       for (const sessionId of sessionIds) {
         const events = await log.readSession(sessionId);
         if (events.length === 0) continue;
-        const result = detectRisks(events, newEventId);
+        const result = detectRisks(events, newEventId, undefined, { machineState });
         if (result.newEvents.length > 0) {
           await log.appendMany(result.newEvents);
           detected += result.newEvents.length;
@@ -611,7 +618,9 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // Its own projector: the rebuild above owns the one it used, and the
   // streaming loop sets a source root per session as it tails.
   const streamProjector = new Projector(store);
-  const { stop } = startStreamingLoop(streamingRoots, store, streamProjector, server, cloudTransport);
+  const { stop } = startStreamingLoop(streamingRoots, store, streamProjector, server, cloudTransport, {
+    machineState,
+  });
 
   // --- Shutdown handling ---
   await new Promise<void>((resolve) => {

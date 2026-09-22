@@ -86,6 +86,13 @@ export interface RuleDefinition {
    * No runtime behavior change in the current analyzer.
    */
   blocking_hint?: "deny" | "confirm" | "alert_only";
+  /**
+   * Severity when the match was in content written to a file (a "staged"
+   * credential_match scope) rather than in a command that ran. Defaults to
+   * one step below `severity`. Rules whose risk is the write itself, such as
+   * a registry override in .npmrc, set it equal to `severity`.
+   */
+  staged_severity?: RiskSeverity;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +144,18 @@ export interface PathPattern {
 export interface CredentialMatchCondition {
   type: "credential_match";
   patterns: CredentialPattern[];
+  /**
+   * Which text to scan. "all" (the default) is every parameter, which suits
+   * secrets and payloads: a token is a leak wherever it appears. A list
+   * narrows command patterns to what matters: "exec" is the command a shell
+   * tool runs, "staged" is content written into a script or config file
+   * (reported one severity lower unless the rule sets staged_severity), and
+   * "target" is the file paths the call reads or writes.
+   */
+  scope?: CredentialScope;
 }
+
+export type CredentialScope = "all" | ReadonlyArray<"exec" | "staged" | "target">;
 
 export interface CredentialPattern {
   /**
@@ -250,6 +268,14 @@ export interface SessionFirstSeenCondition {
    * Claude Code tools always use mcp_server="builtin".
    */
   exclude?: string[];
+  /**
+   * "session" (the default): first time in this session. "machine": first
+   * time on this machine, from a persistent store the host supplies (see
+   * machine-state.ts); a server reached over a different transport or host
+   * than recorded also counts. Without a store, "machine" behaves as
+   * "session".
+   */
+  scope?: "session" | "machine";
 }
 
 
@@ -313,6 +339,26 @@ export interface DomainMatchCondition {
  */
 export interface CwdBoundaryCondition {
   type: "cwd_boundary";
+  /**
+   * "any" (the default) judges every path the call names; "write" only the
+   * files it writes to (see extractWriteTargets).
+   */
+  access?: "any" | "write";
+}
+
+/**
+ * Facts about the machine an event is judged on, supplied by the host so
+ * conditions stay pure functions of the event.
+ */
+export interface EvaluationContext {
+  /** Directories that count as the session's workspace. Defaults to [cwd]. */
+  workspaceRoots?: readonly string[];
+  /** The user's home directory, for expanding ~ in paths. */
+  home?: string;
+  /** Persistent state for machine-scope rules. */
+  machineState?: import("./machine-state.js").MachineState;
+  /** How the event's MCP server is reached, when its session recorded it. */
+  mcpServerTransport?: import("@omnodex/shared").McpServerTransport;
 }
 
 /**
@@ -369,6 +415,8 @@ export interface MatchContext {
   rate_window?: number;
   /** Populated by domain_match conditions: the matched hostname. */
   matched_domain?: string;
+  /** Populated by staged credential_match: the file the content was written to. */
+  staged_path?: string;
   /** Populated by sequence conditions: tool_call_ids of the earlier events. */
   related_event_ids?: string[];
 }

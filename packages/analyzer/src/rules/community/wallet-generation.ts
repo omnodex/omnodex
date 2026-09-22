@@ -40,6 +40,9 @@ export const RULE_WALLET_CLI_DETECTED: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // CLI commands and wallet RPC calls to MCP servers alike: the call is
+      // the action, so every field counts.
+      scope: "all",
       patterns: [
         // solana-keygen: Solana wallet key generation CLI.
         {
@@ -93,6 +96,8 @@ export const RULE_PRIVATE_KEY_MATERIAL: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         // Private key hex string in labeled context. Uses .{0,15} to bridge
         // the separator (colon, equals, JSON colon-quote) between label and
@@ -124,6 +129,8 @@ export const RULE_MNEMONIC_PHRASE: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         // BIP-39 mnemonic in labeled context. Uses .{0,20} to bridge the
         // separator between label and word sequence. Matches 12+ space-separated

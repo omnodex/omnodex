@@ -35,8 +35,12 @@
 import type { RiskDetectedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
+import * as os from "node:os";
 import { RuleRegistry } from "./registry.js";
-import type { RiskFinding, RuleDefinition } from "./types.js";
+import type { EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
+import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
+import type { MachineState } from "./machine-state.js";
+import type { McpServerTransport } from "@omnodex/shared";
 
 export type EvaluationClass = "event" | "session" | "machine";
 export type EvaluatorHost = "hook" | "proxy" | "batch";
@@ -73,8 +77,10 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
         raise("session");
         break;
       case "rate_threshold":
-      case "session_first_seen":
         raise("session");
+        break;
+      case "session_first_seen":
+        raise(condition.scope === "machine" ? "machine" : "session");
         break;
       default:
         break;
@@ -98,6 +104,16 @@ export interface EvaluatorOptions {
   registry?: RuleRegistry;
   /** Recent events kept per session for sequence rules. */
   windowSize?: number;
+  /**
+   * Workspace roots for a working directory. Defaults to a cached resolver
+   * over the cwd, its git checkouts, and configured workspace_roots.
+   */
+  workspaceRoots?: WorkspaceRootsFn;
+  /**
+   * Persistent state for machine-scope rules. Without it they fall back to
+   * session scope.
+   */
+  machineState?: MachineState;
 }
 
 export interface EvaluatorStats {
@@ -146,6 +162,22 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const eventEngine = new RuleEngine(eventRules);
   const statefulEngine = new RuleEngine(statefulRules, { windowSize: opts.windowSize });
 
+  const workspaceRoots = opts.workspaceRoots ?? createWorkspaceResolver();
+  const home = os.homedir();
+  // How each session's MCP servers are reached, from its session.started.
+  const transports = new Map<string, Map<string, McpServerTransport>>();
+  const contextFor = (event: ToolInvokedEvent): EvaluationContext => ({
+    workspaceRoots: event.cwd ? workspaceRoots(event.cwd) : undefined,
+    home,
+    machineState: opts.machineState,
+    mcpServerTransport: transports.get(event.session_id)?.get(event.mcp_server),
+  });
+  const noteSession = (event: TraceEvent): void => {
+    if (event.event_type === "session.started" && event.mcp_server_transports?.length) {
+      transports.set(event.session_id, new Map(event.mcp_server_transports.map((t) => [t.name, t])));
+    }
+  };
+
   const recorded = new Set<string>();
   const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {} };
 
@@ -188,6 +220,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   }
 
   function endSession(sessionId: string): void {
+    transports.delete(sessionId);
     eventEngine.endSession(sessionId);
     statefulEngine.endSession(sessionId);
   }
@@ -200,12 +233,19 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
         case "risk.detected":
           seed(event);
           return [];
+        case "session.started":
+          noteSession(event);
+          return [];
         case "session.ended":
           endSession(event.session_id);
           return [];
         case "tool.invoked": {
           stats.evaluated++;
-          const findings = [...eventEngine.evaluate(event), ...statefulEngine.evaluate(event)];
+          const context = contextFor(event);
+          const findings = [
+            ...eventEngine.evaluate(event, context),
+            ...statefulEngine.evaluate(event, context),
+          ];
           // Registry order, as a single engine would have produced them.
           findings.sort((a, b) => (order.get(a.rule_id) ?? 0) - (order.get(b.rule_id) ?? 0));
           const out: RiskDetectedEvent[] = [];
@@ -221,8 +261,9 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     },
 
     observe(event: TraceEvent): void {
+      noteSession(event);
       if (event.event_type === "risk.detected") seed(event);
-      else if (event.event_type === "tool.invoked") statefulEngine.evaluate(event);
+      else if (event.event_type === "tool.invoked") statefulEngine.evaluate(event, contextFor(event));
     },
 
     endSession,

@@ -31,9 +31,10 @@
  *   Long-running hosts call endSession() when a session ends to release it.
  */
 
-import type { ToolInvokedEvent } from "@omnodex/shared";
+import type { RiskSeverity, ToolInvokedEvent } from "@omnodex/shared";
 import type {
   Condition,
+  EvaluationContext,
   MatchContext,
   RiskFinding,
   RuleDefinition,
@@ -75,7 +76,7 @@ function evaluateStateless(
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
   if (STATEFUL_CONDITION_TYPES.has(condition.type)) return [];
-  return evaluateCondition(condition, event, new Map(), []);
+  return evaluateCondition(condition, event, new Map(), [], {});
 }
 
 function evaluateCondition(
@@ -83,6 +84,7 @@ function evaluateCondition(
   event: ToolInvokedEvent,
   sessionState: Map<string, Set<string>>,
   window: readonly ToolInvokedEvent[],
+  context: EvaluationContext,
 ): Partial<MatchContext>[] {
   switch (condition.type) {
     case "path_match":
@@ -101,12 +103,12 @@ function evaluateCondition(
         sessionState.set(key, new Set<string>());
       }
       const seen = sessionState.get(key)!;
-      return evaluateSessionFirstSeen(condition, event, seen);
+      return evaluateSessionFirstSeen(condition, event, seen, context);
     }
     case "domain_match":
       return evaluateDomainMatch(condition, event);
     case "cwd_boundary":
-      return evaluateCwdBoundary(condition, event);
+      return evaluateCwdBoundary(condition, event, context);
     case "sequence":
       return evaluateSequence(condition, event, window, evaluateStateless);
     case "rate_threshold":
@@ -114,6 +116,13 @@ function evaluateCondition(
       // This case should not be reached; it exists for exhaustive switch.
       return [];
   }
+}
+
+const SEVERITY_ORDER: readonly RiskSeverity[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
+/** One severity step lower, bottoming out at LOW. */
+function stepDown(severity: RiskSeverity): RiskSeverity {
+  return SEVERITY_ORDER[Math.max(0, SEVERITY_ORDER.indexOf(severity) - 1)];
 }
 
 // ---------------------------------------------------------------------------
@@ -191,7 +200,7 @@ export class RuleEngine {
    * Evaluate all rules against a single tool.invoked event.
    * Returns one RiskFinding per rule+context combination that matched.
    */
-  evaluate(event: ToolInvokedEvent): RiskFinding[] {
+  evaluate(event: ToolInvokedEvent, context: EvaluationContext = {}): RiskFinding[] {
     const findings: RiskFinding[] = [];
     const window = this.windows.get(event.session_id) ?? [];
 
@@ -222,7 +231,7 @@ export class RuleEngine {
             this.rateState.get(rateKey)!,
           );
         } else {
-          partials = evaluateCondition(condition, event, this.sessionState, window);
+          partials = evaluateCondition(condition, event, this.sessionState, window, context);
         }
         if (partials.length === 0) {
           allMatched = false;
@@ -243,10 +252,16 @@ export class RuleEngine {
       // Emit one finding per accumulated context.
       for (const partial of accumulated) {
         const ctx: MatchContext = { ...baseCtx, ...partial };
+        let description = renderTemplate(rule.description_template, ctx);
+        if (ctx.staged_path) {
+          description += ` Found in content written to ${ctx.staged_path}, not in a command that ran.`;
+        }
         const finding: RiskFinding = {
-          severity: rule.severity,
+          severity: ctx.staged_path
+            ? (rule.staged_severity ?? stepDown(rule.severity))
+            : rule.severity,
           category: rule.category,
-          description: renderTemplate(rule.description_template, ctx),
+          description,
           rule_id: rule.rule_id,
           tier: rule.tier,
         };
