@@ -331,6 +331,22 @@ export interface DomainMatchCondition {
  */
 export interface CwdBoundaryCondition {
   type: "cwd_boundary";
+  /**
+   * "any" (the default) judges every path the call names; "write" only the
+   * files it writes to (see extractWriteTargets).
+   */
+  access?: "any" | "write";
+}
+
+/**
+ * Facts about the machine an event is judged on, supplied by the host so
+ * conditions stay pure functions of the event.
+ */
+export interface EvaluationContext {
+  /** Directories that count as the session's workspace. Defaults to [cwd]. */
+  workspaceRoots?: readonly string[];
+  /** The user's home directory, for expanding ~ in paths. */
+  home?: string;
 }
 
 /**

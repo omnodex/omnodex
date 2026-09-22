@@ -45,6 +45,8 @@ export {
   loadRegistry,
   HOST_CLASSES,
 } from "./evaluator.js";
+export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
+export type { WorkspaceRootsFn } from "./workspace.js";
 export type {
   Evaluator,
   EvaluatorHost,

@@ -26,8 +26,9 @@
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
-import type { CwdBoundaryCondition, MatchContext } from "../types.js";
+import type { CwdBoundaryCondition, EvaluationContext, MatchContext } from "../types.js";
 import { extractPaths } from "./path-match.js";
+import { extractWriteTargets } from "./write-targets.js";
 
 /**
  * Normalize a path for prefix comparison: lowercase on Windows-style
@@ -44,64 +45,62 @@ function normalizePath(p: string): string {
 }
 
 /**
- * Returns true if filePath is inside cwdPath (prefix match with
- * directory boundary check).
+ * Returns true if filePath is inside root (prefix match with directory
+ * boundary check).
  */
-function isInsideCwd(filePath: string, cwdPath: string): boolean {
+function isInside(filePath: string, root: string): boolean {
   const normFile = normalizePath(filePath);
-  const normCwd = normalizePath(cwdPath);
-
-  // Exact match (file IS the cwd, which shouldn't happen but handle it)
-  if (normFile === normCwd) return true;
-
-  // Prefix match: file must start with cwd + "/"
-  return normFile.startsWith(normCwd + "/");
+  const normRoot = normalizePath(root);
+  return normFile === normRoot || normFile.startsWith(normRoot + "/");
 }
 
 /**
  * Evaluate a cwd_boundary condition against a tool.invoked event.
  *
- * Returns one partial MatchContext per file path that is outside the
- * event's cwd. Empty array if:
- *   - event.cwd is not populated (backwards compatibility)
- *   - no file paths extracted from event
- *   - all file paths are within cwd
+ * Returns one partial MatchContext per file path outside every workspace
+ * root (the host's roots from the context, or just the event's cwd). Empty
+ * when the event has no cwd, names no absolute path, or stays inside.
  */
 export function evaluateCwdBoundary(
-  _condition: CwdBoundaryCondition,
+  condition: CwdBoundaryCondition,
   event: ToolInvokedEvent,
+  context: EvaluationContext = {},
 ): Partial<MatchContext>[] {
   // If cwd is not available, we can't evaluate this condition.
   // Return empty (condition does not match) rather than false positive.
   if (!event.cwd) return [];
 
-  const paths = extractPaths(event);
+  const paths = condition.access === "write" ? extractWriteTargets(event) : extractPaths(event);
   if (paths.length === 0) return [];
 
+  const roots = context.workspaceRoots?.length ? context.workspaceRoots : [event.cwd];
   const results: Partial<MatchContext>[] = [];
-  for (const p of paths) {
-    // Skip relative paths (they're relative to cwd by definition)
+  for (const raw of paths) {
+    let p = raw;
+    if ((p === "~" || p.startsWith("~/") || p.startsWith("~\\")) && context.home) {
+      p = context.home + p.slice(1);
+    }
+
+    // Skip relative paths and variables: they are relative to cwd or unknown.
     if (!p.startsWith("/") && !p.startsWith("~") && !/^[A-Za-z]:/.test(p)) {
       continue;
     }
 
-    // Expand ~ to a generic home prefix for comparison
-    // We don't know the actual home dir, but if cwd doesn't start with ~
-    // then a ~/ path is definitionally outside cwd
-    if (p.startsWith("~/") || p.startsWith("~\\")) {
-      if (!event.cwd.startsWith("~/") && !event.cwd.startsWith("~\\")) {
+    // An unexpanded ~ path is outside unless a root is itself home-relative.
+    if (p.startsWith("~")) {
+      if (!roots.some((r) => r.startsWith("~"))) {
         results.push({
-          matched_path: p,
-          matched_label: "file outside working directory (home-relative path)",
+          matched_path: raw,
+          matched_label: "file outside the workspace (home-relative path)",
         });
-        continue;
       }
+      continue;
     }
 
-    if (!isInsideCwd(p, event.cwd)) {
+    if (!roots.some((root) => isInside(p, root))) {
       results.push({
-        matched_path: p,
-        matched_label: "file outside working directory",
+        matched_path: raw,
+        matched_label: "file outside the workspace",
       });
     }
   }

@@ -34,6 +34,7 @@
 import type { RiskSeverity, ToolInvokedEvent } from "@omnodex/shared";
 import type {
   Condition,
+  EvaluationContext,
   MatchContext,
   RiskFinding,
   RuleDefinition,
@@ -75,7 +76,7 @@ function evaluateStateless(
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
   if (STATEFUL_CONDITION_TYPES.has(condition.type)) return [];
-  return evaluateCondition(condition, event, new Map(), []);
+  return evaluateCondition(condition, event, new Map(), [], {});
 }
 
 function evaluateCondition(
@@ -83,6 +84,7 @@ function evaluateCondition(
   event: ToolInvokedEvent,
   sessionState: Map<string, Set<string>>,
   window: readonly ToolInvokedEvent[],
+  context: EvaluationContext,
 ): Partial<MatchContext>[] {
   switch (condition.type) {
     case "path_match":
@@ -106,7 +108,7 @@ function evaluateCondition(
     case "domain_match":
       return evaluateDomainMatch(condition, event);
     case "cwd_boundary":
-      return evaluateCwdBoundary(condition, event);
+      return evaluateCwdBoundary(condition, event, context);
     case "sequence":
       return evaluateSequence(condition, event, window, evaluateStateless);
     case "rate_threshold":
@@ -198,7 +200,7 @@ export class RuleEngine {
    * Evaluate all rules against a single tool.invoked event.
    * Returns one RiskFinding per rule+context combination that matched.
    */
-  evaluate(event: ToolInvokedEvent): RiskFinding[] {
+  evaluate(event: ToolInvokedEvent, context: EvaluationContext = {}): RiskFinding[] {
     const findings: RiskFinding[] = [];
     const window = this.windows.get(event.session_id) ?? [];
 
@@ -229,7 +231,7 @@ export class RuleEngine {
             this.rateState.get(rateKey)!,
           );
         } else {
-          partials = evaluateCondition(condition, event, this.sessionState, window);
+          partials = evaluateCondition(condition, event, this.sessionState, window, context);
         }
         if (partials.length === 0) {
           allMatched = false;

@@ -92,6 +92,25 @@ function asText(value: unknown): string | null {
   return null;
 }
 
+/** True when the tool writes file content (Write, Edit, apply_patch and similar). */
+export function isWriteTool(event: ToolInvokedEvent): boolean {
+  return WRITE_TOOLS.has(bareToolName(event.tool_name));
+}
+
+/** True when the tool runs a shell command. */
+export function isExecTool(event: ToolInvokedEvent): boolean {
+  return EXEC_TOOLS.has(bareToolName(event.tool_name));
+}
+
+/** Every file an apply_patch body adds, updates, deletes or moves to. */
+export function patchTargets(patch: string): string[] {
+  const out: string[] = [];
+  const re = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gm;
+  let m;
+  while ((m = re.exec(patch)) !== null) out.push(m[1].trim());
+  return out;
+}
+
 /** True when a path's content runs or is loaded as configuration. */
 export function isStagedTarget(filePath: string): boolean {
   const p = filePath.replace(/\\/g, "/");
@@ -100,7 +119,7 @@ export function isStagedTarget(filePath: string): boolean {
 
 /** The command a shell tool is about to run, or null for any other tool. */
 export function extractExecText(event: ToolInvokedEvent): string | null {
-  if (!EXEC_TOOLS.has(bareToolName(event.tool_name))) return null;
+  if (!isExecTool(event)) return null;
   const params = (event.parameters ?? {}) as Record<string, unknown>;
   const parts: string[] = [];
   for (const key of ["command", "cmd", "script", "args", "input"]) {
