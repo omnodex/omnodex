@@ -26,6 +26,8 @@
  *
  *   OMNODEX_HOME   location of the event log (defaults to ~/.omnodex)
  *   OMNODEX_DEBUG  set to "1" for verbose stderr logging
+ *   OMNODEX_CAPTURE_DETECT  set to "0" to skip judging tool calls here
+ *                           (the background pass still judges them)
  *
  * Antigravity payload differences from Codex:
  *   - Uses camelCase fields (conversationId, toolCall.name, etc.)
@@ -40,6 +42,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
+import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import type {
   AntigravityHookEventName,
   AntigravityHookPayload,
@@ -167,6 +170,20 @@ async function main(): Promise<number> {
     for (const event of events) {
       await log.append(event);
     }
+    // Judge the call against the per-event rules here, so its findings are
+    // written and pushed with it. Capped in time; on a timeout or error
+    // the background pass judges it instead.
+    const findings = captureDetectEnabled()
+      ? await judgeCaptured(events, {
+          newEventId,
+          onError: (err) => {
+            if (debug) console.error(`[omnodex-antigravity] rule evaluation skipped: ${(err as Error).message}`);
+          },
+        })
+      : [];
+    for (const finding of findings) {
+      await log.append(finding);
+    }
     await log.close();
 
     if (debug) {
@@ -176,7 +193,7 @@ async function main(): Promise<number> {
     }
 
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
-    await pushEventsToCloud(events, home);
+    await pushEventsToCloud([...events, ...findings], home);
 
     // Refresh the hosted dashboard's sync blob in the background.
     // The same detached child runs detection first, so it also starts

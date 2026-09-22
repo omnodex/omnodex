@@ -41,6 +41,7 @@ import type { EvaluationContext, RiskFinding, RuleDefinition } from "./types.js"
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
 import type { MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
+import { CAPTURE_HOSTS } from "./capture.js";
 
 export type EvaluationClass = "event" | "session" | "machine";
 export type EvaluatorHost = "hook" | "proxy" | "batch";
@@ -53,6 +54,18 @@ export const HOST_CLASSES: Readonly<Record<EvaluatorHost, readonly EvaluationCla
 };
 
 const CLASS_ORDER: readonly EvaluationClass[] = ["event", "session", "machine"];
+
+/**
+ * The classes a host should still run for an event, given what the event's
+ * capture path already evaluated (see CAPTURE_HOSTS). A host that tails
+ * events after capture uses this so it does not race the capture process to
+ * write the same finding.
+ */
+export function classesLeftAfterCapture(event: TraceEvent, host: EvaluatorHost): EvaluationClass[] {
+  const captureHost = CAPTURE_HOSTS[event.interceptor];
+  const done = new Set<EvaluationClass>(captureHost ? HOST_CLASSES[captureHost] : []);
+  return HOST_CLASSES[host].filter((c) => !done.has(c));
+}
 
 /**
  * The state a rule needs, derived from its conditions. Throws for a
@@ -129,6 +142,15 @@ export interface EvaluatorStats {
   byTier: Record<string, number>;
 }
 
+export interface EvaluateOptions {
+  /**
+   * Emit findings only for rules of these classes (of the ones this host
+   * runs). Stateful rules still take the event in, so their state stays
+   * current.
+   */
+  classes?: readonly EvaluationClass[];
+}
+
 export interface Evaluator {
   /** The rules this host runs, in registry order. */
   readonly rules: readonly RuleDefinition[];
@@ -137,7 +159,7 @@ export interface Evaluator {
    * deduplication; session.ended releases the session's state; anything
    * else is ignored.
    */
-  evaluate(event: TraceEvent): RiskDetectedEvent[];
+  evaluate(event: TraceEvent, options?: EvaluateOptions): RiskDetectedEvent[];
   /**
    * Take in an event from history without emitting: warms session state
    * (first-seen sets, rate windows, sequence windows) and deduplication, so
@@ -157,6 +179,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
 
   // Stateless and stateful rules run in separate engines so observe() can
   // warm state without paying for the stateless majority.
+  const ruleClass = new Map(rules.map((r) => [r.rule_id, classifyRule(r)]));
   const eventRules = rules.filter((r) => classifyRule(r) === "event");
   const statefulRules = rules.filter((r) => classifyRule(r) !== "event");
   const eventEngine = new RuleEngine(eventRules);
@@ -228,7 +251,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   return {
     rules,
 
-    evaluate(event: TraceEvent): RiskDetectedEvent[] {
+    evaluate(event: TraceEvent, options: EvaluateOptions = {}): RiskDetectedEvent[] {
       switch (event.event_type) {
         case "risk.detected":
           seed(event);
@@ -242,10 +265,11 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
         case "tool.invoked": {
           stats.evaluated++;
           const context = contextFor(event);
+          const wanted = options.classes ? new Set(options.classes) : null;
           const findings = [
-            ...eventEngine.evaluate(event, context),
+            ...(!wanted || wanted.has("event") ? eventEngine.evaluate(event, context) : []),
             ...statefulEngine.evaluate(event, context),
-          ];
+          ].filter((f) => !wanted || wanted.has(ruleClass.get(f.rule_id) ?? "event"));
           // Registry order, as a single engine would have produced them.
           findings.sort((a, b) => (order.get(a.rule_id) ?? 0) - (order.get(b.rule_id) ?? 0));
           const out: RiskDetectedEvent[] = [];

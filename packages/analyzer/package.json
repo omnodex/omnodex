@@ -14,6 +14,10 @@
     "./evaluator": {
       "import": "./dist/evaluator.js",
       "types": "./dist/evaluator.d.ts"
+    },
+    "./capture": {
+      "import": "./dist/capture.js",
+      "types": "./dist/capture.d.ts"
     }
   },
   "scripts": {
