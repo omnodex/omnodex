@@ -64,6 +64,9 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           // omnodex uninstall command

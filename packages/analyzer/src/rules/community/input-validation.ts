@@ -69,6 +69,8 @@ export const RULE_INPUT_VALIDATION_SQL_INJECTION: RuleDefinition = {
       // JSON-serialized event parameters. The credential_match condition
       // applies flags "gi" (global, case-insensitive).
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         {
           // UNION-based injection: extracts data from other tables.

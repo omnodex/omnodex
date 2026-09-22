@@ -132,6 +132,9 @@ export const RULE_SUPPLY_CHAIN_SKILL_MANIPULATION: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run, and the same text written into a script or config
+      // file, where the write itself persists the change.
+      scope: ["exec", "staged"],
       patterns: [
         // Claude Code plugin management commands. An agent being directed to
         // install a plugin mid-session is a strong indicator of prompt injection.
@@ -177,6 +180,7 @@ export const RULE_SUPPLY_CHAIN_SKILL_MANIPULATION: RuleDefinition = {
     },
   ],
   severity: "HIGH",
+  staged_severity: "HIGH",
   category: "supply_chain",
   description_template:
     "Possible skill or plugin supply chain manipulation via {{tool_name}}: {{credential_types}}.",
@@ -190,6 +194,10 @@ export const RULE_SUPPLY_CHAIN_DEP_CONFUSION: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run, and the same text written into a script or config
+      // file, where the write itself persists the change, and the paths a call
+      // touches (reading .pypirc exposes its upload token).
+      scope: ["exec", "staged", "target"],
       patterns: [
         // pip install --extra-index-url is the canonical dependency confusion
         // vector: pip checks the extra index before PyPI for packages with
@@ -225,6 +233,7 @@ export const RULE_SUPPLY_CHAIN_DEP_CONFUSION: RuleDefinition = {
     },
   ],
   severity: "MEDIUM",
+  staged_severity: "MEDIUM",
   category: "supply_chain",
   description_template:
     "Possible dependency confusion or supply chain attack via {{tool_name}}: {{credential_types}}.",
@@ -279,6 +288,8 @@ export const RULE_SUPPLY_CHAIN_HOOK_CONFIG_WRITE: RuleDefinition = {
     },
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         {
           // Confirms that hook entries are being written, not just other
@@ -339,6 +350,8 @@ export const RULE_SUPPLY_CHAIN_MCP_URL_MUTATION: RuleDefinition = {
     },
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: [
         {
           // Any write to ~/.claude.json that touches mcpServers is suspicious
@@ -387,6 +400,9 @@ export const RULE_SUPPLY_CHAIN_PKG_CONFIG_WRITE: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Commands that run; text written into a script or config file is
+      // reported one severity lower. Mentions in documents are ignored.
+      scope: ["exec", "staged"],
       patterns: [
         {
           // Node.js fs module writing to .claude paths -- classic postinstall

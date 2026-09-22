@@ -19,6 +19,8 @@
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { CredentialMatchCondition, MatchContext } from "../types.js";
 import { compiled } from "./regex-cache.js";
+import { extractExecText, extractStagedContent } from "./scope.js";
+import { extractPaths } from "./path-match.js";
 
 /**
  * Scan a string for credential patterns and return the unique set of
@@ -55,13 +57,39 @@ export function findCredentialTypes(
  *
  * Returns a single-element array with the matched credential types when
  * credentials are found, or an empty array when none are detected.
+ *
+ * With scope "all" (the default) every parameter is scanned. With a list of
+ * scopes only those texts are: "exec" is the command a shell tool runs,
+ * "staged" is content written into a script or config file, "target" is
+ * the file paths the call reads or writes. A staged match
+ * carries the file's path, so the engine can report it as written, not run.
  */
 export function evaluateCredentialMatch(
   condition: CredentialMatchCondition,
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
-  const paramStr = JSON.stringify(event.parameters);
-  const types = findCredentialTypes(paramStr, condition.patterns);
-  if (types.length === 0) return [];
-  return [{ credential_types: types }];
+  const scope = condition.scope ?? "all";
+  if (scope === "all") {
+    const types = findCredentialTypes(JSON.stringify(event.parameters), condition.patterns);
+    return types.length > 0 ? [{ credential_types: types }] : [];
+  }
+
+  if (scope.includes("exec")) {
+    const command = extractExecText(event);
+    if (command !== null) {
+      const types = findCredentialTypes(command, condition.patterns);
+      if (types.length > 0) return [{ credential_types: types }];
+    }
+  }
+  if (scope.includes("target")) {
+    const types = findCredentialTypes(extractPaths(event).join("\n"), condition.patterns);
+    if (types.length > 0) return [{ credential_types: types }];
+  }
+  if (scope.includes("staged")) {
+    for (const { path, text } of extractStagedContent(event)) {
+      const types = findCredentialTypes(text, condition.patterns);
+      if (types.length > 0) return [{ credential_types: types, staged_path: path }];
+    }
+  }
+  return [];
 }

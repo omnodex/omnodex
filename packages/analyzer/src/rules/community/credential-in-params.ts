@@ -49,6 +49,8 @@ export const RULE_CREDENTIAL_IN_PARAMS: RuleDefinition = {
   conditions: [
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: CREDENTIAL_PATTERNS,
     },
   ],

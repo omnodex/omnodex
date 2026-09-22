@@ -31,6 +31,8 @@ export const RULE_CREDENTIAL_EXFIL: RuleDefinition = {
     { type: "outbound_call" },
     {
       type: "credential_match",
+      // Secrets and payloads: a match in any field is the risk.
+      scope: "all",
       patterns: CREDENTIAL_PATTERNS,
     },
   ],

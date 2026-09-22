@@ -31,7 +31,7 @@
  *   Long-running hosts call endSession() when a session ends to release it.
  */
 
-import type { ToolInvokedEvent } from "@omnodex/shared";
+import type { RiskSeverity, ToolInvokedEvent } from "@omnodex/shared";
 import type {
   Condition,
   MatchContext,
@@ -114,6 +114,13 @@ function evaluateCondition(
       // This case should not be reached; it exists for exhaustive switch.
       return [];
   }
+}
+
+const SEVERITY_ORDER: readonly RiskSeverity[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+
+/** One severity step lower, bottoming out at LOW. */
+function stepDown(severity: RiskSeverity): RiskSeverity {
+  return SEVERITY_ORDER[Math.max(0, SEVERITY_ORDER.indexOf(severity) - 1)];
 }
 
 // ---------------------------------------------------------------------------
@@ -243,10 +250,16 @@ export class RuleEngine {
       // Emit one finding per accumulated context.
       for (const partial of accumulated) {
         const ctx: MatchContext = { ...baseCtx, ...partial };
+        let description = renderTemplate(rule.description_template, ctx);
+        if (ctx.staged_path) {
+          description += ` Found in content written to ${ctx.staged_path}, not in a command that ran.`;
+        }
         const finding: RiskFinding = {
-          severity: rule.severity,
+          severity: ctx.staged_path
+            ? (rule.staged_severity ?? stepDown(rule.severity))
+            : rule.severity,
           category: rule.category,
-          description: renderTemplate(rule.description_template, ctx),
+          description,
           rule_id: rule.rule_id,
           tier: rule.tier,
         };

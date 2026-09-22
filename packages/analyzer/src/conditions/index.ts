@@ -16,3 +16,4 @@ export { evaluateDomainMatch, extractDomains } from "./domain-match.js";
 
 export { evaluateCwdBoundary } from "./cwd-boundary.js";
 export { evaluateSequence, type StatelessConditionFn } from "./sequence.js";
+export { extractExecText, extractStagedContent, isStagedTarget, type StagedContent } from "./scope.js";

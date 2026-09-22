@@ -68,6 +68,7 @@ export type {
   PathPattern,
   CredentialMatchCondition,
   CredentialPattern,
+  CredentialScope,
   OutboundCallCondition,
   SequenceCondition,
   MatchContext,
