@@ -103,7 +103,7 @@ function evaluateCondition(
         sessionState.set(key, new Set<string>());
       }
       const seen = sessionState.get(key)!;
-      return evaluateSessionFirstSeen(condition, event, seen);
+      return evaluateSessionFirstSeen(condition, event, seen, context);
     }
     case "domain_match":
       return evaluateDomainMatch(condition, event);

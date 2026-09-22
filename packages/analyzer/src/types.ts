@@ -268,6 +268,14 @@ export interface SessionFirstSeenCondition {
    * Claude Code tools always use mcp_server="builtin".
    */
   exclude?: string[];
+  /**
+   * "session" (the default): first time in this session. "machine": first
+   * time on this machine, from a persistent store the host supplies (see
+   * machine-state.ts); a server reached over a different transport or host
+   * than recorded also counts. Without a store, "machine" behaves as
+   * "session".
+   */
+  scope?: "session" | "machine";
 }
 
 
@@ -347,6 +355,10 @@ export interface EvaluationContext {
   workspaceRoots?: readonly string[];
   /** The user's home directory, for expanding ~ in paths. */
   home?: string;
+  /** Persistent state for machine-scope rules. */
+  machineState?: import("./machine-state.js").MachineState;
+  /** How the event's MCP server is reached, when its session recorded it. */
+  mcpServerTransport?: import("@omnodex/shared").McpServerTransport;
 }
 
 /**

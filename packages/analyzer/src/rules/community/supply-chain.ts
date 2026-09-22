@@ -110,18 +110,21 @@ export const RULE_SUPPLY_CHAIN_NEW_MCP_SERVER: RuleDefinition = {
   event_types: ["tool.invoked"],
   conditions: [
     {
-      // Fires once per unique mcp_server value per session.
+      // Fires the first time this machine uses an MCP server, and when a
+      // known server is reached over a different transport or host. Every
+      // proxy launch is a new session, so session scope counted restarts.
       // "builtin" is excluded because built-in Claude Code tools always
       // report mcp_server="builtin" and are expected in every session.
       type: "session_first_seen",
       track: "mcp_server",
       exclude: ["builtin"],
+      scope: "machine",
     },
   ],
   severity: "LOW",
   category: "supply_chain",
   description_template:
-    "MCP server {{mcp_server}} invoked for the first time in this session via {{tool_name}}. Verify this server was expected.",
+    "MCP server {{mcp_server}} ({{matched_label}}) invoked via {{tool_name}}. Verify this server was expected.",
 };
 
 export const RULE_SUPPLY_CHAIN_SKILL_MANIPULATION: RuleDefinition = {

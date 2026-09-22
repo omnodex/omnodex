@@ -81,12 +81,12 @@ const SEQUENCE_RULE = {
 describe("classifyRule", () => {
   // Pinned so that a rule gaining state cannot silently reach the hook host.
   const STATEFUL = {
-    RULE_SUPPLY_CHAIN_NEW_MCP_SERVER: "session",
+    RULE_SUPPLY_CHAIN_NEW_MCP_SERVER: "machine",
     RULE_UNBOUNDED_CONSUMPTION_BURST: "session",
     RULE_UNBOUNDED_CONSUMPTION_SUSTAINED: "session",
   };
 
-  it("classifies every community rule, and only the three stateful ones as session", () => {
+  it("classifies every community rule: 34 event, 2 session, 1 machine", () => {
     assert.equal(COMMUNITY_RULES.length, 37);
     for (const rule of COMMUNITY_RULES) {
       assert.equal(classifyRule(rule), STATEFUL[rule.rule_id] ?? "event", rule.rule_id);

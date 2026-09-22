@@ -46,6 +46,8 @@ export {
   HOST_CLASSES,
 } from "./evaluator.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
+export { openMachineState, memoryMachineState, KNOWN_MCP_SERVERS_FILE } from "./machine-state.js";
+export type { MachineState, SeenResult } from "./machine-state.js";
 export type { WorkspaceRootsFn } from "./workspace.js";
 export type {
   Evaluator,

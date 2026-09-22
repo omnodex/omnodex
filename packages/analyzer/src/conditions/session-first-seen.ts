@@ -19,7 +19,7 @@
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
-import type { SessionFirstSeenCondition, MatchContext } from "../types.js";
+import type { EvaluationContext, SessionFirstSeenCondition, MatchContext } from "../types.js";
 
 /**
  * Evaluate a session_first_seen condition against a tool.invoked event.
@@ -37,6 +37,7 @@ export function evaluateSessionFirstSeen(
   condition: SessionFirstSeenCondition,
   event: ToolInvokedEvent,
   seen: Set<string>,
+  context: EvaluationContext = {},
 ): Partial<MatchContext>[] {
   const value =
     condition.track === "mcp_server" ? event.mcp_server : event.tool_name;
@@ -44,10 +45,20 @@ export function evaluateSessionFirstSeen(
   // Skip excluded values -- they are never recorded or reported.
   if (condition.exclude?.includes(value)) return [];
 
+  if (condition.scope === "machine" && condition.track === "mcp_server" && context.machineState) {
+    const result = context.machineState.noteMcpServer(value, context.mcpServerTransport, event.occurred_at);
+    if (result === "new") return [{ matched_label: "first use on this machine" }];
+    if (result === "changed") {
+      const t = context.mcpServerTransport;
+      return [{ matched_label: `now reached over ${t?.transport}${t?.host ? ` at ${t.host}` : ""}, not as recorded` }];
+    }
+    return [];
+  }
+
   if (seen.has(value)) return [];
 
   // Record before returning so the value is marked seen regardless of
   // whether other conditions in the same rule subsequently fail.
   seen.add(value);
-  return [{}];
+  return [{ matched_label: "first use in this session" }];
 }

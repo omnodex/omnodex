@@ -37,7 +37,7 @@
 import { EventLog, newEventId } from "@omnodex/event-log";
 import { Projector } from "@omnodex/projection";
 import type { ReadModelStore } from "@omnodex/projection";
-import { createEvaluator, loadRegistry, type Evaluator } from "@omnodex/analyzer";
+import { createEvaluator, loadRegistry, type Evaluator, type MachineState } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import type { DashboardServer } from "./dashboard-server.js";
 import type { StreamingTransport } from "@omnodex/sync-encryptor";
@@ -231,6 +231,7 @@ export function startStreamingLoop(
   projector: Projector,
   server: DashboardServer,
   cloudTransport: StreamingTransport | null = null,
+  options: { machineState?: MachineState } = {},
 ): { stop: () => void } {
   // Normalise: single EventLog → one-element roots array.
   const roots: StreamingRoot[] = Array.isArray(logOrRoots)
@@ -239,7 +240,12 @@ export function startStreamingLoop(
 
   const ctrl = new AbortController();
   const activeSessions = new Set<string>();
-  const evaluator = createEvaluator({ host: "batch", registry: loadRegistry(), newEventId });
+  const evaluator = createEvaluator({
+    host: "batch",
+    registry: loadRegistry(),
+    newEventId,
+    machineState: options.machineState,
+  });
 
   function launchTail(
     sessionId: string,

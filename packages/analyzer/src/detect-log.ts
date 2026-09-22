@@ -30,6 +30,7 @@ import { EventLog, newEventId as defaultNewEventId } from "@omnodex/event-log";
 import type { RiskDetectedEvent } from "@omnodex/shared";
 import { detectRisks } from "./detect.js";
 import type { RuleRegistry } from "./registry.js";
+import { openMachineState, type MachineState } from "./machine-state.js";
 
 /** Watermark file written under OMNODEX_HOME by the background pass. */
 export const DETECT_STATE_FILE = "detect-state.json";
@@ -47,6 +48,8 @@ export interface DetectLogOptions {
   statePath?: string;
   newEventId?: () => string;
   registry?: RuleRegistry;
+  /** Persistent state for machine-scope rules (see openMachineState). */
+  machineState?: MachineState;
   /** Called once per evaluated session, for progress output. */
   onSession?: (report: SessionDetectReport) => void;
 }
@@ -102,7 +105,9 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
         const events = await log.readSession(sessionId);
         if (events.length > 0) {
           result.scanned++;
-          const detection = detectRisks(events, newEventId, opts.registry);
+          const detection = detectRisks(events, newEventId, opts.registry, {
+            machineState: opts.machineState,
+          });
           result.skipped += detection.skipped;
           if (detection.newEvents.length > 0) {
             await log.appendMany(detection.newEvents);
@@ -138,9 +143,11 @@ export async function runBackgroundDetect(
   home: string,
   opts: { newEventId?: () => string; registry?: RuleRegistry } = {},
 ): Promise<RiskDetectedEvent[]> {
+  const roots = [path.join(home, "event-log")];
   const result = await detectEventLogs({
-    roots: [path.join(home, "event-log")],
+    roots,
     statePath: path.join(home, DETECT_STATE_FILE),
+    machineState: openMachineState(home, { seedRoots: roots }),
     newEventId: opts.newEventId,
     registry: opts.registry,
   });
