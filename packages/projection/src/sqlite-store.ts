@@ -188,6 +188,11 @@ export class SqliteReadModelStore implements ReadModelStore {
     db.exec(
       "CREATE INDEX IF NOT EXISTS idx_tool_calls_correlation ON tool_calls(correlation_id)",
     );
+
+    // Migration 4: correlation id on findings (2026-09-22). The hook and the
+    // proxy can each raise a finding on one routed call; the shared id lets
+    // readers count it once.
+    this.addColumnIfMissing("risk_events", "correlation_id", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -389,6 +394,18 @@ export class SqliteReadModelStore implements ReadModelStore {
     return Number(result.changes) > 0;
   }
 
+  async setRiskCorrelation(relatedEventIds: readonly string[], correlationId: string): Promise<number> {
+    if (relatedEventIds.length === 0) return 0;
+    const db = this.requireDb();
+    const marks = relatedEventIds.map(() => "?").join(", ");
+    const stmt = db.prepare(
+      `UPDATE risk_events SET correlation_id = ?
+         WHERE related_event_id IN (${marks}) AND (correlation_id IS NULL OR correlation_id != ?)`,
+    );
+    const result = stmt.run(correlationId, ...(relatedEventIds as string[]), correlationId);
+    return Number(result.changes);
+  }
+
   async getSession(sessionId: string): Promise<SessionRow | null> {
     const db = this.requireDb();
     const stmt = db.prepare(
@@ -429,11 +446,13 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
+      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, correlation_id FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
     );
-    return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map((r) => ({
+    return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map(({ correlation_id, ...r }) => ({
       ...r,
       severity: r.severity as RiskSeverity,
+      // Only on correlated findings, so other rows keep their shape.
+      ...(correlation_id ? { correlation_id } : {}),
     }));
   }
 
@@ -495,6 +514,7 @@ interface RiskEventRowRaw {
   description: string;
   rule_id: string;
   detected_at: string;
+  correlation_id: string | null;
 }
 
 function toSessionRow(raw: SessionRowRaw): SessionRow {

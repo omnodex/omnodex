@@ -192,6 +192,9 @@ omnodex detect [session]            scan event log for risks (all sessions if om
                                       background, with or without a connected dashboard:
                                       when a session ends, and at least every 15 minutes
                                       while one runs. Turn off with OMNODEX_AUTO_DETECT=0.
+                                      The MCP proxy also judges each call as it records it
+                                      (off the response path); OMNODEX_CAPTURE_DETECT=0
+                                      turns that off.
 omnodex replay                      rebuild the SQLite read model from the event log
 omnodex report                      print a session summary
 omnodex dashboard [port]            start the local dashboard (default port 7890)

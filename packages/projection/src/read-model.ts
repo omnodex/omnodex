@@ -90,6 +90,24 @@ export interface RiskEventRow {
   description: string;
   rule_id: string;
   detected_at: string;
+  /**
+   * Set when the finding's tool call is one half of a correlated hook and
+   * proxy pair: the pair's correlation_id. Both observations of a routed
+   * call can raise the same finding; findingKey() counts them once.
+   */
+  correlation_id?: string | null;
+}
+
+/**
+ * Identity of a finding for counting: rule plus the call it is about. The
+ * hook's and the proxy's finding on one routed call share a correlation_id,
+ * so they share a key; any other finding is keyed on its own session and
+ * call.
+ */
+export function findingKey(row: Pick<RiskEventRow, "rule_id" | "session_id" | "related_event_id" | "correlation_id">): string {
+  return row.correlation_id
+    ? `${row.rule_id}::corr:${row.correlation_id}`
+    : `${row.rule_id}::${row.session_id}::${row.related_event_id}`;
 }
 
 /**
@@ -147,6 +165,11 @@ export interface ReadModelStore {
    * the finding is already recorded.
    */
   insertRiskEvent(row: RiskEventRow): Promise<boolean>;
+  /**
+   * Mark every finding about any of the given tool calls with a
+   * correlation_id. Returns how many rows changed.
+   */
+  setRiskCorrelation(relatedEventIds: readonly string[], correlationId: string): Promise<number>;
   /** Query helpers used by tests and the CLI demo output. */
   getSession(sessionId: string): Promise<SessionRow | null>;
   listSessions(): Promise<SessionRow[]>;

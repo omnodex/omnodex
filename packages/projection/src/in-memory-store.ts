@@ -130,6 +130,18 @@ export class InMemoryReadModelStore implements ReadModelStore {
     return true;
   }
 
+  async setRiskCorrelation(relatedEventIds: readonly string[], correlationId: string): Promise<number> {
+    const ids = new Set(relatedEventIds);
+    let changed = 0;
+    for (const row of this.riskEvents) {
+      if (ids.has(row.related_event_id) && row.correlation_id !== correlationId) {
+        row.correlation_id = correlationId;
+        changed++;
+      }
+    }
+    return changed;
+  }
+
   async getSession(sessionId: string): Promise<SessionRow | null> {
     const row = this.sessions.get(sessionId);
     return row ? { ...row } : null;
