@@ -44,7 +44,19 @@ export {
   classifyRule,
   loadRegistry,
   HOST_CLASSES,
+  classesLeftAfterCapture,
 } from "./evaluator.js";
+export {
+  judgeCaptured,
+  captureDetectEnabled,
+  captureTimeoutMs,
+  CAPTURE_HOSTS,
+  CAPTURE_DETECT_ENV,
+  CAPTURE_TIMEOUT_ENV,
+  DEFAULT_CAPTURE_TIMEOUT_MS,
+  CaptureTimeoutError,
+} from "./capture.js";
+export type { JudgeCapturedOptions } from "./capture.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
 export { openMachineState, memoryMachineState, KNOWN_MCP_SERVERS_FILE } from "./machine-state.js";
 export type { MachineState, SeenResult } from "./machine-state.js";
@@ -55,6 +67,7 @@ export type {
   EvaluatorOptions,
   EvaluatorStats,
   EvaluationClass,
+  EvaluateOptions,
 } from "./evaluator.js";
 
 // Engine and registry (custom integrations)

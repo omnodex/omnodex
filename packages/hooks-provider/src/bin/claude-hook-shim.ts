@@ -26,6 +26,8 @@
  *
  *   - OMNODEX_HOME      location of the event log, defaults to ~/.omnodex
  *   - OMNODEX_DEBUG     set to "1" to get verbose stderr logging
+ *   - OMNODEX_CAPTURE_DETECT  set to "0" to skip judging tool calls here
+ *                             (the background pass still judges them)
  *
  * When a session ends, the shim starts a detached copy of itself with
  * OMNODEX_AUTO_SYNC_CHILD=1, which pushes an encrypted sync blob and exits
@@ -37,6 +39,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { EventLog, newEventId } from "@omnodex/event-log";
+import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
 import {
@@ -150,6 +153,20 @@ async function main(): Promise<number> {
     for (const event of events) {
       await log.append(event);
     }
+    // Judge the call against the per-event rules here, so its findings are
+    // written and pushed with it. Capped in time; on a timeout or error
+    // the background pass judges it instead.
+    const findings = captureDetectEnabled()
+      ? await judgeCaptured(events, {
+          newEventId,
+          onError: (err) => {
+            if (debug) console.error(`[omnodex-hook] rule evaluation skipped: ${(err as Error).message}`);
+          },
+        })
+      : [];
+    for (const finding of findings) {
+      await log.append(finding);
+    }
     await log.close();
     if (debug) {
       console.error(
@@ -161,7 +178,7 @@ async function main(): Promise<number> {
     // and streaming key from disk, encrypts, and POSTs with a short timeout.
     // It never throws -- errors are swallowed silently. On cache hit the
     // typical overhead is ~50-100ms; Argon2id only runs on first use.
-    await pushEventsToCloud(events, home);
+    await pushEventsToCloud([...events, ...findings], home);
 
     // Refresh the hosted dashboard's sync blob in the background.
     // The same detached child runs detection first, so it also starts

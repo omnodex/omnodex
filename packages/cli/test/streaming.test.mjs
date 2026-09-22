@@ -479,3 +479,39 @@ test("tailSession: a finding appended by another process is not written again", 
   assert.equal(risks.length, 1);
   await log.close();
 });
+
+test("tailSession: leaves per-event findings on hook and proxy calls to the capture path", async () => {
+  const root = await mkTmp();
+  const log = new EventLog({ root });
+  await log.init();
+  const store = new InMemoryReadModelStore();
+  const projector = new Projector(store);
+  const server = makeMockServer();
+
+  const e1 = sessionStarted("sess_cap");
+  await log.append(e1);
+  await projector.replay((async function* () { yield e1; })());
+
+  const ctrl = new AbortController();
+  const tail = tailSession(
+    "sess_cap", log, store, projector, server,
+    createEvaluator({ host: "batch", newEventId }), ctrl.signal,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+
+  // The hook shim and the proxy write their own finding just after the
+  // event; the tail reads the event first and must not race them.
+  await log.append({ ...sensitiveToolInvoked("sess_cap", 1), interceptor: "claude-code-hook" });
+  await log.append({ ...sensitiveToolInvoked("sess_cap", 2), interceptor: "mcp-proxy" });
+  // A call from an interceptor that does not evaluate is still judged here.
+  await log.append(sensitiveToolInvoked("sess_cap", 3));
+  await waitFor(() => server.messages.some((m) => m.type === "risk_event.inserted"));
+  await new Promise((r) => setTimeout(r, 100));
+  ctrl.abort();
+  await tail;
+
+  const logged = await log.readSession("sess_cap");
+  const risks = logged.filter((e) => e.event_type === "risk.detected");
+  assert.deepEqual(risks.map((e) => e.related_event_id), ["tc_sess_cap_3"]);
+  await log.close();
+});
