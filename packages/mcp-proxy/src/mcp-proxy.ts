@@ -49,6 +49,7 @@ import {
   type ProxyHttpServer,
 } from "./http-server.js";
 import { createCloudPushQueue, type CloudPushFn } from "./cloud-push.js";
+import { createProxyEvaluation, type LoadEvaluatorFn } from "./evaluation.js";
 import {
   startAutoSyncTimer,
   type AutoSyncTimer,
@@ -80,6 +81,8 @@ export interface MCPProxyOptions {
     startSyncFn?: StartSyncFn;
     autoSyncIntervalMs?: number;
     pushFlushDelayMs?: number;
+    /** Evaluator factory for rule detection; tests replace it. */
+    loadEvaluator?: LoadEvaluatorFn;
   };
 }
 
@@ -118,7 +121,8 @@ export class MCPProxy implements Interceptor {
    *   2. Starts the inbound MCP server on stdin/stdout right away, so the
    *      agent is answered even while upstreams are slow or failing.
    *   3. Pushes each event to the cloud relay and refreshes the sync blob on
-   *      a timer, both fire-and-forget.
+   *      a timer, both fire-and-forget, and judges each event against the
+   *      rules off the response path (see evaluation.ts).
    *   4. Runs until the agent disconnects, then emits session.ended.
    *
    * Returns a StopFn that flushes the pending cloud push, cancels the sync
@@ -137,9 +141,21 @@ export class MCPProxy implements Interceptor {
       pushFn: this.hooks?.pushFn,
       flushDelayMs: this.hooks?.pushFlushDelayMs,
     });
+    // Rule detection runs on each recorded event, off the response path.
+    // OMNODEX_CAPTURE_DETECT=0 turns it off; the background pass still runs.
+    const evaluation =
+      process.env.OMNODEX_CAPTURE_DETECT === "0"
+        ? null
+        : createProxyEvaluation({
+            home: this.home,
+            emit,
+            push: (event) => push.enqueue(event),
+            loadEvaluator: this.hooks?.loadEvaluator,
+          });
     const emitAndPush: EmitFn = async (event) => {
       await emit(event);
       push.enqueue(event);
+      evaluation?.observe(event);
     };
 
     // Needs a script to re-spawn, so an embedder that has not opted in by
@@ -184,6 +200,8 @@ export class MCPProxy implements Interceptor {
       // Ends every HTTP session first, so each records session.ended.
       await this.httpServer?.close();
       syncTimer?.stop();
+      // Findings for the last events, before the final push.
+      await evaluation?.drain();
       // Sends session.ended and anything still batched behind it. Bounded by
       // pushEventsToCloud's own request timeout, so shutdown cannot hang.
       await push.close();

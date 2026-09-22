@@ -10,6 +10,7 @@ import {
   correlateToolCalls,
   runCorrelation,
   upstreamSuffix,
+  findingKey,
 } from "../dist/index.js";
 
 /**
@@ -553,6 +554,55 @@ for (const kind of ["in-memory", "sqlite"]) {
     assert.equal(hookRows[0].interceptor, "claude-code-hook");
     assert.equal(proxyRows[0].interceptor, "mcp-proxy");
 
+    await store.close();
+  });
+
+  test(`a finding raised by both the hook and the proxy counts once (${kind})`, async () => {
+    const store = await openStore(kind);
+    const calls = routedCallEvents().filter((e) => e.event_type === "tool.invoked");
+    const hookCall = calls.find((e) => e.interceptor === "claude-code-hook");
+    const proxyCall = calls.find((e) => e.interceptor === "mcp-proxy");
+    const finding = (session, related, id, rule = "RULE_SENSITIVE_PATH_READ") => ({
+      schema_version: 1,
+      event_id: id,
+      session_id: session,
+      occurred_at: "2026-09-18T21:18:10.000Z",
+      recorded_at: "2026-09-18T21:18:10.000Z",
+      interceptor: "analyzer",
+      event_type: "risk.detected",
+      severity: "HIGH",
+      category: "sensitive_path_read",
+      description: "x",
+      related_event_id: related,
+      rule_id: rule,
+    });
+    await project(
+      [
+        ...routedCallEvents(),
+        finding(HOOK_SESSION, hookCall.tool_call_id, "risk-hook"),
+        finding(PROXY_SESSION, proxyCall.tool_call_id, "risk-proxy"),
+        finding(PROXY_SESSION, proxyCall.tool_call_id, "risk-proxy-only", "RULE_SUPPLY_CHAIN_NEW_MCP_SERVER"),
+      ],
+      store,
+    );
+
+    const before = [...(await store.listRiskEvents(HOOK_SESSION)), ...(await store.listRiskEvents(PROXY_SESSION))];
+    assert.equal(new Set(before.map(findingKey)).size, 3, "uncorrelated, the pair counts twice");
+
+    const summary = await runCorrelation(store);
+    assert.equal(summary.risksUpdated, 3);
+
+    const hookRisks = await store.listRiskEvents(HOOK_SESSION);
+    const proxyRisks = await store.listRiskEvents(PROXY_SESSION);
+    const all = [...hookRisks, ...proxyRisks];
+    // Both rows survive, joined by the pair's id, and count as one finding.
+    assert.equal(all.length, 3);
+    assert.ok(all[0].correlation_id);
+    assert.ok(all.every((r) => r.correlation_id === all[0].correlation_id));
+    assert.equal(new Set(all.map(findingKey)).size, 2, "one finding per rule for the routed call");
+
+    const again = await runCorrelation(store);
+    assert.equal(again.risksUpdated, 0, "a second pass has nothing to change");
     await store.close();
   });
 

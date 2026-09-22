@@ -28,12 +28,15 @@ export interface CorrelationSummary {
   rowsUpdated: number;
   /** Sessions whose mcp_servers list changed. */
   sessionsUpdated: number;
+  /** Findings that gained their pair's correlation_id. */
+  risksUpdated: number;
 }
 
 /**
  * Correlate every tool call in the store and record what was found.
  *
- * Both rows of a pair keep their place; they gain a shared correlation_id.
+ * Both rows of a pair keep their place; they gain a shared correlation_id,
+ * and so does every finding raised against either of them.
  * The hook's row also takes the proxy's upstream server name, because the
  * hook could only ever see the proxy itself: a call the agent recorded
  * against "omnodex" actually went to "filesystem", and the latter is what a
@@ -76,7 +79,17 @@ export async function runCorrelation(
 
   const sessionsUpdated = await reconcileSessionServers(store, sessions, toolCalls, correlations);
 
-  return { correlations, rowsUpdated, sessionsUpdated };
+  // Findings follow their calls: the hook and the proxy can each judge the
+  // same routed call, and the shared id lets readers count it once.
+  let risksUpdated = 0;
+  for (const c of correlations) {
+    risksUpdated += await store.setRiskCorrelation(
+      [c.hook_tool_call_id, c.proxy_tool_call_id],
+      c.correlation_id,
+    );
+  }
+
+  return { correlations, rowsUpdated, sessionsUpdated, risksUpdated };
 }
 
 /**

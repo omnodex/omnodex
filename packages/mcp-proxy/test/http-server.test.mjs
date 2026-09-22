@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
 
@@ -180,7 +181,10 @@ test("foreign Host or Origin headers, unknown paths and unknown sessions are rej
 });
 
 test("MCPProxy serves over HTTP when given the http option", async () => {
+  // A scratch home: the proxy keeps machine state for rule detection there.
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-http-proxy-"));
   const proxy = new MCPProxy(makeConfig(), {
+    home,
     projectPath: "/home/case/project",
     http: { host: "127.0.0.1", port: 0 },
     hooks: { pushFn: async () => undefined },
