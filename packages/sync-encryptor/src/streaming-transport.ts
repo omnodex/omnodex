@@ -23,7 +23,11 @@
  *   transport.stop();
  *
  * Design:
- *   - Buffers events and flushes every 100ms or when 50 events accumulate.
+ *   - Buffers events and flushes every second or when 50 events accumulate,
+ *     so a burst of tool calls shares one request.
+ *   - Stops pushing while the relay reports no dashboard watching, probing
+ *     again after a growing back-off (see live-gate.ts). Events dropped
+ *     meanwhile reach the dashboard through blob sync.
  *   - Fire-and-forget: a failed push logs a warning but never throws or
  *     blocks the local pipeline.
  *   - Each event is individually encrypted with a fresh 12-byte IV.
@@ -33,6 +37,7 @@
 import type { TraceEvent } from "@omnodex/shared";
 import type { AesGcmKey } from "./crypto.js";
 import { encrypt } from "./crypto.js";
+import { LiveGate, livePushOutcome } from "./live-gate.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,7 +52,7 @@ export interface StreamingTransportOptions {
   keyId: string;
   /** Pre-derived AES-256-GCM streaming key. */
   streamingKey: AesGcmKey;
-  /** Flush interval in ms. Default: 100. */
+  /** Flush interval in ms. Default: 1000. */
   flushIntervalMs?: number;
   /** Max events per batch before forcing a flush. Default: 50. */
   maxBatchSize?: number;
@@ -92,13 +97,14 @@ export class StreamingTransport {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private flushing = false;
   private stopped = false;
+  private readonly gate = new LiveGate();
 
   constructor(opts: StreamingTransportOptions) {
     this.apiBase = opts.apiBase.replace(/\/$/, "");
     this.apiToken = opts.apiToken;
     this.keyId = opts.keyId;
     this.streamingKey = opts.streamingKey;
-    this.flushIntervalMs = opts.flushIntervalMs ?? 100;
+    this.flushIntervalMs = opts.flushIntervalMs ?? 1000;
     this.maxBatchSize = opts.maxBatchSize ?? 50;
     this.timeoutMs = opts.timeoutMs ?? 10_000;
   }
@@ -179,6 +185,12 @@ export class StreamingTransport {
     const batch = this.buffer;
     this.buffer = [];
 
+    // No one watching: drop the batch; blob sync carries these events.
+    if (!this.gate.open()) {
+      this.flushing = false;
+      return;
+    }
+
     try {
       const url = this.apiBase + "/api/v1/sync/events";
       const controller = new AbortController();
@@ -199,15 +211,14 @@ export class StreamingTransport {
         });
 
         if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          console.warn(
-            "[stream] push failed: HTTP " + res.status + " " + text.slice(0, 200),
-          );
+          console.warn("[stream] push failed: HTTP " + res.status);
         }
+        this.gate.record(await livePushOutcome(res));
       } finally {
         clearTimeout(timer);
       }
     } catch (err) {
+      this.gate.record("failed");
       // Fire-and-forget: log and continue. Events are lost on failure,
       // which is acceptable -- the blob sync is the durable record.
       console.warn("[stream] push error (batch of " + batch.length + " dropped):", err);
