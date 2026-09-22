@@ -18,6 +18,7 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { ToolNameMatchCondition, MatchContext } from "../types.js";
+import { compiled } from "./regex-cache.js";
 
 /**
  * Evaluate a tool_name_match condition against a tool.invoked event.
@@ -33,11 +34,11 @@ export function evaluateToolNameMatch(
   for (const pattern of condition.patterns) {
     const toolOk =
       pattern.tool_name_regex === undefined ||
-      new RegExp(pattern.tool_name_regex).test(event.tool_name);
+      compiled(pattern.tool_name_regex).test(event.tool_name);
 
     const serverOk =
       pattern.mcp_server_regex === undefined ||
-      new RegExp(pattern.mcp_server_regex).test(event.mcp_server);
+      compiled(pattern.mcp_server_regex).test(event.mcp_server);
 
     if (toolOk && serverOk) {
       return [{ matched_label: pattern.label }];

@@ -43,7 +43,8 @@ test("the timer asks for a sync repeatedly, with the home and script to respawn"
   try {
     await new Promise((r) => setTimeout(r, 60));
     assert.ok(calls.length >= 2, `expected repeated ticks, got ${calls.length}`);
-    assert.deepEqual(calls[0], { home: HOME, scriptPath: SCRIPT });
+    // detect: the child also runs rule detection before it syncs.
+    assert.deepEqual(calls[0], { home: HOME, scriptPath: SCRIPT, detect: true });
   } finally {
     timer.stop();
   }

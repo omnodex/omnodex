@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@omnodex/analyzer": "*",
     "@omnodex/event-log": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*",

@@ -3,7 +3,8 @@
 // startBackgroundSync decides whether a session end should start a sync
 // (settings, entitlement, throttle, lock) and spawns a detached child.
 // runAutoSync runs the sync under a lock against a local HTTP server and
-// records the outcome in auto-sync-state.json.
+// records the outcome in auto-sync-state.json. With detection wired in, the
+// child runs even where there is nothing to sync, and detection runs first.
 //
 // Run: node --test packages/sync-encryptor/test/auto-sync.test.mjs
 
@@ -18,6 +19,7 @@ import { EventLog } from "@omnodex/event-log";
 import {
   startBackgroundSync,
   runAutoSync,
+  backgroundPassDue,
   readAutoSyncState,
   readAutoSyncIntervalMs,
   includesSessionEnd,
@@ -333,5 +335,277 @@ describe("runAutoSync", () => {
     assert.equal(server.requests.length, 0);
     // The other sync's lock is left in place.
     await stat(path.join(home, "auto-sync.lock"));
+  });
+});
+
+describe("startBackgroundSync with detection", () => {
+  let home;
+  let saved;
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "omnodex-autosync-detect-"));
+    saved = { sync: process.env.OMNODEX_AUTO_SYNC, detect: process.env.OMNODEX_AUTO_DETECT };
+    delete process.env.OMNODEX_AUTO_SYNC;
+    delete process.env.OMNODEX_AUTO_DETECT;
+  });
+
+  afterEach(async () => {
+    for (const [name, value] of [["OMNODEX_AUTO_SYNC", saved.sync], ["OMNODEX_AUTO_DETECT", saved.detect]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it("starts the child without credentials, so a free install is analyzed", async () => {
+    const spawn = recordingSpawn();
+    const decision = await startBackgroundSync({
+      home, scriptPath: "shim.js", spawnFn: spawn.fn, detect: true,
+    });
+    assert.equal(decision, "started");
+    assert.equal(spawn.calls.length, 1);
+    assert.equal(spawn.calls[0].env[AUTO_SYNC_CHILD_ENV], "1");
+  });
+
+  it("starts the child when the license lacks encrypted_sync", async () => {
+    await writeCredentials(home);
+    await writeJson(home, "license-cache.json", {
+      response: { customer_id: CUSTOMER_ID, tier: "free", features: ["local_dashboard"] },
+    });
+    const spawn = recordingSpawn();
+    assert.equal(
+      await startBackgroundSync({ home, scriptPath: "shim.js", spawnFn: spawn.fn, detect: true }),
+      "started",
+    );
+  });
+
+  it("starts the child when sync is turned off", async () => {
+    await writeCredentials(home, { auto_sync: false });
+    process.env.OMNODEX_AUTO_SYNC = "0";
+    const spawn = recordingSpawn();
+    assert.equal(
+      await startBackgroundSync({ home, scriptPath: "shim.js", spawnFn: spawn.fn, detect: true }),
+      "started",
+    );
+  });
+
+  it("falls back to the sync decision when detection is turned off", async () => {
+    process.env.OMNODEX_AUTO_DETECT = "0";
+    const spawn = recordingSpawn();
+    assert.equal(
+      await startBackgroundSync({ home, scriptPath: "shim.js", spawnFn: spawn.fn, detect: true }),
+      "no-credentials",
+    );
+    assert.equal(spawn.calls.length, 0);
+  });
+
+  it("throttles to the default minimum interval without credentials", async () => {
+    const spawn = recordingSpawn();
+    const t0 = Date.parse("2026-09-21T12:00:00Z");
+    const start = (now) =>
+      startBackgroundSync({ home, scriptPath: "s.js", now, spawnFn: spawn.fn, detect: true });
+
+    assert.equal(await start(t0), "started");
+    assert.equal(await start(t0 + 30_000), "too-soon");
+    assert.equal(await start(t0 + 61_000), "started");
+    assert.equal(spawn.calls.length, 2);
+  });
+});
+
+describe("backgroundPassDue", () => {
+  let home;
+  let saved;
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "omnodex-pass-due-"));
+    saved = { sync: process.env.OMNODEX_AUTO_SYNC, detect: process.env.OMNODEX_AUTO_DETECT };
+    delete process.env.OMNODEX_AUTO_SYNC;
+    delete process.env.OMNODEX_AUTO_DETECT;
+  });
+
+  afterEach(async () => {
+    for (const [name, value] of [["OMNODEX_AUTO_SYNC", saved.sync], ["OMNODEX_AUTO_DETECT", saved.detect]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(home, { recursive: true, force: true });
+  });
+
+  it("is due when there has never been a pass", async () => {
+    assert.equal(await backgroundPassDue(home), true);
+  });
+
+  it("is not due within the timer period and is due after it", async () => {
+    const t0 = Date.parse("2026-09-21T12:00:00Z");
+    await writeJson(home, "auto-sync-state.json", { last_attempt_at: new Date(t0).toISOString() });
+    const period = DEFAULT_AUTO_SYNC_INTERVAL_SECONDS * 1000;
+
+    assert.equal(await backgroundPassDue(home, t0 + period - 1000), false);
+    assert.equal(await backgroundPassDue(home, t0 + period), true);
+  });
+
+  it("follows a configured timer period", async () => {
+    const t0 = Date.parse("2026-09-21T12:00:00Z");
+    await writeJson(home, "auto-sync-state.json", { last_attempt_at: new Date(t0).toISOString() });
+    await writeJson(home, "stream-config.json", { auto_sync_interval_seconds: 120 });
+
+    assert.equal(await backgroundPassDue(home, t0 + 119_000), false);
+    assert.equal(await backgroundPassDue(home, t0 + 120_000), true);
+  });
+
+  it("is due after the minimum interval when a throttled pass is pending", async () => {
+    const t0 = Date.parse("2026-09-21T12:00:00Z");
+    const spawn = recordingSpawn();
+    const start = (now) =>
+      startBackgroundSync({ home, scriptPath: "s.js", now, spawnFn: spawn.fn, detect: true });
+
+    assert.equal(await start(t0), "started");
+    // A session ends 20 seconds later: throttled, so its tail is unanalyzed.
+    assert.equal(await start(t0 + 20_000), "too-soon");
+    assert.equal((await readAutoSyncState(home)).pass_pending, true);
+
+    assert.equal(await backgroundPassDue(home, t0 + 30_000), false);
+    assert.equal(await backgroundPassDue(home, t0 + 61_000), true);
+
+    assert.equal(await start(t0 + 61_000), "started");
+    assert.equal((await readAutoSyncState(home)).pass_pending, false);
+    assert.equal(await backgroundPassDue(home, t0 + 122_000), false);
+  });
+
+  it("marks a pass pending when one is already running", async () => {
+    await writeFile(path.join(home, "auto-sync.lock"), "{}");
+    const spawn = recordingSpawn();
+    assert.equal(
+      await startBackgroundSync({ home, scriptPath: "s.js", spawnFn: spawn.fn, detect: true }),
+      "in-progress",
+    );
+    assert.equal((await readAutoSyncState(home)).pass_pending, true);
+  });
+
+  it("does not mark a pass pending for a sync-only request", async () => {
+    await writeCredentials(home, { auto_sync_min_interval_seconds: 120 });
+    const t0 = Date.parse("2026-09-21T12:00:00Z");
+    const spawn = recordingSpawn();
+    await startBackgroundSync({ home, scriptPath: "s.js", now: t0, spawnFn: spawn.fn });
+    assert.equal(
+      await startBackgroundSync({ home, scriptPath: "s.js", now: t0 + 10_000, spawnFn: spawn.fn }),
+      "too-soon",
+    );
+    assert.equal((await readAutoSyncState(home)).pass_pending, false);
+  });
+
+  it("is never due when both detection and sync are turned off", async () => {
+    process.env.OMNODEX_AUTO_SYNC = "0";
+    process.env.OMNODEX_AUTO_DETECT = "0";
+    assert.equal(await backgroundPassDue(home), false);
+  });
+});
+
+describe("runAutoSync with detection", () => {
+  let home;
+  let server;
+  let saved;
+
+  beforeEach(async () => {
+    home = await mkdtemp(path.join(os.tmpdir(), "omnodex-autosync-run-detect-"));
+    saved = { sync: process.env.OMNODEX_AUTO_SYNC, detect: process.env.OMNODEX_AUTO_DETECT };
+    delete process.env.OMNODEX_AUTO_SYNC;
+    delete process.env.OMNODEX_AUTO_DETECT;
+  });
+
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+    for (const [name, value] of [["OMNODEX_AUTO_SYNC", saved.sync], ["OMNODEX_AUTO_DETECT", saved.detect]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(home, { recursive: true, force: true });
+  });
+
+  const finding = { event_type: "risk.detected", event_id: "evt-case-risk", session_id: "sess-case" };
+
+  function recordingPush() {
+    const pushed = [];
+    return { pushed, fn: async (events) => { pushed.push(...events); return true; } };
+  }
+
+  it("runs detection for a free install, pushes nothing to sync, and records it", async () => {
+    let calls = 0;
+    const push = recordingPush();
+
+    const outcome = await runAutoSync(home, {
+      detect: async () => { calls++; return [finding]; },
+      pushFn: push.fn,
+    });
+
+    assert.equal(outcome, "no-credentials");
+    assert.equal(calls, 1);
+    assert.deepEqual(push.pushed, [finding]);
+    const state = await readAutoSyncState(home);
+    assert.equal(state.last_detect_findings, 1);
+    assert.equal(state.last_detect_error, null);
+    assert.ok(state.last_detect_at);
+    await assert.rejects(stat(path.join(home, "auto-sync.lock")));
+  });
+
+  it("does not push when detection finds nothing", async () => {
+    const push = recordingPush();
+    await runAutoSync(home, { detect: async () => [], pushFn: push.fn });
+    assert.equal(push.pushed.length, 0);
+    assert.equal((await readAutoSyncState(home)).last_detect_findings, 0);
+  });
+
+  it("detects before it syncs for an entitled install", async () => {
+    server = await startSyncServer();
+    await writeCredentials(home, { api_url: server.url });
+    await writeSession(home, "sess-case-3");
+    const order = [];
+
+    const outcome = await runAutoSync(home, {
+      detect: async () => { order.push(`detect:${server.requests.length}`); return []; },
+      pushFn: async () => true,
+    });
+
+    assert.equal(outcome, "synced");
+    assert.deepEqual(order, ["detect:0"]);
+    assert.equal(server.requests.length, 1);
+  });
+
+  it("still syncs when detection throws, and records the error", async () => {
+    server = await startSyncServer();
+    await writeCredentials(home, { api_url: server.url });
+    await writeSession(home, "sess-case-4");
+
+    const outcome = await runAutoSync(home, {
+      detect: async () => { throw new Error("rule engine exploded"); },
+    });
+
+    assert.equal(outcome, "synced");
+    assert.equal(server.requests.length, 1);
+    assert.match((await readAutoSyncState(home)).last_detect_error, /rule engine exploded/);
+  });
+
+  it("skips the sync but still detects when sync is turned off", async () => {
+    server = await startSyncServer();
+    await writeCredentials(home, { api_url: server.url, auto_sync: false });
+    let calls = 0;
+
+    const outcome = await runAutoSync(home, {
+      detect: async () => { calls++; return []; },
+      pushFn: async () => true,
+    });
+
+    assert.equal(outcome, "disabled");
+    assert.equal(calls, 1);
+    assert.equal(server.requests.length, 0);
+  });
+
+  it("skips detection when OMNODEX_AUTO_DETECT=0", async () => {
+    process.env.OMNODEX_AUTO_DETECT = "0";
+    let calls = 0;
+    await runAutoSync(home, { detect: async () => { calls++; return []; } });
+    assert.equal(calls, 0);
+    assert.equal((await readAutoSyncState(home)).last_detect_at, undefined);
   });
 });

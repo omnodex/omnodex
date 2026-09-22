@@ -187,7 +187,11 @@ omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       start     start the proxy server
 
 omnodex spike [name]                run a simulated session through the full pipeline
-omnodex detect [session]            scan event log for risks (all sessions if omitted)
+omnodex detect [session]            scan event log for risks (all sessions if omitted).
+                                      Hooks and the MCP proxy also run detection in the
+                                      background, with or without a connected dashboard:
+                                      when a session ends, and at least every 15 minutes
+                                      while one runs. Turn off with OMNODEX_AUTO_DETECT=0.
 omnodex replay                      rebuild the SQLite read model from the event log
 omnodex report                      print a session summary
 omnodex dashboard [port]            start the local dashboard (default port 7890)

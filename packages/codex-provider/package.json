@@ -21,6 +21,7 @@
     "omnodex-codex-hook": "./dist/bin/codex-hook-shim.js"
   },
   "dependencies": {
+    "@omnodex/analyzer": "*",
     "@omnodex/event-log": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*"

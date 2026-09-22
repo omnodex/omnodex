@@ -63,6 +63,7 @@ export type { CachedLicense, LicenseCredentials } from "./license-cache.js";
 export {
   startBackgroundSync,
   runAutoSync,
+  backgroundPassDue,
   readAutoSyncState,
   readAutoSyncIntervalMs,
   includesSessionEnd,
@@ -70,4 +71,4 @@ export {
   DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS,
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
-export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions } from "./auto-sync.js";
+export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions } from "./auto-sync.js";

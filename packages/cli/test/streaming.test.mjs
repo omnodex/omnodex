@@ -20,12 +20,12 @@ import * as assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { EventLog } from "../../event-log/dist/index.js";
+import { EventLog, newEventId } from "../../event-log/dist/index.js";
 import {
   InMemoryReadModelStore,
   Projector,
 } from "../../projection/dist/index.js";
-import { RuleEngine, RuleRegistry } from "../../analyzer/dist/index.js";
+import { createEvaluator } from "../../analyzer/dist/index.js";
 import { broadcastProjection, tailSession } from "../dist/streaming.js";
 
 // ---------------------------------------------------------------------------
@@ -198,8 +198,7 @@ test("tailSession: projects pre-existing events without re-processing them", asy
   const store = new InMemoryReadModelStore();
   const projector = new Projector(store);
   const server = makeMockServer();
-  const registry = new RuleRegistry();
-  const engine = new RuleEngine(registry.getRules());
+  const engine = createEvaluator({ host: "batch", newEventId });
 
   // Write two events and replay them (simulates cmdDashboard's historical pass).
   const e1 = sessionStarted("sess_ts1");
@@ -237,8 +236,7 @@ test("tailSession: projects new events and runs detection", async () => {
   const store = new InMemoryReadModelStore();
   const projector = new Projector(store);
   const server = makeMockServer();
-  const registry = new RuleRegistry();
-  const engine = new RuleEngine(registry.getRules());
+  const engine = createEvaluator({ host: "batch", newEventId });
 
   const e1 = sessionStarted("sess_ts2");
   await log.append(e1);
@@ -297,8 +295,7 @@ test("tailSession: deduplicates risk events for the same (rule, tool_call)", asy
   const store = new InMemoryReadModelStore();
   const projector = new Projector(store);
   const server = makeMockServer();
-  const registry = new RuleRegistry();
-  const engine = new RuleEngine(registry.getRules());
+  const engine = createEvaluator({ host: "batch", newEventId });
 
   // Pre-existing: session started + sensitive tool already detected
   const e1 = sessionStarted("sess_ts3");
@@ -350,8 +347,7 @@ test("tailSession: replayHistory=true projects history before tailing (FK constr
   const store = new InMemoryReadModelStore();
   const projector = new Projector(store);
   const server = makeMockServer();
-  const registry = new RuleRegistry();
-  const engine = new RuleEngine(registry.getRules());
+  const engine = createEvaluator({ host: "batch", newEventId });
 
   // Simulate: spike wrote these events, then detect appended a risk event.
   // None of them have been projected yet (session appeared after dashboard startup).
@@ -392,5 +388,94 @@ test("tailSession: replayHistory=true projects history before tailing (FK constr
   const risks = await store.listRiskEvents("sess_fk");
   assert.equal(risks.length, 1, "Expected 1 risk event projected from history");
 
+  await log.close();
+});
+
+function mcpToolInvoked(sessionId, seq, server) {
+  return {
+    ...toolInvoked(sessionId, seq),
+    tool_name: `mcp__${server}__list`,
+    mcp_server: server,
+    parameters: {},
+  };
+}
+
+test("tailSession: a restart does not re-fire first-seen rules for history", async () => {
+  // History: the session already used the plane server, and that finding is
+  // recorded. A dashboard restarted mid-session must not report plane as
+  // new again on its next call.
+  const root = await mkTmp();
+  const log = new EventLog({ root });
+  await log.init();
+  const store = new InMemoryReadModelStore();
+  const projector = new Projector(store);
+  const server = makeMockServer();
+
+  const history = [sessionStarted("sess_fs"), mcpToolInvoked("sess_fs", 1, "plane")];
+  await log.appendMany(history);
+  await projector.replay((async function* () { yield* history; })());
+
+  const ctrl = new AbortController();
+  const tail = tailSession(
+    "sess_fs", log, store, projector, server,
+    createEvaluator({ host: "batch", newEventId }), ctrl.signal,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  await log.append(mcpToolInvoked("sess_fs", 2, "plane"));
+  await waitFor(() => server.messages.some((m) => m.type === "tool_call.inserted"));
+  await new Promise((r) => setTimeout(r, 100));
+  ctrl.abort();
+  await tail;
+
+  const logged = await log.readSession("sess_fs");
+  const firstSeen = logged.filter(
+    (e) => e.event_type === "risk.detected" && e.rule_id === "RULE_SUPPLY_CHAIN_NEW_MCP_SERVER",
+  );
+  assert.equal(firstSeen.length, 0, "plane was already seen in this session");
+  await log.close();
+});
+
+test("tailSession: a finding appended by another process is not written again", async () => {
+  const root = await mkTmp();
+  const log = new EventLog({ root });
+  await log.init();
+  const store = new InMemoryReadModelStore();
+  const projector = new Projector(store);
+  const server = makeMockServer();
+
+  const e1 = sessionStarted("sess_ext");
+  await log.append(e1);
+  await projector.replay((async function* () { yield e1; })());
+
+  const ctrl = new AbortController();
+  const tail = tailSession(
+    "sess_ext", log, store, projector, server,
+    createEvaluator({ host: "batch", newEventId }), ctrl.signal,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+
+  // Another host judged tc_sess_ext_1 and recorded its finding; the tail
+  // sees that finding before it sees a repeat observation of the call.
+  await log.append({
+    ...base("sess_ext", "evt_sess_ext_risk_1", 1),
+    event_type: "risk.detected",
+    severity: "HIGH",
+    category: "sensitive_path_read",
+    description: "Read /etc/passwd",
+    related_event_id: "tc_sess_ext_1",
+    rule_id: "RULE_SENSITIVE_PATH_READ",
+  });
+  await waitFor(() => server.messages.some((m) => m.type === "risk_event.inserted"));
+  await log.append(sensitiveToolInvoked("sess_ext", 1));
+  await waitFor(() => server.messages.some((m) => m.type === "tool_call.inserted"));
+  await new Promise((r) => setTimeout(r, 100));
+  ctrl.abort();
+  await tail;
+
+  const logged = await log.readSession("sess_ext");
+  const risks = logged.filter(
+    (e) => e.event_type === "risk.detected" && e.rule_id === "RULE_SENSITIVE_PATH_READ",
+  );
+  assert.equal(risks.length, 1);
   await log.close();
 });
