@@ -9,6 +9,26 @@ export type { SyncEncryptorOptions, SyncResult } from "./sync-encryptor.js";
 
 export { deriveKey, encrypt, decrypt, sha256Hex, randomSalt, randomIv, KDF_PARAMS, deriveStreamingKey, computeKeyId } from "./crypto.js";
 
+export {
+  HPKE_EVENT_SCHEME,
+  HPKE_EVENT_INFO,
+  createStreamSuite,
+  hpkeEventAad,
+  computePublicKeyId,
+  generateStreamKeyPair,
+  sealEvent,
+  openEvent,
+} from "./hpke-event.js";
+export type { HpkeEventWire, StreamKeyPair, StreamPrivateKey } from "./hpke-event.js";
+
+export {
+  WRAPPED_STREAM_KEY_VERSION,
+  deriveStreamWrapKey,
+  wrapStreamPrivateKey,
+  unwrapStreamPrivateKey,
+} from "./stream-keypair.js";
+export type { WrappedStreamKey, StreamWrapKey } from "./stream-keypair.js";
+
 export { serializeReadModel, encodePayload, SYNC_PAYLOAD_VERSION } from "./serializer.js";
 export type { SyncPayload } from "./serializer.js";
 
