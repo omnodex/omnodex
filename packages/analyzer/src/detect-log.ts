@@ -30,6 +30,7 @@ import { EventLog, newEventId as defaultNewEventId } from "@omnodex/event-log";
 import type { RiskDetectedEvent } from "@omnodex/shared";
 import { detectRisks } from "./detect.js";
 import type { RuleRegistry } from "./registry.js";
+import { registryForHost } from "./evaluator.js";
 import { openMachineState, type MachineState } from "./machine-state.js";
 
 /** Watermark file written under OMNODEX_HOME by the background pass. */
@@ -149,7 +150,9 @@ export async function runBackgroundDetect(
     statePath: path.join(home, DETECT_STATE_FILE),
     machineState: openMachineState(home, { seedRoots: roots }),
     newEventId: opts.newEventId,
-    registry: opts.registry,
+    // A background pass is a batch host, so it runs advanced rules when this
+    // installation has a bundle it can open.
+    registry: opts.registry ?? registryForHost("batch", home),
   });
   return result.newEvents;
 }

@@ -58,7 +58,8 @@ export const loadProxyEvaluator: LoadEvaluatorFn = async (home) => {
   const { newEventId } = await import("@omnodex/event-log");
   return analyzer.createEvaluator({
     host: "proxy",
-    registry: analyzer.loadRegistry(home),
+    // Advanced rules, when this installation has a bundle it can open.
+    registry: analyzer.registryForHost("proxy", home),
     newEventId,
     machineState: analyzer.openMachineState(home),
   });

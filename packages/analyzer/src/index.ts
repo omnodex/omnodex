@@ -43,9 +43,30 @@ export {
   createEvaluator,
   classifyRule,
   loadRegistry,
+  registryForHost,
   HOST_CLASSES,
+  HOST_TIERS,
   classesLeftAfterCapture,
 } from "./evaluator.js";
+export {
+  loadAdvancedRules,
+  openBundle,
+  bundlePath,
+  canonicalManifest,
+  describeRules,
+  RULES_DIR,
+  CURRENT_BUNDLE_FILE,
+  RULES_KEY_ENV,
+  RULES_PUBLIC_KEY_ENV,
+  TRUSTED_PUBLISHING_KEYS,
+} from "./bundle.js";
+export type {
+  BundleManifest,
+  SealedBundle,
+  BundleSkipReason,
+  AdvancedRulesResult,
+  LoadAdvancedOptions,
+} from "./bundle.js";
 export {
   judgeCaptured,
   captureDetectEnabled,
@@ -68,6 +89,8 @@ export type {
   EvaluatorStats,
   EvaluationClass,
   EvaluateOptions,
+  LoadRegistryOptions,
+  RuleTier,
 } from "./evaluator.js";
 
 // Engine and registry (custom integrations)

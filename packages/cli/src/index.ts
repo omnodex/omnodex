@@ -50,7 +50,16 @@ import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer } from "./dashboard-server.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
-import { detectEventLogs, detectRisks, openMachineState, runBackgroundDetect } from "@omnodex/analyzer";
+import {
+  COMMUNITY_RULES,
+  describeRules,
+  detectEventLogs,
+  detectRisks,
+  loadAdvancedRules,
+  openMachineState,
+  registryForHost,
+  runBackgroundDetect,
+} from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
 import {
@@ -471,6 +480,7 @@ async function cmdDetect(args: string[]): Promise<void> {
     roots: eventLogRoots,
     sessionId: targetSession,
     newEventId,
+    registry: registryForHost("batch", resolvePaths().home),
     machineState: openMachineState(resolvePaths().home, { seedRoots: eventLogRoots }),
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
@@ -538,7 +548,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
       for (const sessionId of sessionIds) {
         const events = await log.readSession(sessionId);
         if (events.length === 0) continue;
-        const result = detectRisks(events, newEventId, undefined, { machineState });
+        const result = detectRisks(events, newEventId, registryForHost("batch", resolvePaths().home), { machineState });
         if (result.newEvents.length > 0) {
           await log.appendMany(result.newEvents);
           detected += result.newEvents.length;
@@ -620,6 +630,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
   const streamProjector = new Projector(store);
   const { stop } = startStreamingLoop(streamingRoots, store, streamProjector, server, cloudTransport, {
     machineState,
+    home: resolvePaths().home,
   });
 
   // --- Shutdown handling ---
@@ -1340,6 +1351,10 @@ async function cmdStatus(_args: string[]): Promise<void> {
   if (!showAll) {
     console.log(`[status] project:      ${projectPath}`);
   }
+
+  console.log(
+    `[status] rules:        ${describeRules(loadAdvancedRules(paths.home), COMMUNITY_RULES.length)}`,
+  );
 
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);

@@ -18,10 +18,15 @@
  *   2. If no URL parameters, fall back to heuristics:
  *      a. Tool name contains "fetch", "http", or "request".
  *      b. Bash command contains curl, wget, http, or httpie.
+ *
+ * A write tool is never outbound on the strength of its parameters alone: a
+ * URL inside content being written to a file is a string in a file, not a
+ * call to that URL.
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext } from "../types.js";
+import { isWriteTool } from "./scope.js";
 
 const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -42,6 +47,14 @@ function extractUrls(paramStr: string): string[] {
  * Returns true if the event looks like an outbound HTTP call to an external host.
  */
 export function isOutboundCall(event: ToolInvokedEvent): boolean {
+  const name = event.tool_name.toLowerCase();
+  const fetchLike = name.includes("fetch") || name.includes("http") || name.includes("request");
+
+  // A file being written is not a call being made. Writing a document, a
+  // test or a config that happens to contain a URL used to read as outbound,
+  // which put credential-exfiltration findings on ordinary edits.
+  if (isWriteTool(event) && !fetchLike) return false;
+
   const paramStr = JSON.stringify(event.parameters);
   const urlHosts = extractUrls(paramStr);
 
@@ -52,11 +65,7 @@ export function isOutboundCall(event: ToolInvokedEvent): boolean {
   }
 
   // No URL parameters — fall back to tool name and bash command heuristics.
-  const name = event.tool_name.toLowerCase();
-
-  if (name.includes("fetch") || name.includes("http") || name.includes("request")) {
-    return true;
-  }
+  if (fetchLike) return true;
 
   if (name === "bash" && typeof event.parameters["command"] === "string") {
     if (/\b(curl|wget|httpie?)\b/.test(event.parameters["command"] as string)) {
