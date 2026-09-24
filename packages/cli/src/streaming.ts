@@ -43,7 +43,7 @@ import type { ReadModelStore } from "@omnodex/projection";
 import {
   classesLeftAfterCapture,
   createEvaluator,
-  loadRegistry,
+  registryForHost,
   type Evaluator,
   type MachineState,
 } from "@omnodex/analyzer";
@@ -245,7 +245,7 @@ export function startStreamingLoop(
   projector: Projector,
   server: DashboardServer,
   cloudTransport: StreamingTransport | null = null,
-  options: { machineState?: MachineState } = {},
+  options: { machineState?: MachineState; home?: string } = {},
 ): { stop: () => void } {
   // Normalise: single EventLog → one-element roots array.
   const roots: StreamingRoot[] = Array.isArray(logOrRoots)
@@ -256,7 +256,7 @@ export function startStreamingLoop(
   const activeSessions = new Set<string>();
   const evaluator = createEvaluator({
     host: "batch",
-    registry: loadRegistry(),
+    registry: registryForHost("batch", options.home),
     newEventId,
     machineState: options.machineState,
   });

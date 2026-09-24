@@ -37,20 +37,39 @@ import { SCHEMA_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
 import * as os from "node:os";
 import { RuleRegistry } from "./registry.js";
+import { COMMUNITY_RULES } from "./rules/index.js";
 import type { EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
 import type { MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
 import { CAPTURE_HOSTS } from "./capture.js";
+import { loadAdvancedRules } from "./bundle.js";
 
 export type EvaluationClass = "event" | "session" | "machine";
 export type EvaluatorHost = "hook" | "proxy" | "batch";
+export type RuleTier = "community" | "advanced";
 
 /** Which rule classes each host runs. */
 export const HOST_CLASSES: Readonly<Record<EvaluatorHost, readonly EvaluationClass[]>> = {
   hook: ["event"],
   proxy: ["event", "session", "machine"],
   batch: ["event", "session", "machine"],
+};
+
+/**
+ * Which rule tiers each host runs.
+ *
+ * A hook shim is a process per tool call, so it never opens an advanced
+ * bundle: it would pay the cost on every call, would want the opened rules
+ * cached in the clear, and could not run the sequence rules that make up
+ * most of an advanced set anyway. Long-lived hosts open the bundle once and
+ * hold the rules in memory. Decided in
+ * planning/architecture/PAID_RULE_DELIVERY.md section 3.
+ */
+export const HOST_TIERS: Readonly<Record<EvaluatorHost, readonly RuleTier[]>> = {
+  hook: ["community"],
+  proxy: ["community", "advanced"],
+  batch: ["community", "advanced"],
 };
 
 const CLASS_ORDER: readonly EvaluationClass[] = ["event", "session", "machine"];
@@ -102,19 +121,47 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
   return cls;
 }
 
+export interface LoadRegistryOptions {
+  /**
+   * Advanced rules to run alongside the community set, already opened from a
+   * bundle. Nothing here fetches or decrypts: the caller decides whether this
+   * host and this installation may run them.
+   */
+  advanced?: readonly RuleDefinition[] | null;
+}
+
 /**
- * The rule set for this installation. Community rules today; this is the
- * single place advanced rules will be added when they are delivered.
+ * The rule set for this installation: community rules, plus any advanced
+ * rules handed in. The one place rules reach an evaluator, so paid delivery
+ * changes this function and nothing else.
  */
-export function loadRegistry(_home?: string): RuleRegistry {
-  return new RuleRegistry();
+export function loadRegistry(_home?: string, opts: LoadRegistryOptions = {}): RuleRegistry {
+  const advanced = opts.advanced ?? [];
+  return advanced.length === 0
+    ? new RuleRegistry()
+    : new RuleRegistry([...COMMUNITY_RULES, ...advanced]);
+}
+
+/**
+ * The rule set a given host may run, opening the installation's advanced
+ * bundle when the host is allowed advanced rules and one is present. A host
+ * that is not, or an installation with no usable bundle, gets the community
+ * set: never an error, because detection working is worth more than an
+ * advanced rule firing.
+ */
+export function registryForHost(host: EvaluatorHost, home?: string): RuleRegistry {
+  if (!HOST_TIERS[host].includes("advanced")) return loadRegistry(home);
+  const result = loadAdvancedRules(home);
+  return loadRegistry(home, { advanced: result.rules });
 }
 
 export interface EvaluatorOptions {
   host: EvaluatorHost;
   newEventId: () => string;
-  /** Defaults to loadRegistry(). */
+  /** Defaults to registryForHost(host, home). */
   registry?: RuleRegistry;
+  /** OMNODEX_HOME, for the advanced bundle when this host runs one. */
+  home?: string;
   /** Recent events kept per session for sequence rules. */
   windowSize?: number;
   /**
@@ -173,7 +220,7 @@ export interface Evaluator {
 
 export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const allowed = new Set(HOST_CLASSES[opts.host]);
-  const all = (opts.registry ?? loadRegistry()).getRules();
+  const all = (opts.registry ?? registryForHost(opts.host, opts.home)).getRules();
   const rules = all.filter((r) => allowed.has(classifyRule(r)));
   const order = new Map(rules.map((r, i) => [r.rule_id, i]));
 
