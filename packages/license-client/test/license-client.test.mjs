@@ -35,7 +35,7 @@ function resetMock() {
     customer_id: "cust-test",
     tier: "pro",
     features: ["community_rules", "local_dashboard", "local_event_log", "encrypted_sync", "hosted_dashboard", "advanced_rules", "feature_extraction", "usage_analytics"],
-    rule_decryption_key: "test-key-abc123",
+    rule_bundle: { channel: "pro", bundle_version: "1.0.0", content_key: "test-key-abc123", not_after: "2099-01-01T00:00:00.000Z" },
     sync_endpoint: "http://localhost/api/v1/sync",
     ttl_seconds: 86400,
   };
@@ -90,7 +90,7 @@ describe("validateLicense", () => {
 
       assert.equal(result.source, "network");
       assert.equal(result.license.tier, "pro");
-      assert.equal(result.license.rule_decryption_key, "test-key-abc123");
+      assert.equal(result.license.rule_bundle.content_key, "test-key-abc123");
       assert.equal(requestCount, 1);
 
       // Verify cache file was written
@@ -128,6 +128,32 @@ describe("validateLicense", () => {
       assert.equal(result.source, "cache");
       assert.equal(result.license.tier, "pro");
       assert.equal(requestCount, 1); // no additional network call
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("asks the network despite a fresh cache when forced, and caches the new answer", async () => {
+    const cacheDir = await mkdtemp(join(tmpdir(), "omx-test-"));
+    resetMock();
+
+    try {
+      const opts = { apiBaseUrl: baseUrl, apiToken: "omx_test_token", cacheDir, timeoutMs: 2000 };
+      await validateLicense(opts);
+      assert.equal(requestCount, 1);
+
+      // A new bundle was published: the cached key no longer opens it.
+      mockResponse = { ...mockResponse, rule_bundle: { ...mockResponse.rule_bundle, bundle_version: "1.1.0", content_key: "next-key" } };
+      const forced = await validateLicense({ ...opts, force: true });
+      assert.equal(forced.source, "network");
+      assert.equal(forced.license.rule_bundle.bundle_version, "1.1.0");
+      assert.equal(requestCount, 2);
+
+      // The forced answer replaced the cache.
+      const after = await validateLicense(opts);
+      assert.equal(after.source, "cache");
+      assert.equal(after.license.rule_bundle.content_key, "next-key");
+      assert.equal(requestCount, 2);
     } finally {
       await rm(cacheDir, { recursive: true, force: true });
     }

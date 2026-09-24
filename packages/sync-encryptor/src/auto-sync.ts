@@ -45,6 +45,7 @@
  * Never throws: failures are recorded in auto-sync-state.json.
  */
 
+import { refreshRuleBundle } from "./rules-refresh.js";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -148,6 +149,11 @@ export interface RunAutoSyncOptions {
   detect?: () => Promise<TraceEvent[]>;
   /** Live push override for tests. */
   pushFn?: (events: TraceEvent[], home: string) => Promise<boolean>;
+  /**
+   * Advanced rule bundle refresh, run before detection so the pass judges
+   * with the current bundle. Defaults to refreshRuleBundle; tests replace it.
+   */
+  refreshRules?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,6 +256,8 @@ export async function runAutoSync(
   if (!(await acquireLock(home))) return "in-progress";
   try {
     if (opts.detect && detectionEnabled()) {
+      // Pro and Enterprise only; anyone else returns before any request.
+      await (opts.refreshRules ?? refreshRuleBundle)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
 

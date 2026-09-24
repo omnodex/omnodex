@@ -234,3 +234,57 @@ describe("describeRules", () => {
     );
   });
 });
+
+describe("the key from the licence check", () => {
+  /** Install a bundle and cache the licence grant for it, as the background pass does. */
+  function installLicensed(made, grantOverrides = {}) {
+    mkdirSync(path.dirname(bundlePath(home)), { recursive: true });
+    writeFileSync(bundlePath(home), JSON.stringify(made.bundle), "utf8");
+    const m = made.bundle.manifest;
+    writeFileSync(
+      path.join(home, "license-cache.json"),
+      JSON.stringify({
+        response: {
+          customer_id: "cus_case",
+          tier: "pro",
+          features: [],
+          ttl_seconds: 86400,
+          rule_bundle: { channel: m.channel, bundle_version: m.bundle_version, content_key: made.keyBase64, not_after: m.not_after, ...grantOverrides },
+        },
+        fetched_at: Date.now(),
+      }),
+      "utf8",
+    );
+    // Trust the signing key; no content key in the environment.
+    process.env[RULES_PUBLIC_KEY_ENV] = made.publicKeyBase64;
+  }
+
+  it("opens the installed bundle with the key the licence check cached", () => {
+    installLicensed(makeBundle());
+    const result = loadAdvancedRules(home);
+    assert.equal(result.skipped, undefined);
+    // And the long-lived hosts pick it up with no environment key at all.
+    assert.equal(registryForHost("proxy", home).getAdvancedRules().length, 1);
+    assert.equal(registryForHost("hook", home).getAdvancedRules().length, 0);
+  });
+
+  it("ignores a cached key for another version, as after a new publish", () => {
+    installLicensed(makeBundle({ version: "1.1.0" }), { bundle_version: "1.0.0" });
+    assert.equal(loadAdvancedRules(home).skipped, "no_key");
+  });
+
+  it("ignores a cached key for another channel", () => {
+    installLicensed(makeBundle({ channel: "pro" }), { channel: "enterprise" });
+    assert.equal(loadAdvancedRules(home).skipped, "no_key");
+  });
+
+  it("has no key once the licence lapses and the cache is replaced", () => {
+    installLicensed(makeBundle());
+    writeFileSync(
+      path.join(home, "license-cache.json"),
+      JSON.stringify({ response: { customer_id: "cus_case", tier: "free", features: [], ttl_seconds: 3600 }, fetched_at: Date.now() }),
+      "utf8",
+    );
+    assert.equal(loadAdvancedRules(home).skipped, "no_key");
+  });
+});

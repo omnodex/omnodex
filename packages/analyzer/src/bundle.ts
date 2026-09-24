@@ -220,6 +220,32 @@ export function bundlePath(home: string): string {
   return path.join(home, RULES_DIR, CURRENT_BUNDLE_FILE);
 }
 
+/**
+ * The key the licence check handed this home for this bundle, from
+ * license-cache.json. Only a key for exactly this channel and version counts:
+ * after a new bundle is published the old key is useless, and the background
+ * pass asks for the new one.
+ */
+export function licensedKey(home: string, manifest: BundleManifest): Buffer | null {
+  try {
+    const cache = JSON.parse(fs.readFileSync(path.join(home, "license-cache.json"), "utf8")) as {
+      response?: { rule_bundle?: { channel?: unknown; bundle_version?: unknown; content_key?: unknown } };
+    };
+    const grant = cache.response?.rule_bundle;
+    if (
+      !grant ||
+      grant.channel !== manifest.channel ||
+      grant.bundle_version !== manifest.bundle_version ||
+      typeof grant.content_key !== "string"
+    ) {
+      return null;
+    }
+    return Buffer.from(grant.content_key, "base64");
+  } catch {
+    return null;
+  }
+}
+
 export interface LoadAdvancedOptions extends OpenBundleOptions {
   /** Read this file instead of the home's cached bundle. */
   file?: string;
@@ -247,7 +273,12 @@ export function loadAdvancedRules(
   } catch {
     return skip("unreadable");
   }
-  return openBundle(parsed, opts);
+  // Key order: one handed in, then OMNODEX_RULES_KEY (development), then the
+  // one the licence check gave this home.
+  const env = opts.env ?? process.env;
+  const manifest = (parsed as { manifest?: BundleManifest } | null)?.manifest;
+  const key = opts.key ?? (env[RULES_KEY_ENV] ? null : manifest ? licensedKey(home, manifest) : null);
+  return openBundle(parsed, key ? { ...opts, key } : opts);
 }
 
 /** One line for `omnodex status`: what this installation will judge with. */

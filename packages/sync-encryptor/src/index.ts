@@ -80,3 +80,7 @@ export {
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
 export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions } from "./auto-sync.js";
+
+// Advanced rule bundle refresh (background pass, Pro and Enterprise)
+export { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_ENV } from "./rules-refresh.js";
+export type { RulesRefreshOutcome, RulesRefreshOptions } from "./rules-refresh.js";

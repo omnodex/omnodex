@@ -260,13 +260,27 @@ export interface LicenseValidateRequest {
 }
 
 /** Returned by the cloud license endpoint. Cache locally for ttl_seconds. */
+/** The key to one advanced rule bundle version, as the licence check returns it. */
+export interface RuleBundleGrant {
+  channel: string;
+  bundle_version: string;
+  /** Base64 AES-256 key that opens that bundle version. */
+  content_key: string;
+  /** When clients stop accepting that bundle. */
+  not_after: string;
+}
+
 export interface LicenseValidateResponse {
   customer_id: string;
   tier: "free" | "hosted" | "pro" | "enterprise";
   /** Enabled feature flags for this subscription. */
   features: string[];
-  /** AES-256-GCM key for decrypting advanced rule definitions (Pro+). */
-  rule_decryption_key?: string;
+  /**
+   * The key to the current advanced rule bundle for this plan (Pro and
+   * Enterprise with an active subscription, once a bundle is published).
+   * The bundle itself is fetched separately, from /api/v1/rules/update.
+   */
+  rule_bundle?: RuleBundleGrant;
   /** Presigned R2 URL for sync blob access (Hosted+). */
   sync_endpoint?: string;
   /** How long the caller may cache this response, in seconds. */
