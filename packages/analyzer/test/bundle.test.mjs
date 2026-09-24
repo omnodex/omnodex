@@ -115,11 +115,13 @@ describe("openBundle", () => {
     }
   });
 
-  it("trusts no publishing key until one is shipped", () => {
-    // The production key lands with the distributor (ENG-342). Until then a
-    // bundle opens only against a key named in the environment, which is how
-    // advanced rules are developed before any cloud side exists.
-    assert.deepEqual([...TRUSTED_PUBLISHING_KEYS], []);
+  it("trusts the production publishing key, and nothing else without being told", () => {
+    // Pinned here so a change to the trusted keys is always deliberate.
+    assert.deepEqual([...TRUSTED_PUBLISHING_KEYS], ["MCowBQYDK2VwAyEASJqdj4+WnXXwfPEkOBkrbRJ4TkDUuhRfTgg3Vnd2IXM="]);
+    for (const key of TRUSTED_PUBLISHING_KEYS) {
+      assert.equal(crypto.createPublicKey({ key: Buffer.from(key, "base64"), format: "der", type: "spki" }).asymmetricKeyType, "ed25519");
+    }
+    // A bundle signed by any other key opens only when the environment names that key.
     const made = makeBundle();
     assert.equal(openBundle(made.bundle, { key: made.contentKey, env: {} }).skipped, "untrusted_signature");
   });

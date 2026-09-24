@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Omnodex, LLC. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Seal a rule pack into a bundle, the way the distributor will.
+ * Seal a rule pack into a bundle, in the format the analyzer opens.
  *
  * Advanced rules are not in this repository: it is public, and they are the
  * paid asset. This script takes a pack of RuleDefinitions from wherever it
  * lives, seals it under a fresh content key, signs the manifest, and writes
- * a bundle the analyzer can open. That is how advanced rules are written and
- * dogfooded before the cloud side exists (ENG-342 does the same thing in a
- * Worker, with a signing key held as a secret).
+ * a bundle the analyzer can open. It is for trying a pack locally, signed
+ * with a throwaway key; real bundles are signed with the production key on
+ * the publishing machine, never on a server.
  *
  * Usage:
  *   node scripts/seal-bundle.mjs <pack.json> [options]
