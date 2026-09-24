@@ -124,6 +124,13 @@ export interface PathMatchCondition {
   type: "path_match";
   /** At least one of these must match. */
   patterns: PathPattern[];
+  /**
+   * Which paths to test. "any" (the default) is every path the call names,
+   * read or write. "write" is only what it writes to (see
+   * extractWriteTargets), which is what a rule about planting something in a
+   * file needs: reading that file is not planting anything.
+   */
+  access?: "any" | "write";
 }
 
 export interface PathPattern {

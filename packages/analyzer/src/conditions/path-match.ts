@@ -10,11 +10,16 @@
  * Extracts file paths from a tool.invoked event, then tests each path
  * against the rule's pattern list. Returns one MatchContext per matched
  * path so the engine can emit a separate finding for each sensitive access.
+ *
+ * With access: "write" only the files the call writes to are tested, which
+ * is what a rule about planting something in a file needs: reading that file
+ * is not planting anything.
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext, PathMatchCondition } from "../types.js";
 import { compiled } from "./regex-cache.js";
+import { extractWriteTargets } from "./write-targets.js";
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -82,7 +87,7 @@ export function evaluatePathMatch(
   condition: PathMatchCondition,
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
-  const paths = extractPaths(event);
+  const paths = condition.access === "write" ? extractWriteTargets(event) : extractPaths(event);
   const matched: Partial<MatchContext>[] = [];
 
   for (const p of paths) {
