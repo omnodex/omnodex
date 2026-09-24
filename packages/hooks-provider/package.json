@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "clean": "rm -rf dist",
+    "bundle": "npm run build && node bundle.config.mjs",
+    "clean": "rm -rf dist bundle",
     "test": "node --test test/**/*.test.mjs"
   },
   "bin": {
@@ -25,5 +26,8 @@
     "@omnodex/event-log": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
   }
 }

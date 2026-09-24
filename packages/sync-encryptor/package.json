@@ -14,6 +14,10 @@
     "./sync-runner": {
       "import": "./dist/sync-runner.js",
       "types": "./dist/sync-runner.d.ts"
+    },
+    "./hpke-event": {
+      "import": "./dist/hpke-event.js",
+      "types": "./dist/hpke-event.d.ts"
     }
   },
   "scripts": {
