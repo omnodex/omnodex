@@ -1770,8 +1770,9 @@ async function cmdLicense(args: string[]): Promise<void> {
   for (const f of result.license.features) {
     console.log(`  - ${f}`);
   }
-  if (result.license.rule_decryption_key) {
-    console.log(`[license] rule key: present (not shown)`);
+  if (result.license.rule_bundle) {
+    const grant = result.license.rule_bundle;
+    console.log(`[license] rules:  key for ${grant.channel} bundle ${grant.bundle_version} (not shown)`);
   }
   if (result.license.sync_endpoint) {
     console.log(`[license] sync:   ${result.license.sync_endpoint}`);

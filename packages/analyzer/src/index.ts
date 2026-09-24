@@ -52,6 +52,7 @@ export {
   loadAdvancedRules,
   openBundle,
   bundlePath,
+  licensedKey,
   canonicalManifest,
   describeRules,
   RULES_DIR,

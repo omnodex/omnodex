@@ -36,6 +36,13 @@ export interface LicenseClientConfig {
   cacheDir?: string;
   /** Network request timeout in ms.  Default: 5000. */
   timeoutMs?: number;
+  /**
+   * Ask the network even when the cache is still fresh, for a caller that
+   * knows the cached answer is out of date (a new rule bundle has been
+   * published, so the cached key no longer opens it). Falls back to the
+   * cache on failure, as usual.
+   */
+  force?: boolean;
 }
 
 const DEFAULT_API_URL = process.env.OMNODEX_API_URL ?? "https://api.omnodex.com";
@@ -146,7 +153,7 @@ export async function validateLicense(
 
   // Try cache first to see if we even need to hit the network.
   const cached = await readCache(cacheDir);
-  if (cached && isCacheValid(cached)) {
+  if (cached && isCacheValid(cached) && !config?.force) {
     return { license: cached.response, source: "cache" };
   }
 
