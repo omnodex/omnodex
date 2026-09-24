@@ -49,14 +49,21 @@ export const RULES_KEY_ENV = "OMNODEX_RULES_KEY";
 export const RULES_PUBLIC_KEY_ENV = "OMNODEX_RULES_PUBLIC_KEY";
 
 /**
- * Publishing keys this client trusts, newest first, as base64 SPKI.
+ * Publishing keys this client trusts, newest first, as base64 SPKI Ed25519.
  *
- * Empty until the production publishing key exists (ENG-342). Until then a
- * bundle only opens when RULES_PUBLIC_KEY_ENV names the key that signed it,
- * which is how advanced rules are developed and dogfooded before any of the
- * cloud side is built.
+ * The matching private keys never touch a server: bundles are signed on the
+ * publishing machine and only stored and served by the cloud, so a server
+ * that is compromised cannot produce a bundle this client will open. To
+ * rotate, add the new key at the front, publish with it, and remove the old
+ * one in a later release, once clients holding it have updated.
+ *
+ * RULES_PUBLIC_KEY_ENV adds one more key for local development, which is
+ * how a pack signed with a throwaway key is tried before it is published.
  */
-export const TRUSTED_PUBLISHING_KEYS: readonly string[] = [];
+export const TRUSTED_PUBLISHING_KEYS: readonly string[] = [
+  // Production publishing key, created 2026-09-24.
+  "MCowBQYDK2VwAyEASJqdj4+WnXXwfPEkOBkrbRJ4TkDUuhRfTgg3Vnd2IXM=",
+];
 
 export interface BundleManifest {
   bundle_version: string;
