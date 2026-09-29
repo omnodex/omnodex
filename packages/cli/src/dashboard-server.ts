@@ -163,7 +163,9 @@ export type SseMessage =
   | { type: "tool_call.inserted"; payload: ToolCallRow }
   | { type: "tool_call.patched"; payload: ToolCallRow }
   | { type: "file_event.inserted"; payload: FileEventRow }
-  | { type: "risk_event.inserted"; payload: RiskEventRow };
+  | { type: "risk_event.inserted"; payload: RiskEventRow }
+  /** Rows changed in place (a correlation pass paired calls); reload the snapshot. */
+  | { type: "read_model.changed" };
 
 // ---------------------------------------------------------------------------
 // DashboardServer class
