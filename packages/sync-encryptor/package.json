@@ -22,7 +22,7 @@
   },
   "scripts": {
     "build": "tsc -b",
-    "clean": "rm -rf dist",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo",
     "test": "node --test test/**/*.test.mjs"
   },
   "dependencies": {

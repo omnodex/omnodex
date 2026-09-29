@@ -18,6 +18,7 @@
 import { promises as fs, readFileSync } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { fileURLToPath } from "node:url";
 import type { LauncherPlatform } from "./launcher-template.js";
 
 export interface Installation {
@@ -152,11 +153,7 @@ export async function findStaleInstallations(): Promise<Installation[]> {
 export function getInstalledVersion(): string {
   try {
     // Walk up from this file to find the CLI package.json
-    let dir = path.dirname(new URL(import.meta.url).pathname);
-    // On Windows, URL.pathname has a leading "/" before the drive letter
-    if (process.platform === "win32" && dir.startsWith("/")) {
-      dir = dir.slice(1);
-    }
+    let dir = path.dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 5; i++) {
       try {
         const pkgPath = path.join(dir, "package.json");

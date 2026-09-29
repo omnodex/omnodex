@@ -9,9 +9,9 @@
     "omnodex": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -b && cp src/dashboard.html dist/dashboard.html",
+    "build": "tsc -b",
     "bundle": "npm run build && node bundle.config.mjs",
-    "clean": "rm -rf dist bundle/omnodex-bundle.cjs bundle/omnodex.cjs bundle/dashboard.html",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo bundle/omnodex-bundle.cjs bundle/omnodex.cjs bundle/dashboard.html",
     "start": "node dist/index.js",
     "spike": "node dist/index.js spike",
     "dashboard": "node dist/index.js dashboard",

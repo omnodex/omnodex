@@ -51,6 +51,21 @@ node --test \
 cd packages/analyzer && node --test test/**/*.test.mjs test/*.test.mjs
 ```
 
+`npm run build` and `npx tsc -b` are equivalent. From a checkout the dashboard serves `packages/cli/src/dashboard.html` directly, so an edit to the page shows on reload without a build; the npm bundle ships its own copy.
+
+## Platforms
+
+The CLI, the dashboard and the tests run on Linux, macOS, native Windows and WSL. CI runs the suite on Ubuntu, Windows and macOS. Package scripts use Node only (`scripts/rm.mjs` stands in for `rm -rf`), because npm runs scripts through cmd.exe on Windows. In code, turn a module URL into a path with `fileURLToPath`, never `URL.pathname`, which keeps a `/` before a Windows drive letter and leaves spaces percent-encoded.
+
+WSL has no CI runner. Before a release that touches the dashboard or file paths, check it by hand from a WSL shell:
+
+```bash
+OMNODEX_HOME=/tmp/omnodex-smoke node packages/cli/dist/index.js spike
+OMNODEX_HOME=/tmp/omnodex-smoke node packages/cli/dist/index.js dashboard
+```
+
+Open `http://localhost:7890` in a Windows browser; the page loads and lists the demo session. Press Ctrl+C; the command prints `shutting down...` and returns to the prompt, and `rm -rf /tmp/omnodex-smoke` then succeeds.
+
 ## Package map
 
 ``` folder tree

@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsc -b",
     "bundle": "npm run build && node bundle.config.mjs",
-    "clean": "rm -rf dist bundle",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo bundle",
     "test": "node --test test/**/*.test.mjs"
   },
   "bin": {

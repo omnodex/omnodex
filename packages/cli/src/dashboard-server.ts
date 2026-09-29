@@ -23,6 +23,7 @@
 import * as http from "node:http";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -73,6 +74,76 @@ export function isLoopbackOrigin(origin: string | undefined, port: number): bool
     return false;
   }
   return url.protocol === "http:" && isLoopbackHost(url.host, port);
+}
+
+/**
+ * The directory to serve dashboard.html from, given the running module's
+ * URL (`import.meta.url`, or its CommonJS equivalent in the npm bundle).
+ *
+ * In a source checkout (the module sits in the CLI package's dist/) this is
+ * src/, so the page is always the current one whichever build command ran:
+ * `tsc -b` compiles the TypeScript but copies no assets. Anywhere else, such
+ * as the npm bundle, the page ships next to the module.
+ *
+ * fileURLToPath, not URL.pathname: pathname keeps a leading "/" before a
+ * Windows drive letter and leaves spaces percent-encoded on every platform.
+ */
+export function resolveDashboardAssetsDir(moduleUrl: string): string {
+  const moduleDir = path.dirname(fileURLToPath(moduleUrl));
+  const pkgDir = path.dirname(moduleDir);
+  const srcDir = path.join(pkgDir, "src");
+  if (isCliPackage(pkgDir) && fs.existsSync(path.join(srcDir, "dashboard.html"))) {
+    return srcDir;
+  }
+  return moduleDir;
+}
+
+function isCliPackage(dir: string): boolean {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf-8")) as { name?: unknown };
+    return pkg.name === "@omnodex/cli";
+  } catch {
+    return false;
+  }
+}
+
+/** What the dashboard command holds open while it runs. */
+export interface DashboardResources {
+  /** Stops the streaming loop; resolves once its tails have finished. */
+  stopStreaming: () => Promise<void>;
+  /** Flushes buffered cloud events, if cloud streaming is on. */
+  transport?: { stop(): Promise<void> } | null;
+  server: { close(): Promise<void> };
+  logs: ReadonlyArray<{ log: { close(): Promise<void> } }>;
+  store: { close(): Promise<void> };
+}
+
+/**
+ * Release everything the dashboard command holds, in dependency order: stop
+ * the writers (streaming loop, cloud transport) first, then the HTTP server,
+ * then the event logs and the read model they write into. Each step is
+ * awaited, so SQLite and log files are closed before the process exits;
+ * on Windows an open handle keeps the files locked. A failing step is
+ * logged and does not stop the rest.
+ */
+export async function shutdownDashboard(resources: DashboardResources): Promise<void> {
+  const step = async (name: string, fn: () => Promise<void>): Promise<void> => {
+    try {
+      await fn();
+    } catch (err) {
+      console.error(`[dashboard] error closing ${name}:`, err);
+    }
+  };
+  await step("streaming loop", resources.stopStreaming);
+  if (resources.transport) {
+    const transport = resources.transport;
+    await step("cloud transport", () => transport.stop());
+  }
+  await step("server", () => resources.server.close());
+  for (const { log } of resources.logs) {
+    await step("event log", () => log.close());
+  }
+  await step("read model", () => resources.store.close());
 }
 
 // ---------------------------------------------------------------------------
@@ -189,8 +260,12 @@ export class DashboardServer {
     }
   }
 
-  /** Gracefully shut down the HTTP server and cancel the heartbeat. */
-  close(): void {
+  /**
+   * Shut down the HTTP server and cancel the heartbeat. Open connections,
+   * including idle keep-alive sockets and SSE streams, are closed rather
+   * than waited for. Resolves once every listener has stopped.
+   */
+  async close(): Promise<void> {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
@@ -199,7 +274,15 @@ export class DashboardServer {
       try { client.end(); } catch { /* ignore */ }
     }
     this.sseClients.clear();
-    for (const server of this.servers) server.close();
+    await Promise.all(
+      this.servers.map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.close(() => resolve());
+            server.closeAllConnections();
+          }),
+      ),
+    );
   }
 
   // -------------------------------------------------------------------------
