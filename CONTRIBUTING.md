@@ -6,13 +6,17 @@ We welcome contributions to Omnodex. Before you begin, please read this guide an
 
 Omnodex is dual-licensed under the AGPL-3.0 and a separate commercial license. To maintain our ability to offer both licenses, all contributors must agree to the following CLA before their first contribution can be merged.
 
-By submitting a pull request, you agree that:
+In this CLA, "Omnodex" means Omnodex, LLC and its successors and assigns. By submitting a pull request, you agree that:
 
-1. **Your contribution is your original work**, or you have the right to submit it under the terms below.
-2. **You grant Omnodex, LLC a perpetual, worldwide, non-exclusive, royalty-free, irrevocable license** to use, reproduce, modify, distribute, sublicense, and otherwise exploit your contribution, in source and object form, under any license, including the AGPL-3.0 and the Omnodex commercial license.
-3. **You retain copyright** to your contribution. This CLA does not transfer ownership - it grants Omnodex, LLC the additional rights needed for dual licensing.
-4. **You understand** that your contribution will be publicly available under the AGPL-3.0, and may also be distributed under the Omnodex commercial license to customers who purchase one.
-5. **You warrant** that your contribution does not knowingly infringe any third-party intellectual property rights.
+1. **Your contribution is your original work**, except for any third-party material you identify under item 6, and you have the right to submit it under the terms below.
+2. **You grant Omnodex a perpetual, worldwide, non-exclusive, royalty-free, irrevocable copyright license** to use, reproduce, modify, distribute, sublicense, and otherwise exploit your contribution, in source and object form, under any license, including the AGPL-3.0 and the Omnodex commercial license.
+3. **You grant Omnodex, and anyone who receives software from Omnodex, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable patent license** to make, have made, use, sell, offer to sell, import, and otherwise transfer your contribution. This license covers only the patent claims you can license that are necessarily infringed by your contribution alone or by its combination with the project it was submitted to. If anyone brings a patent lawsuit alleging that your contribution, or the project it is part of, infringes a patent, the patent license granted to them under this CLA ends on the date that lawsuit is filed.
+4. **You retain copyright** to your contribution. This CLA does not transfer ownership - it grants Omnodex the additional rights needed for dual licensing. Omnodex owes you no payment, royalty, or credit for any use of your contribution, including commercial use, beyond the notices the AGPL-3.0 requires in the public distribution.
+5. **You understand** that your contribution will be publicly available under the AGPL-3.0, and may also be distributed under the Omnodex commercial license to customers who purchase one.
+6. **Third-party material.** If your contribution includes anything you did not write yourself, such as code copied from another project, generated assets, or a new or changed dependency, you will say so in the pull request and give its source and license. You will include it only if its license allows Omnodex to distribute it under both the AGPL-3.0 and the Omnodex commercial license (permissive licenses such as MIT, BSD, or Apache-2.0 usually do), or if you have the owner's written permission. Omnodex may review, reject, or replace any third-party material before merging it or before using it in commercial offerings.
+7. **If your employer has rights** to what you create, you have its permission to make the contribution under this CLA, or it has waived those rights.
+8. **You warrant** that your contribution does not knowingly infringe any third-party intellectual property rights, and you will tell Omnodex if you learn that any statement in this CLA is no longer accurate.
+9. **Omnodex may assign** its rights under this CLA, including to a successor entity.
 
 This CLA is intentionally concise. If you have questions, open an issue or email [hello@omnodex.com](mailto:hello@omnodex.com).
 
