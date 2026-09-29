@@ -65,6 +65,21 @@ const RISK = event({
   related_event_ids: ["tc_0", "tc_1"],
 });
 
+/**
+ * A SQLite store in a temp dir, closed before its dir is removed: Windows
+ * cannot delete a database file that is still open.
+ */
+async function sqliteStore(t) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-fields-"));
+  const store = new SqliteReadModelStore({ dbPath: path.join(root, "traces.db") });
+  await store.init();
+  t.after(async () => {
+    await store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
+  return store;
+}
+
 async function project(store, events) {
   const projector = new Projector(store);
   for (const e of events) await projector.apply(e);
@@ -117,12 +132,7 @@ test("a read-model field that is not listed stays out of the payload", async () 
 });
 
 test("platform survives projection, SQLite and serialization", async (t) => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-fields-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const store = new SqliteReadModelStore({ dbPath: path.join(root, "traces.db") });
-  await store.init();
-  t.after(() => store.close());
-
+  const store = await sqliteStore(t);
   await project(store, [START, INVOKED]);
   const payload = await serializeReadModel(store);
   assert.equal(payload.sessions[0].platform, "cowork");
@@ -131,14 +141,7 @@ test("platform survives projection, SQLite and serialization", async (t) => {
 
 for (const [name, makeStore] of [
   ["in-memory", async () => new InMemoryReadModelStore()],
-  ["sqlite", async (t) => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-fields-"));
-    t.after(() => fs.rm(root, { recursive: true, force: true }));
-    const store = new SqliteReadModelStore({ dbPath: path.join(root, "traces.db") });
-    await store.init();
-    t.after(() => store.close());
-    return store;
-  }],
+  ["sqlite", sqliteStore],
 ]) {
   test(`${name}: a session created by a tool call learns its platform from the event`, async (t) => {
     const store = await makeStore(t);
@@ -164,7 +167,6 @@ for (const [name, makeStore] of [
 
 test("a database from before the platform column migrates and reads null", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-fields-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
   const dbPath = path.join(root, "traces.db");
 
   // The sessions table as it was before the column existed.
@@ -182,7 +184,10 @@ test("a database from before the platform column migrates and reads null", async
 
   const store = new SqliteReadModelStore({ dbPath });
   await store.init();
-  t.after(() => store.close());
+  t.after(async () => {
+    await store.close();
+    await fs.rm(root, { recursive: true, force: true });
+  });
   assert.equal((await store.getSession("sess_old")).platform, null);
   const payload = await serializeReadModel(store);
   assert.equal(payload.sessions[0].platform, null);
