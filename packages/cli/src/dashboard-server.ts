@@ -12,6 +12,11 @@
  * projected read-model updates to the browser in real time as the
  * streaming detect loop processes new events from the event log.
  *
+ * The server listens on loopback only and answers only requests addressed
+ * to a loopback host, so neither another machine on the network nor a web
+ * page open in the user's browser can read what the agent did. There is no
+ * CORS allowance: the page is served from the same origin as the API.
+ *
  * Uses Node's built-in http module -- zero new dependencies.
  */
 
@@ -28,9 +33,46 @@ import type {
 
 export interface DashboardServerOptions {
   store: ReadModelStore;
+  /** Port to listen on. 0 picks a free port (see DashboardServer.port). */
   port: number;
   /** Directory containing dashboard.html */
   assetsDir: string;
+}
+
+/**
+ * Addresses the server listens on. IPv4 loopback is required; IPv6 loopback
+ * is best effort, so `localhost` works whichever address the browser tries
+ * first, on hosts with IPv6 disabled too.
+ */
+const IPV4_LOOPBACK = "127.0.0.1";
+const IPV6_LOOPBACK = "::1";
+
+/** Host names a request may be addressed to. */
+const LOOPBACK_NAMES = new Set(["localhost", IPV4_LOOPBACK, IPV6_LOOPBACK]);
+
+/**
+ * Whether a Host header (or an Origin's host) names this server on a
+ * loopback name. Anything else is a request routed here under a foreign
+ * name, which is what a DNS-rebinding page produces.
+ */
+export function isLoopbackHost(host: string | undefined, port: number): boolean {
+  if (!host) return false;
+  const match = /^(?:\[([^\]]+)\]|([^:]+)):(\d+)$/.exec(host);
+  if (!match) return false;
+  const name = (match[1] ?? match[2]).toLowerCase();
+  return LOOPBACK_NAMES.has(name) && Number(match[3]) === port;
+}
+
+/** Whether an Origin header, when present, is this server's own origin. */
+export function isLoopbackOrigin(origin: string | undefined, port: number): boolean {
+  if (origin === undefined) return true;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+  return url.protocol === "http:" && isLoopbackHost(url.host, port);
 }
 
 // ---------------------------------------------------------------------------
@@ -60,21 +102,67 @@ export type SseMessage =
  *
  * Usage:
  *   const server = new DashboardServer({ store, port, assetsDir });
+ *   await server.ready;
  *   server.broadcast({ type: "session.upserted", payload: row });
  *   server.close();
  */
 export class DashboardServer {
   private readonly store: ReadModelStore;
   private readonly assetsDir: string;
-  private readonly server: http.Server;
+  private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private boundPort = 0;
+
+  /**
+   * Resolves once the server is listening on IPv4 loopback. Rejects if it
+   * cannot (for example, the port is taken).
+   */
+  readonly ready: Promise<void>;
 
   constructor(options: DashboardServerOptions) {
     this.store = options.store;
     this.assetsDir = options.assetsDir;
+    this.ready = this.listen(options.port);
 
-    this.server = http.createServer((req, res) => {
+    // Heartbeat keeps SSE connections alive through proxies and firewalls.
+    this.heartbeatTimer = setInterval(() => {
+      this.broadcast({ type: "heartbeat" });
+    }, 15_000);
+  }
+
+  /** The port the server is listening on, once `ready` has resolved. */
+  get port(): number {
+    return this.boundPort;
+  }
+
+  private async listen(port: number): Promise<void> {
+    const ipv4 = this.createServer();
+    await listenOn(ipv4, port, IPV4_LOOPBACK);
+    this.servers.push(ipv4);
+    const address = ipv4.address();
+    this.boundPort = typeof address === "object" && address ? address.port : port;
+
+    const ipv6 = this.createServer();
+    try {
+      await listenOn(ipv6, this.boundPort, IPV6_LOOPBACK);
+      this.servers.push(ipv6);
+    } catch (err) {
+      // No IPv6 on this host is fine: browsers fall back to 127.0.0.1. The
+      // port being held on ::1 by something else is not, because a browser
+      // that tries ::1 first for `localhost` would reach that process.
+      if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
+        console.warn(
+          `[dashboard] port ${this.boundPort} is in use on ${IPV6_LOOPBACK} by another process; ` +
+            `open http://${IPV4_LOOPBACK}:${this.boundPort} instead of localhost`,
+        );
+      }
+    }
+    console.log(`[dashboard] listening on http://localhost:${this.boundPort} (loopback only)`);
+  }
+
+  private createServer(): http.Server {
+    return http.createServer((req, res) => {
       this.handleRequest(req, res).catch((err: unknown) => {
         console.error("[dashboard] request error:", err);
         if (!res.headersSent) {
@@ -83,15 +171,6 @@ export class DashboardServer {
         }
       });
     });
-
-    this.server.listen(options.port, () => {
-      console.log(`[dashboard] listening on http://localhost:${options.port}`);
-    });
-
-    // Heartbeat keeps SSE connections alive through proxies and firewalls.
-    this.heartbeatTimer = setInterval(() => {
-      this.broadcast({ type: "heartbeat" });
-    }, 15_000);
   }
 
   /**
@@ -120,7 +199,7 @@ export class DashboardServer {
       try { client.end(); } catch { /* ignore */ }
     }
     this.sseClients.clear();
-    this.server.close();
+    for (const server of this.servers) server.close();
   }
 
   // -------------------------------------------------------------------------
@@ -131,19 +210,20 @@ export class DashboardServer {
     req: http.IncomingMessage,
     res: http.ServerResponse,
   ): Promise<void> {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const pathname = url.pathname;
-
-    // CORS headers for local dev
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-    if (req.method === "OPTIONS") {
-      res.writeHead(204);
-      res.end();
+    // Refuse anything not addressed to this server by a loopback name, or
+    // sent from another origin. The first stops DNS rebinding; the second
+    // stops a page elsewhere from reading the API, SSE stream included.
+    if (
+      !isLoopbackHost(req.headers.host, this.boundPort) ||
+      !isLoopbackOrigin(req.headers.origin, this.boundPort)
+    ) {
+      res.writeHead(403, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "forbidden" }));
       return;
     }
+
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const pathname = url.pathname;
 
     // --- SSE endpoint ---
     if (pathname === "/api/events") {
@@ -228,6 +308,17 @@ export class DashboardServer {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function listenOn(server: http.Server, port: number, host: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: Error): void => reject(err);
+    server.once("error", onError);
+    server.listen(port, host, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+}
 
 function sendJson(res: http.ServerResponse, data: unknown): void {
   res.writeHead(200, { "Content-Type": "application/json" });
