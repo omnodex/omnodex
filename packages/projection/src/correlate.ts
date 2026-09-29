@@ -63,6 +63,8 @@
  * is the better one precisely because the hook cannot see it.
  */
 
+// Runtime-neutral: no Node-only imports, so correlation can also run in a
+// browser or a Worker.
 import { splitMcpToolName } from "@omnodex/shared";
 import {
   matchCodexToolName,

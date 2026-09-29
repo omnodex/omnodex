@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createHash as nodeCreateHash } from "node:crypto";
 import {
   codexToolName,
   matchCodexToolName,
+  sha1Hex,
 } from "../dist/index.js";
 
 const fixture = JSON.parse(
@@ -70,4 +72,26 @@ test("matches captured names and excludes direct Codex Apps calls", () => {
     ),
     null,
   );
+});
+
+// ---------------------------------------------------------------------------
+// sha1Hex: the runtime-neutral SHA-1 behind Codex's collision suffixes
+// ---------------------------------------------------------------------------
+
+
+test("sha1Hex matches the published SHA-1 test vectors", () => {
+  assert.equal(sha1Hex(""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+  assert.equal(sha1Hex("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d");
+  assert.equal(
+    sha1Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+    "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
+  );
+});
+
+test("sha1Hex matches node:crypto on UTF-8 and every padding boundary", () => {
+  const inputs = ["filesystem\0filesystem\0", "héllo wörld ✓ 🔐", "\0\0\0"];
+  for (let n = 0; n <= 130; n++) inputs.push("x".repeat(n));
+  for (const input of inputs) {
+    assert.equal(sha1Hex(input), nodeCreateHash("sha1").update(input).digest("hex"), JSON.stringify(input));
+  }
 });
