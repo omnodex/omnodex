@@ -56,9 +56,19 @@ export class Projector {
    * minimal session row on-demand to satisfy the FK constraint. If a
    * session.started event arrives later, upsertSession overwrites the stub.
    */
-  private async ensureSession(sessionId: string, occurredAt: string, interceptor: string): Promise<void> {
+  private async ensureSession(
+    sessionId: string,
+    occurredAt: string,
+    interceptor: string,
+    platform: SessionRow["platform"] = null,
+  ): Promise<void> {
     const existing = await this.store.getSession(sessionId);
-    if (existing) return;
+    if (existing) {
+      // A session created without a platform learns it from the first
+      // later event that carries one.
+      if (!existing.platform && platform) await this.store.patchSession(sessionId, { platform });
+      return;
+    }
     await this.store.upsertSession({
       session_id: sessionId,
       user: "unknown",
@@ -75,6 +85,7 @@ export class Projector {
       risk_score: 0,
       last_event_at: occurredAt,
       source_root: this.sourceRoot,
+      platform,
     });
   }
 
@@ -122,6 +133,7 @@ export class Projector {
       risk_score: 0,
       last_event_at: event.occurred_at,
       source_root: this.sourceRoot,
+      platform: event.platform ?? null,
     });
   }
 
@@ -134,7 +146,7 @@ export class Projector {
   }
 
   private async onToolInvoked(event: ToolInvokedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
     const mcpServer =
       event.mcp_server === "builtin"
         ? splitMcpToolName(event.tool_name)?.mcpServer ?? event.mcp_server
@@ -175,7 +187,7 @@ export class Projector {
   }
 
   private async onToolCompleted(event: ToolCompletedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
     await this.store.patchToolCall(event.tool_call_id, {
       ended_at: event.occurred_at,
       duration_ms: event.duration_ms,
@@ -187,7 +199,7 @@ export class Projector {
   }
 
   private async onFileRead(event: FileReadEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
     const inserted = await this.store.insertFileEvent({
       event_id: event.event_id,
       session_id: event.session_id,
@@ -206,7 +218,7 @@ export class Projector {
   }
 
   private async onFileWritten(event: FileWrittenEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
     const inserted = await this.store.insertFileEvent({
       event_id: event.event_id,
       session_id: event.session_id,
@@ -225,7 +237,7 @@ export class Projector {
   }
 
   private async onRiskDetected(event: RiskDetectedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor);
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
     const inserted = await this.store.insertRiskEvent({
       event_id: event.event_id,
       session_id: event.session_id,

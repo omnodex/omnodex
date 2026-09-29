@@ -53,7 +53,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- non-integral value as a real anyway.
   risk_score REAL NOT NULL DEFAULT 0,
   last_event_at TEXT NOT NULL DEFAULT '',
-  source_root TEXT
+  source_root TEXT,
+  platform TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -193,6 +194,10 @@ export class SqliteReadModelStore implements ReadModelStore {
     // proxy can each raise a finding on one routed call; the shared id lets
     // readers count it once.
     this.addColumnIfMissing("risk_events", "correlation_id", "TEXT");
+
+    // Migration 5: the session's agent runtime (2026-09-29). Rows written
+    // before it stay null until the next replay.
+    this.addColumnIfMissing("sessions", "platform", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -218,8 +223,8 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO sessions
-        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root, platform)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
         user = excluded.user,
         project_path = excluded.project_path,
@@ -230,7 +235,8 @@ export class SqliteReadModelStore implements ReadModelStore {
         duration_ms = excluded.duration_ms,
         status = excluded.status,
         last_event_at = excluded.last_event_at,
-        source_root = excluded.source_root`,
+        source_root = excluded.source_root,
+        platform = COALESCE(excluded.platform, sessions.platform)`,
     );
     stmt.run(
       row.session_id,
@@ -248,6 +254,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.risk_score,
       row.last_event_at,
       row.source_root,
+      row.platform ?? null,
     );
   }
 
@@ -487,6 +494,7 @@ interface SessionRowRaw {
   risk_score: number;
   last_event_at: string;
   source_root: string | null;
+  platform: string | null;
 }
 
 interface ToolCallRowRaw {
@@ -534,6 +542,7 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     risk_score: raw.risk_score,
     last_event_at: raw.last_event_at,
     source_root: raw.source_root,
+    platform: (raw.platform ?? null) as SessionRow["platform"],
   };
 }
 
