@@ -1,5 +1,5 @@
 // Builds a signed, sealed advanced rule bundle for tests, the way the
-// publisher will (PAID_RULE_DELIVERY.md section 4): seal the rules under a
+// publisher will: seal the rules under a
 // fresh content key, hash the sealed payload, sign the manifest.
 
 import * as crypto from "node:crypto";

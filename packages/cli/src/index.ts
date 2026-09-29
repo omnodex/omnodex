@@ -956,7 +956,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
 
   // Write (or refresh) the stable launcher and use it as the shim path.
   // The launcher resolves the actual shim at runtime, so hook commands
-  // survive npm updates without re-running `omnodex install`. (FS-012)
+  // survive npm updates without re-running `omnodex install`.
   const shimPath = useLegacy
     ? CLAUDE_HOOK_SHIM_PATH
     : await writeLauncher("claude-code");
@@ -1015,7 +1015,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "claude-code",
     projectPath,
@@ -1073,7 +1073,7 @@ async function installCodex(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "codex",
     projectPath,
@@ -1141,7 +1141,7 @@ async function installAntigravity(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "antigravity",
     projectPath,

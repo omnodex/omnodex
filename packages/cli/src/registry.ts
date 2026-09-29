@@ -9,7 +9,7 @@
  *
  * Installation registry for Omnodex hook installations.
  * Tracks which targets are installed in which projects, their versions,
- * and whether they use the stable launcher pattern (FS-012) or legacy
+ * and whether they use the stable launcher pattern or legacy
  * absolute paths.
  *
  * Stored at ~/.omnodex/installations.json.
@@ -32,7 +32,7 @@ export interface Installation {
   installedAt: string;
   /** Omnodex version at install time */
   installedVersion: string;
-  /** Whether this installation uses the stable launcher (FS-012) or legacy absolute paths */
+  /** Whether this installation uses the stable launcher or legacy absolute paths */
   usesLauncher: boolean;
   /** Path to the launcher script (if usesLauncher is true) */
   launcherPath?: string;
@@ -138,7 +138,7 @@ export async function findInstallations(opts?: {
 }
 
 /**
- * Find installations that use legacy absolute paths (pre-FS-012).
+ * Find installations that use legacy absolute paths (from before the stable launcher).
  * These need to be re-installed to switch to the stable launcher pattern.
  */
 export async function findStaleInstallations(): Promise<Installation[]> {

@@ -63,8 +63,7 @@ export const HOST_CLASSES: Readonly<Record<EvaluatorHost, readonly EvaluationCla
  * bundle: it would pay the cost on every call, would want the opened rules
  * cached in the clear, and could not run the sequence rules that make up
  * most of an advanced set anyway. Long-lived hosts open the bundle once and
- * hold the rules in memory. Decided in
- * planning/architecture/PAID_RULE_DELIVERY.md section 3.
+ * hold the rules in memory.
  */
 export const HOST_TIERS: Readonly<Record<EvaluatorHost, readonly RuleTier[]>> = {
   hook: ["community"],

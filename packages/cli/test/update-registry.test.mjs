@@ -1,5 +1,5 @@
 /**
- * Tests for the update and registry modules (FS-012).
+ * Tests for the update and registry modules.
  *
  * Tests:
  *   1. compareSemver: correct ordering of version strings
