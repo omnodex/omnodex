@@ -1214,7 +1214,8 @@ async function installAntigravityMcp(
   const mcpServers = (existing.mcpServers ?? {}) as Record<string, unknown>;
   mcpServers["omnodex"] = {
     command: nodePath,
-    args: [launchProxyPath],
+    // --platform labels the proxy's sessions as Antigravity in the dashboards.
+    args: [launchProxyPath, "--platform", "antigravity"],
     env: {
       OMNODEX_HOME: omnodexHome,
     },
