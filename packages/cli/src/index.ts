@@ -573,6 +573,14 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // --- Start server ---
   const assetsDir = new URL(".", import.meta.url).pathname;
   const server = new DashboardServer({ store, port, assetsDir });
+  try {
+    await server.ready;
+  } catch (err) {
+    server.close();
+    for (const { log } of logs) await log.close();
+    await store.close();
+    throw err;
+  }
 
   // Validate license and show tier info
   const licenseResult = await validateLicense();
@@ -615,7 +623,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
     console.log("[dashboard] cloud streaming disabled (no API token/passphrase)");
   }
 
-  console.log(`[dashboard] open http://localhost:${port} in your browser`);
+  console.log(`[dashboard] open http://localhost:${server.port} in your browser`);
   console.log(`[dashboard] streaming detection active -- press Ctrl+C to stop`);
 
   // --- Start streaming detect loop ---
