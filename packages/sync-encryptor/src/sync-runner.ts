@@ -20,7 +20,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { EventLog } from "@omnodex/event-log";
-import { Projector, SqliteReadModelStore } from "@omnodex/projection";
+import { Projector, SqliteReadModelStore, runCorrelation } from "@omnodex/projection";
 import { SyncEncryptor } from "./sync-encryptor.js";
 import type { SyncResult } from "./sync-encryptor.js";
 import { HttpSyncTransport } from "./transport.js";
@@ -48,6 +48,10 @@ export async function syncReadModel(opts: SyncReadModelOptions): Promise<SyncRes
   try {
     // Replay is idempotent, so the blob always reflects the full event log.
     await new Projector(store).replay(log.readAll());
+    // A replay leaves a routed call's hook and proxy rows unpaired; pairing
+    // is a pass over the whole model. Without it the hosted dashboard counts
+    // every routed call, and any finding both hosts raised on it, twice.
+    await runCorrelation(store);
 
     // Reuse a persisted KDF salt across syncs (it is also embedded in each blob).
     const saltPath = path.join(opts.home, "sync-salt.bin");

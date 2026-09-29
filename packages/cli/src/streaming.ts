@@ -38,7 +38,7 @@
  */
 
 import { EventLog, newEventId } from "@omnodex/event-log";
-import { Projector } from "@omnodex/projection";
+import { Projector, runCorrelation } from "@omnodex/projection";
 import type { ReadModelStore } from "@omnodex/projection";
 import {
   classesLeftAfterCapture,
@@ -247,7 +247,12 @@ export function startStreamingLoop(
   projector: Projector,
   server: DashboardServer,
   cloudTransport: StreamingTransport | null = null,
-  options: { machineState?: MachineState; home?: string } = {},
+  options: {
+    machineState?: MachineState;
+    home?: string;
+    /** Quiet time after the last new call before pairing runs. Default 2000 ms. */
+    correlationDelayMs?: number;
+  } = {},
 ): { stop: () => Promise<void> } {
   // Normalise: single EventLog → one-element roots array.
   const roots: StreamingRoot[] = Array.isArray(logOrRoots)
@@ -268,6 +273,45 @@ export function startStreamingLoop(
     machineState: options.machineState,
   });
 
+  // A routed MCP call arrives twice, from the hook and from the proxy, in
+  // different sessions and a second or so apart. Pairing them is a pass
+  // over the whole model rather than a projection step, so it runs once new
+  // calls go quiet, one pass at a time, and tells the page to reload when it
+  // changed anything. Without it a live session counts every routed call,
+  // and any finding both hosts raised on it, twice until the next restart.
+  const correlationDelayMs = options.correlationDelayMs ?? 2_000;
+  let correlationTimer: ReturnType<typeof setTimeout> | null = null;
+  let correlationChain: Promise<void> = Promise.resolve();
+  const scheduleCorrelation = (): void => {
+    if (ctrl.signal.aborted) return;
+    if (correlationTimer) clearTimeout(correlationTimer);
+    correlationTimer = setTimeout(() => {
+      correlationTimer = null;
+      correlationChain = correlationChain.then(async () => {
+        if (ctrl.signal.aborted) return;
+        try {
+          const result = await runCorrelation(store);
+          if (result.rowsUpdated + result.risksUpdated + result.sessionsUpdated > 0) {
+            server.broadcast({ type: "read_model.changed" });
+          }
+        } catch (err) {
+          console.error("[stream] correlation pass failed:", err);
+        }
+      });
+      track(correlationChain);
+    }, correlationDelayMs);
+  };
+  // The tails broadcast through this, which also notices new calls and
+  // findings that a pass may need to pair.
+  const tailServer = {
+    broadcast(message: Parameters<DashboardServer["broadcast"]>[0]): void {
+      server.broadcast(message);
+      if (message.type === "tool_call.inserted" || message.type === "risk_event.inserted") {
+        scheduleCorrelation();
+      }
+    },
+  } as DashboardServer;
+
   function launchTail(
     sessionId: string,
     log: EventLog,
@@ -283,7 +327,7 @@ export function startStreamingLoop(
     // tailSession passes rootPath with each apply, so concurrent tails of
     // different roots cannot stamp each other's sessions.
     track(
-      tailSession(sessionId, log, store, projector, server, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
+      tailSession(sessionId, log, store, projector, tailServer, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
         (err: unknown) => {
           console.error(`[stream] tail error for ${sessionId} (${rootPath}):`, err);
         },
@@ -332,6 +376,7 @@ export function startStreamingLoop(
   return {
     stop: async (): Promise<void> => {
       ctrl.abort();
+      if (correlationTimer) clearTimeout(correlationTimer);
       // A poll loop can launch a tail while the first ones settle, so wait
       // until the set stays empty.
       while (running.size > 0) {
