@@ -17,7 +17,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs, readFileSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -45,7 +45,9 @@ process.stdin.on("end", () => {
 `;
 
 async function makeTemp() {
-  return fs.mkdtemp(path.join(os.tmpdir(), "omnodex-launcher-"));
+  // Long form of the path: on Windows os.tmpdir() can be an 8.3 short name
+  // (C:\Users\RUNNER~1\...) while `where` reports the long one.
+  return realpathSync.native(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-launcher-")));
 }
 
 async function writeFile(p, content, mode = 0o755) {
