@@ -35,6 +35,8 @@ import {
 export interface CollapsedToolCallRow extends ToolCallRow {
   /** Interceptors that observed the call, in display order. Only on merged rows. */
   sources?: string[];
+  /** Every tool_call_id the call was recorded under. Only on merged rows. */
+  observed_tool_call_ids?: string[];
 }
 
 /** Everything a dashboard reads, keyed by session like the sync payload. */
@@ -86,6 +88,7 @@ function mergeRows(rows: CollapsedToolCallRow[]): CollapsedToolCallRow {
   const merged: CollapsedToolCallRow = {
     ...primary,
     sources: sortSources(rows.flatMap((r) => r.sources ?? [r.interceptor ?? "unknown"])),
+    observed_tool_call_ids: [...new Set(rows.flatMap((r) => r.observed_tool_call_ids ?? [r.tool_call_id]))],
   };
   if (proxy && proxy !== primary) {
     if (proxy.duration_ms != null) merged.duration_ms = proxy.duration_ms;
@@ -145,8 +148,10 @@ export function collapseCorrelatedToolCalls(snapshot: ReadModelSnapshot): ReadMo
 /**
  * A finding two hosts raised on one routed call appears once, with its call
  * in the agent's session, repointed at the call that survived. A finding
- * only one host raised moves with its call. Session risk scores are
- * recomputed for the sessions that gained or lost findings.
+ * only one host raised moves with its call. A sequence finding's pattern
+ * (related_event_ids) is repointed the same way, so it names calls a reader
+ * can still find. Session risk scores are recomputed for the sessions that
+ * gained or lost findings.
  */
 export function collapseCorrelatedFindings(snapshot: ReadModelSnapshot): ReadModelSnapshot {
   // Where each correlated call lives once collapsed: the agent's session.
@@ -159,6 +164,22 @@ export function collapseCorrelatedFindings(snapshot: ReadModelSnapshot): ReadMod
       }
     }
   }
+
+  // Every observed id of a correlated call, to the id of the call kept.
+  const keptId = new Map<string, string>();
+  for (const rows of Object.values(snapshot.tool_calls)) {
+    for (const row of rows) {
+      const home = row.correlation_id ? homes.get(row.correlation_id) : undefined;
+      if (!home) continue;
+      for (const id of row.observed_tool_call_ids ?? [row.tool_call_id]) keptId.set(id, home.toolCallId);
+    }
+  }
+  const repointPattern = (row: RiskEventRow): RiskEventRow => {
+    if (!row.related_event_ids?.some((id) => keptId.has(id) && keptId.get(id) !== id)) return row;
+    changedPattern = true;
+    return { ...row, related_event_ids: row.related_event_ids.map((id) => keptId.get(id) ?? id) };
+  };
+  let changedPattern = false;
 
   const next = new Map<string, RiskEventRow[]>(Object.keys(snapshot.risk_events).map((sid) => [sid, []]));
   const kept = new Set<string>();
@@ -181,17 +202,17 @@ export function collapseCorrelatedFindings(snapshot: ReadModelSnapshot): ReadMod
       kept.add(key);
       const home = row.correlation_id ? homes.get(row.correlation_id) : undefined;
       if (!home || (home.sessionId === sid && home.toolCallId === row.related_event_id)) {
-        next.get(sid)!.push(row);
+        next.get(sid)!.push(repointPattern(row));
         continue;
       }
       changed.add(sid);
       changed.add(home.sessionId);
       const bucket = next.get(home.sessionId) ?? [];
-      bucket.push({ ...row, session_id: home.sessionId, related_event_id: home.toolCallId });
+      bucket.push({ ...repointPattern(row), session_id: home.sessionId, related_event_id: home.toolCallId });
       next.set(home.sessionId, bucket);
     }
   }
-  if (changed.size === 0) return snapshot;
+  if (changed.size === 0 && !changedPattern) return snapshot;
 
   const riskEvents = Object.fromEntries(next);
   const sessions = snapshot.sessions.map((s) => {

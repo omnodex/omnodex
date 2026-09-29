@@ -147,6 +147,21 @@ test("risk scores are recomputed for the sessions that changed", () => {
   assert.equal(byId.proxy.risk_score, 0);
 });
 
+test("a sequence finding's pattern names the calls that were kept", () => {
+  const snap = pairSnapshot();
+  // A sequence the proxy saw: an earlier plain call, then the routed one.
+  snap.tool_calls.proxy.unshift(call("tc-earlier", "proxy", "mcp-proxy", { correlation_id: null }));
+  snap.risk_events.proxy.push(finding("proxy", "tc-proxy", "rule_sequence", {
+    rule_tier: "advanced",
+    related_event_ids: ["tc-earlier", "tc-proxy"],
+  }));
+  const out = collapseCorrelated(snap);
+  const seq = out.risk_events.hook.find((r) => r.rule_id === "rule_sequence");
+  assert.equal(seq.related_event_id, "tc-hook");
+  assert.deepEqual(seq.related_event_ids, ["tc-earlier", "tc-hook"], "the proxy's id for the routed call is repointed");
+  assert.equal(seq.rule_tier, "advanced");
+});
+
 test("a snapshot with nothing correlated comes back unchanged", async () => {
   const snap = pairSnapshot();
   for (const rows of Object.values(snap.tool_calls)) for (const r of rows) r.correlation_id = null;
