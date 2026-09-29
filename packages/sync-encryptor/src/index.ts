@@ -29,7 +29,7 @@ export {
 } from "./stream-keypair.js";
 export type { WrappedStreamKey, StreamWrapKey } from "./stream-keypair.js";
 
-export { serializeReadModel, encodePayload, SYNC_PAYLOAD_VERSION } from "./serializer.js";
+export { serializeReadModel, encodePayload, SYNC_PAYLOAD_VERSION, PAYLOAD_FIELDS } from "./serializer.js";
 export type { SyncPayload } from "./serializer.js";
 
 export {

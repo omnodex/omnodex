@@ -14,7 +14,7 @@
  * the read model can change freely because it is always regenerable.
  */
 
-import type { InterceptorKind, RiskSeverity } from "@omnodex/shared";
+import type { InterceptorKind, PlatformKind, RiskSeverity } from "@omnodex/shared";
 
 export interface SessionRow {
   session_id: string;
@@ -35,6 +35,13 @@ export interface SessionRow {
   last_event_at: string;
   /** Root directory this session was read from (multi-root aggregation). */
   source_root: string | null;
+  /**
+   * Agent runtime the session ran in, when an interceptor recorded one:
+   * from session.started, or from the first event that carries it when a
+   * session has no start (cloud Cowork tasks may not send one). Null when
+   * unknown; optional for rows projected before it existed.
+   */
+  platform?: PlatformKind | null;
 }
 
 export interface ToolCallRow {

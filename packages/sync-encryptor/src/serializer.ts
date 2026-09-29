@@ -8,9 +8,13 @@
  * @omnodex/sync-encryptor -- serializer
  *
  * Reads the SQLite read model and serializes projection data into a JSON
- * payload suitable for encryption and upload. The output shape mirrors
- * the local dashboard's data source so the hosted dashboard can render
- * identically after decryption.
+ * payload suitable for encryption and upload.
+ *
+ * The payload is the hosted dashboard's contract, not a copy of the read
+ * model: each row carries exactly the fields listed in PAYLOAD_FIELDS. A
+ * column added to the read model for local use stays local until it is
+ * listed here, and it should be listed only when the hosted dashboard
+ * reads it.
  */
 
 import type {
@@ -27,6 +31,49 @@ import type {
  * comment below.
  */
 export const SYNC_PAYLOAD_VERSION = 2;
+
+/**
+ * The fields each payload row carries. Adding an optional field needs no
+ * version bump: a reader that predates it ignores it, and a newer reader
+ * treats its absence in an older blob as unknown.
+ *
+ * sessions.platform: the hosted dashboard labels a session by its surface,
+ * and a Claude Code hook session in platform "cowork" is a Cowork cloud
+ * task. Live events carry platform; without it here the same session
+ * relabelled itself after a reload.
+ */
+export const PAYLOAD_FIELDS = {
+  sessions: [
+    "session_id", "user", "project_path", "mcp_servers", "interceptor",
+    "started_at", "ended_at", "duration_ms", "status",
+    "tool_call_count", "file_read_count", "file_write_count", "risk_score",
+    "last_event_at", "source_root", "platform",
+  ],
+  tool_calls: [
+    "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
+    "correlation_id", "parameters_json", "started_at", "ended_at",
+    "duration_ms", "status", "response_bytes", "error_message",
+  ],
+  file_events: ["event_id", "session_id", "direction", "path", "bytes", "at"],
+  risk_events: [
+    "event_id", "session_id", "related_event_id", "severity", "category",
+    "description", "rule_id", "detected_at", "correlation_id",
+  ],
+} as const satisfies {
+  sessions: readonly (keyof SessionRow)[];
+  tool_calls: readonly (keyof ToolCallRow)[];
+  file_events: readonly (keyof FileEventRow)[];
+  risk_events: readonly (keyof RiskEventRow)[];
+};
+
+/** The row with only the listed fields. A field the row lacks stays absent. */
+function pick<T extends object, K extends keyof T>(row: T, fields: readonly K[]): Pick<T, K> {
+  const out = {} as Pick<T, K>;
+  for (const field of fields) {
+    if (row[field] !== undefined) out[field] = row[field];
+  }
+  return out;
+}
 
 /** The shape of the serialized sync payload (pre-encryption). */
 export interface SyncPayload {
@@ -78,16 +125,16 @@ export async function serializeReadModel(
   const riskEvents: Record<string, RiskEventRow[]> = {};
 
   for (const id of ids) {
-    toolCalls[id] = await store.listToolCalls(id);
-    fileEvents[id] = await store.listFileEvents(id);
-    riskEvents[id] = await store.listRiskEvents(id);
+    toolCalls[id] = (await store.listToolCalls(id)).map((r) => pick(r, PAYLOAD_FIELDS.tool_calls) as ToolCallRow);
+    fileEvents[id] = (await store.listFileEvents(id)).map((r) => pick(r, PAYLOAD_FIELDS.file_events) as FileEventRow);
+    riskEvents[id] = (await store.listRiskEvents(id)).map((r) => pick(r, PAYLOAD_FIELDS.risk_events) as RiskEventRow);
   }
 
   return {
     serialized_at: new Date().toISOString(),
     payload_version: SYNC_PAYLOAD_VERSION,
     session_ids: ids,
-    sessions,
+    sessions: sessions.map((r) => pick(r, PAYLOAD_FIELDS.sessions) as SessionRow),
     tool_calls: toolCalls,
     file_events: fileEvents,
     risk_events: riskEvents,

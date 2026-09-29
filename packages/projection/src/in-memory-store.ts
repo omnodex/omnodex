@@ -59,6 +59,8 @@ export class InMemoryReadModelStore implements ReadModelStore {
     // update; this is the same rule spelled out.
     this.sessions.set(row.session_id, {
       ...row,
+      // A session.started without a platform keeps one an earlier event set.
+      platform: row.platform ?? existing.platform ?? null,
       tool_call_count: existing.tool_call_count,
       file_read_count: existing.file_read_count,
       file_write_count: existing.file_write_count,
