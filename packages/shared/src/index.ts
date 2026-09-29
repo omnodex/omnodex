@@ -163,6 +163,11 @@ export interface SessionStartedEvent extends BaseEvent {
    * strings and credentials are never recorded.
    */
   mcp_server_transports?: McpServerTransport[];
+  /**
+   * The MCP client the proxy served, as the client named itself in the MCP
+   * initialize handshake (clientInfo). Only the proxy records it.
+   */
+  mcp_client?: { name: string; version?: string };
 }
 
 export interface McpServerTransport {

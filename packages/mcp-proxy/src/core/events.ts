@@ -17,11 +17,34 @@
 import {
   SCHEMA_VERSION,
   type McpServerTransport,
+  type PlatformKind,
   type SessionEndedEvent,
   type SessionStartedEvent,
   type ToolCompletedEvent,
   type ToolInvokedEvent,
 } from "@omnodex/shared";
+
+const PLATFORMS: readonly PlatformKind[] = ["claude-code", "codex", "cowork", "web", "antigravity", "copilot"];
+
+/** The value as a PlatformKind, or undefined when it names no known platform. */
+export function asPlatform(value: string | undefined): PlatformKind | undefined {
+  return PLATFORMS.find((p) => p === value?.trim().toLowerCase());
+}
+
+/**
+ * The runtime an MCP client's initialize name identifies, when it is one we
+ * have captured. Anything else maps to nothing and is recorded by name only.
+ * A launcher that knows its platform (OMNODEX_PLATFORM) takes precedence:
+ * the Claude desktop app, for one, names itself the same for chat and Cowork.
+ */
+const CLIENT_PLATFORMS: Readonly<Record<string, PlatformKind>> = {
+  "claude-code": "claude-code",
+  "codex-mcp-client": "codex",
+};
+
+export function platformForClient(name: string | undefined): PlatformKind | undefined {
+  return name ? CLIENT_PLATFORMS[name.trim().toLowerCase()] : undefined;
+}
 
 /** Replaces parameter values when redaction is on. */
 export const REDACTED_SENTINEL = "[REDACTED]";
@@ -49,6 +72,10 @@ export function buildSessionStartedEvent(fields: {
   user: string;
   projectPath: string;
   servers: McpServerTransport[];
+  /** The agent runtime, when the launcher or the client's name says. */
+  platform?: PlatformKind;
+  /** The MCP client, as it named itself in initialize. */
+  mcpClient?: { name: string; version?: string };
 }): SessionStartedEvent {
   return {
     schema_version: SCHEMA_VERSION,
@@ -62,6 +89,8 @@ export function buildSessionStartedEvent(fields: {
     project_path: fields.projectPath,
     mcp_servers: fields.servers.map((s) => s.name),
     mcp_server_transports: fields.servers,
+    ...(fields.platform ? { platform: fields.platform } : {}),
+    ...(fields.mcpClient ? { mcp_client: fields.mcpClient } : {}),
   };
 }
 

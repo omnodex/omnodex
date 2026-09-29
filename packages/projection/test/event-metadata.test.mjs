@@ -42,6 +42,7 @@ const START = event({
   project_path: "/home/case/repo",
   mcp_servers: ["filesystem", "docs"],
   mcp_server_transports: TRANSPORTS,
+  mcp_client: { name: "Some Client", version: "1.0.0" },
 });
 
 const SEQUENCE_FINDING = event({
@@ -94,6 +95,7 @@ for (const [name, makeStore] of [
 
     const session = await store.getSession("sess_meta");
     assert.deepEqual(session.mcp_server_transports, TRANSPORTS);
+    assert.equal(session.mcp_client_name, "Some Client");
 
     const findings = Object.fromEntries((await store.listRiskEvents("sess_meta")).map((r) => [r.rule_id, r]));
     assert.equal(findings.rule_sequence.rule_tier, "advanced");

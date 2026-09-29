@@ -976,7 +976,11 @@ header {
   function runtimeLabel(s) {
     if (!s) return "unknown";
     var platform = s.platform ? (PLATFORM_LABELS[s.platform] || s.platform) : null;
-    if (s.interceptor === "mcp-proxy") return platform ? platform + " via MCP Proxy" : "MCP Proxy";
+    if (s.interceptor === "mcp-proxy") {
+      if (platform) return platform + " via MCP Proxy";
+      // An MCP client we have no platform for is named as it named itself.
+      return s.mcp_client_name ? s.mcp_client_name + " via MCP Proxy" : "MCP Proxy";
+    }
     if (s.interceptor === "claude-code-hook" && s.platform === "cowork") return "Cowork (cloud)";
     return platform || interceptorLabel(s.interceptor);
   }
@@ -1082,7 +1086,7 @@ header {
 
     var typesSummary = Object.keys(types).map(function(t) {
       var col = typeColors[t];
-      return '<span class="source-badge" style="background:' + col.bg + ';color:' + col.fg + '">' + t + ' (' + types[t] + ')</span>';
+      return '<span class="source-badge" style="background:' + col.bg + ';color:' + col.fg + '">' + escHtml(t) + ' (' + types[t] + ')</span>';
     }).join("&nbsp;");
 
     var serverList = Object.keys(servers).sort();

@@ -206,6 +206,8 @@ test("the page labels each session by its agent runtime", () => {
     [{ interceptor: "antigravity-hook", platform: "antigravity" }, "Antigravity"],
     [{ interceptor: "mcp-proxy" }, "MCP Proxy"],
     [{ interceptor: "mcp-proxy", platform: "codex" }, "Codex via MCP Proxy"],
+    [{ interceptor: "mcp-proxy", platform: "cowork", mcp_client_name: "claude-ai" }, "Cowork via MCP Proxy"],
+    [{ interceptor: "mcp-proxy", mcp_client_name: "Some Client" }, "Some Client via MCP Proxy"],
   ];
   for (const [session, expected] of cases) {
     assert.equal(runtimeLabel(session), expected, JSON.stringify(session));
