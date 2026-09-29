@@ -168,12 +168,13 @@ export async function tailSession(
     const processedIds = new Set<string>(existing.map((e) => e.event_id));
     for (const event of existing) evaluator.observe(event);
 
-    // Tell the projector which root these events come from.
-    projector.setSourceRoot(sourceRoot);
+    // The root travels with every apply: the projector is shared by the
+    // tails of every root, and they interleave.
+    const applyOpts = { sourceRoot };
 
     if (replayHistory) {
       for (const event of existing) {
-        await projector.apply(event);
+        await projector.apply(event, applyOpts);
       }
     }
 
@@ -182,7 +183,7 @@ export async function tailSession(
       processedIds.add(event.event_id);
 
       // Project the event into the read model and broadcast the update.
-      await projector.apply(event);
+      await projector.apply(event, applyOpts);
       await broadcastProjection(event, store, server);
       cloudTransport?.push(event).catch(() => {}); // fire-and-forget
 
@@ -199,7 +200,7 @@ export async function tailSession(
         processedIds.add(riskEvent.event_id);
 
         await log.append(riskEvent);
-        await projector.apply(riskEvent);
+        await projector.apply(riskEvent, applyOpts);
         await broadcastProjection(riskEvent, store, server);
         cloudTransport?.push(riskEvent).catch(() => {}); // fire-and-forget
       }
@@ -279,9 +280,8 @@ export function startStreamingLoop(
     activeSessions.add(key);
 
     // Tell the projector which root this session belongs to.
-    // NOTE: setSourceRoot is per-apply, but since tailSession is per-session
-    // and each session belongs to exactly one root, we set it before launching.
-    // The projector's sourceRoot is set before each apply inside tailSession.
+    // tailSession passes rootPath with each apply, so concurrent tails of
+    // different roots cannot stamp each other's sessions.
     track(
       tailSession(sessionId, log, store, projector, server, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
         (err: unknown) => {

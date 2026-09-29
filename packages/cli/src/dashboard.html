@@ -864,6 +864,9 @@ header {
 
   // --- State ---
   var useUtc = false;
+  // Everything the page shows, from /api/snapshot: correlated hook and proxy
+  // observations of one call already collapsed into one call and one finding.
+  let snapshot = { sessions: [], tool_calls: {}, file_events: {}, risk_events: {} };
   let sessions = [];
   let currentSession = null;
   let toolCalls = [];
@@ -878,19 +881,15 @@ header {
   }
 
   async function loadSessions() {
-    sessions = await fetchJson("/api/sessions");
+    snapshot = await fetchJson("/api/snapshot");
+    sessions = snapshot.sessions;
     return sessions;
   }
 
-  async function loadSessionDetail(sessionId) {
-    const [tc, fe, re] = await Promise.all([
-      fetchJson("/api/sessions/" + sessionId + "/tool-calls"),
-      fetchJson("/api/sessions/" + sessionId + "/file-events"),
-      fetchJson("/api/sessions/" + sessionId + "/risk-events"),
-    ]);
-    toolCalls = tc;
-    fileEvents = fe;
-    riskEvents = re;
+  function loadSessionDetail(sessionId) {
+    toolCalls = (snapshot.tool_calls[sessionId] || []).slice();
+    fileEvents = (snapshot.file_events[sessionId] || []).slice();
+    riskEvents = (snapshot.risk_events[sessionId] || []).slice();
   }
 
   // --- Credential extraction ---
@@ -962,6 +961,33 @@ header {
     }
   }
 
+  // The agent runtime a session ran in comes from its platform when the
+  // interceptor recorded one, and from the interceptor otherwise. A Claude
+  // Code hook session in platform "cowork" is a Cowork cloud task.
+  var PLATFORM_LABELS = {
+    "claude-code": "Claude Code",
+    "codex": "Codex",
+    "cowork": "Cowork",
+    "antigravity": "Antigravity",
+    "web": "Web",
+    "copilot": "Copilot",
+  };
+
+  function runtimeLabel(s) {
+    if (!s) return "unknown";
+    var platform = s.platform ? (PLATFORM_LABELS[s.platform] || s.platform) : null;
+    if (s.interceptor === "mcp-proxy") return platform ? platform + " via MCP Proxy" : "MCP Proxy";
+    if (s.interceptor === "claude-code-hook" && s.platform === "cowork") return "Cowork (cloud)";
+    return platform || interceptorLabel(s.interceptor);
+  }
+
+  /** Short names for the interceptors that observed a merged call. */
+  function sourcesLabel(sources) {
+    return sources.map(function(src) {
+      return src === "mcp-proxy" ? "MCP Proxy" : interceptorLabel(src) + " hook";
+    }).join(" + ");
+  }
+
   /** Shorten a session ID for display: keep prefix + first 8 hex chars. */
   function shortSessionId(sessionId) {
     if (!sessionId) return "";
@@ -1002,7 +1028,7 @@ header {
 
   function buildSessionLabel(s) {
     var prefix = s.status === "in_progress" ? "● " : "";
-    var src = s.interceptor ? "[" + interceptorLabel(s.interceptor) + "] " : "";
+    var src = s.interceptor ? "[" + runtimeLabel(s) + "] " : "";
     var name = projectName(s.project_path) || shortSessionId(s.session_id);
     var ts = s.last_event_at ? "  ·  " + timeAgo(s.last_event_at) : "";
     return prefix + src + name + ts;
@@ -1040,26 +1066,22 @@ header {
     var el = document.getElementById("session-details");
     el.style.display = "grid";
 
-    // Collect unique interceptor types
+    // Collect unique runtimes, with the colour of the first session seen
     var types = {};
+    var typeColors = {};
     var servers = {};
     var latestEvent = "";
     for (var i = 0; i < allActiveSessions.length; i++) {
       var s = allActiveSessions[i];
-      var label = interceptorLabel(s.interceptor);
+      var label = runtimeLabel(s);
       types[label] = (types[label] || 0) + 1;
+      if (!typeColors[label]) typeColors[label] = interceptorColor(s.interceptor);
       (s.mcp_servers || []).forEach(function(srv) { servers[srv] = true; });
       if (s.last_event_at && s.last_event_at > latestEvent) latestEvent = s.last_event_at;
     }
 
     var typesSummary = Object.keys(types).map(function(t) {
-      var col = interceptorColor(
-        t === "Claude Code" ? "claude-code-hook" :
-        t === "Cowork" ? "cowork-desktop" :
-        t === "Codex" ? "codex-hook" :
-        t === "Antigravity" ? "antigravity-hook" :
-        t === "MCP Proxy" ? "mcp-proxy" : "unknown"
-      );
+      var col = typeColors[t];
       return '<span class="source-badge" style="background:' + col.bg + ';color:' + col.fg + '">' + t + ' (' + types[t] + ')</span>';
     }).join("&nbsp;");
 
@@ -1139,7 +1161,7 @@ header {
     var col = interceptorColor(s.interceptor);
     var typeBadge = s.interceptor
       ? '<span class="source-badge" style="background:' + col.bg + ';color:' + col.fg + '">'
-        + interceptorLabel(s.interceptor) + '</span>'
+        + escHtml(runtimeLabel(s)) + '</span>'
       : '<span class="source-badge" style="background:var(--slate-dim);color:var(--slate)">unknown</span>';
 
     var statusLabel = displayStatus(s.status);
@@ -1167,7 +1189,15 @@ header {
     right += sdRow("Started", startedFmt);
     right += sdRow("Last Event", lastFmt);
     if ((s.mcp_servers || []).length > 0) {
-      right += sdRowMono("MCP Servers", escHtml(s.mcp_servers.join(", ")));
+      // How each server is reached, where the session recorded it.
+      var transports = {};
+      (s.mcp_server_transports || []).forEach(function(t) { transports[t.name] = t; });
+      var serverText = s.mcp_servers.map(function(name) {
+        var t = transports[name];
+        if (!t) return name;
+        return name + " (" + t.transport + (t.host ? ": " + t.host : "") + ")";
+      }).join(", ");
+      right += sdRowMono("MCP Servers", escHtml(serverText));
     }
     right += '</div>';
 
@@ -1226,12 +1256,21 @@ header {
 
     let svgContent = '';
 
-    // Central "Claude" node
+    // Central node: the agent runtime(s) that made these calls
+    const runtimes = {};
+    for (const tc of toolCalls) {
+      const owner = sessions.find(function(ss) { return ss.session_id === tc.session_id; });
+      runtimes[runtimeLabel(owner)] = true;
+    }
+    const runtimeNames = Object.keys(runtimes);
+    const agentLabel = runtimeNames.length === 1 ? runtimeNames[0] : runtimeNames.length + " runtimes";
+    const agentW = Math.max(100, agentLabel.length * 9 + 30);
     const cx = width / 2;
     const cy = 60;
     svgContent += '<g class="graph-node">';
-    svgContent += '<rect x="' + (cx - 50) + '" y="' + (cy - 20) + '" width="100" height="40" fill="var(--navy-light)" stroke="var(--cyan)" />';
-    svgContent += '<text x="' + cx + '" y="' + (cy + 5) + '" fill="var(--cyan)" font-weight="600">Claude</text>';
+    svgContent += '<title>' + escHtml(runtimeNames.join(", ")) + '</title>';
+    svgContent += '<rect x="' + (cx - agentW / 2) + '" y="' + (cy - 20) + '" width="' + agentW + '" height="40" fill="var(--navy-light)" stroke="var(--cyan)" />';
+    svgContent += '<text x="' + cx + '" y="' + (cy + 5) + '" fill="var(--cyan)" font-weight="600">' + escHtml(agentLabel) + '</text>';
     svgContent += '</g>';
 
     // Server nodes in an arc below
@@ -1251,7 +1290,7 @@ header {
       const sy = height - 70;
       const nodeW = Math.max(100, server.name.length * 10 + 40);
 
-      // Edge from Claude to server
+      // Edge from the agent to server
       const midY = (cy + 20 + sy - 20) / 2;
       svgContent += '<path class="graph-edge" d="M ' + cx + ' ' + (cy + 20) + ' C ' + cx + ' ' + midY + ' ' + sx + ' ' + midY + ' ' + sx + ' ' + (sy - 20) + '" stroke="var(--cyan)" opacity="0.3" />';
 
@@ -1398,9 +1437,10 @@ header {
     const container = document.getElementById("detail-body");
     container.innerHTML =
       '<h4 style="font-family:var(--mono);font-size:12px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:16px;">Tool Call Detail</h4>' +
-      detailRow("Tool Call ID", tc.tool_call_id) +
-      detailRow("Tool", tc.tool_name) +
-      detailRow("MCP Server", tc.mcp_server) +
+      detailRow("Tool Call ID", escHtml(tc.tool_call_id)) +
+      detailRow("Tool", escHtml(tc.tool_name)) +
+      detailRow("MCP Server", escHtml(tc.mcp_server)) +
+      (tc.sources && tc.sources.length > 1 ? detailRow("Observed by", escHtml(sourcesLabel(tc.sources))) : '') +
       detailRow("Status", '<span class="timeline-status ' + tc.status + '">' + escHtml(tc.status) + '</span>') +
       detailRow("Started", formatWithTz(tc.started_at)) +
       detailRow("Ended", tc.ended_at ? formatWithTz(tc.ended_at) : "n/a") +
@@ -1435,20 +1475,29 @@ header {
 
     const container = document.getElementById("detail-body");
     let html = '<h4 style="font-family:var(--mono);font-size:12px;color:var(--cyan);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:16px;">Risk Event Detail</h4>' +
-      detailRow("Severity", '<span class="severity-badge severity-' + risk.severity + '">' + risk.severity + '</span>') +
-      detailRow("Category", risk.category) +
-      detailRow("Description", risk.description) +
-      detailRow("Rule", risk.rule_id) +
+      detailRow("Severity", '<span class="severity-badge severity-' + escAttr(risk.severity) + '">' + escHtml(risk.severity) + '</span>') +
+      detailRow("Category", escHtml(risk.category)) +
+      detailRow("Description", escHtml(risk.description)) +
+      detailRow("Rule", escHtml(risk.rule_id)) +
+      detailRow("Tier", risk.rule_tier === "advanced" ? "Advanced" : "Community") +
       detailRow("Detected", formatWithTz(risk.detected_at)) +
-      detailRow("Related Event", risk.related_event_id);
+      detailRow("Related Event", escHtml(risk.related_event_id));
+
+    // A sequence finding names every call in its pattern, earliest first.
+    if (risk.related_event_ids && risk.related_event_ids.length > 1) {
+      html += detailRow("Pattern", risk.related_event_ids.map(function(id) {
+        var call = toolCalls.find(function(t) { return t.tool_call_id === id; });
+        return escHtml(call ? call.tool_name + " (" + formatTime(call.started_at) + ")" : id);
+      }).join("<br>"));
+    }
 
     if (relatedTc) {
       let params;
       try { params = JSON.parse(relatedTc.parameters_json); } catch(e) { params = relatedTc.parameters_json; }
       html += '<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--navy-border);">' +
         '<h4 style="font-family:var(--mono);font-size:12px;color:var(--orange);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:12px;">Related Tool Call</h4>' +
-        detailRow("Tool", relatedTc.tool_name) +
-        detailRow("Server", relatedTc.mcp_server) +
+        detailRow("Tool", escHtml(relatedTc.tool_name)) +
+        detailRow("Server", escHtml(relatedTc.mcp_server)) +
         detailRow("Parameters", '<pre>' + escHtml(JSON.stringify(params, null, 2)) + '</pre>') +
         '</div>';
     }
@@ -1532,20 +1581,15 @@ header {
       allActiveSessions = sessions.filter(function(s) { return totalEvents(s) > 0; });
       currentSession = null;
 
-      // Load detail for all active sessions and merge
+      // Merge every active session's rows from the snapshot
       toolCalls = [];
       fileEvents = [];
       riskEvents = [];
-      await Promise.all(allActiveSessions.map(async function(s) {
-        var [tc, fe, re] = await Promise.all([
-          fetchJson("/api/sessions/" + s.session_id + "/tool-calls"),
-          fetchJson("/api/sessions/" + s.session_id + "/file-events"),
-          fetchJson("/api/sessions/" + s.session_id + "/risk-events"),
-        ]);
-        toolCalls = toolCalls.concat(tc);
-        fileEvents = fileEvents.concat(fe);
-        riskEvents = riskEvents.concat(re);
-      }));
+      allActiveSessions.forEach(function(s) {
+        toolCalls = toolCalls.concat(snapshot.tool_calls[s.session_id] || []);
+        fileEvents = fileEvents.concat(snapshot.file_events[s.session_id] || []);
+        riskEvents = riskEvents.concat(snapshot.risk_events[s.session_id] || []);
+      });
       // Sort merged events by timestamp
       toolCalls.sort(function(a, b) { return (b.started_at || "").localeCompare(a.started_at || ""); });
       riskEvents.sort(function(a, b) { return (b.detected_at || "").localeCompare(a.detected_at || ""); });
@@ -1567,7 +1611,7 @@ header {
     currentSession = sessions.find(function(s) { return s.session_id === sessionId; });
     if (!currentSession) return;
 
-    await loadSessionDetail(sessionId);
+    loadSessionDetail(sessionId);
     renderSessionDetails();
     renderStats();
     renderConnectionGraph();
@@ -1629,7 +1673,53 @@ header {
     connect();
   }
 
+  // Live messages update the page at once; a debounced reload of the
+  // snapshot then applies the correlation collapse to what arrived, so live
+  // totals settle on the same numbers a fresh load shows.
+  var resyncTimer = null;
+  function scheduleResync() {
+    if (resyncTimer) clearTimeout(resyncTimer);
+    resyncTimer = setTimeout(function() {
+      resyncTimer = null;
+      resync().catch(function(err) { console.error(err); });
+    }, 1000);
+  }
+
+  async function resync() {
+    if (!currentSession && !allActiveMode) return;
+    await loadSessions();
+    renderSessionSelect();
+    if (allActiveMode) {
+      var ids = {};
+      allActiveSessions.forEach(function(s) { ids[s.session_id] = true; });
+      allActiveSessions = sessions.filter(function(s) { return ids[s.session_id] || totalEvents(s) > 0; });
+      toolCalls = [];
+      fileEvents = [];
+      riskEvents = [];
+      allActiveSessions.forEach(function(s) {
+        toolCalls = toolCalls.concat(snapshot.tool_calls[s.session_id] || []);
+        fileEvents = fileEvents.concat(snapshot.file_events[s.session_id] || []);
+        riskEvents = riskEvents.concat(snapshot.risk_events[s.session_id] || []);
+      });
+      toolCalls.sort(function(a, b) { return (b.started_at || "").localeCompare(a.started_at || ""); });
+      riskEvents.sort(function(a, b) { return (b.detected_at || "").localeCompare(a.detected_at || ""); });
+      renderSessionDetailsAllActive();
+      renderStatsAllActive();
+    } else {
+      var id = currentSession.session_id;
+      currentSession = sessions.find(function(s) { return s.session_id === id; }) || currentSession;
+      loadSessionDetail(id);
+      renderSessionDetails();
+      renderStats();
+    }
+    renderConnectionGraph();
+    renderCredentialLedger();
+    renderRiskEvents();
+    renderTimeline();
+  }
+
   function handleSseMessage(msg) {
+    if (msg.type !== "heartbeat" && msg.type !== "connected") scheduleResync();
     switch (msg.type) {
       case "heartbeat":
       case "connected":

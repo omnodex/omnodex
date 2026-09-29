@@ -61,6 +61,9 @@ export class InMemoryReadModelStore implements ReadModelStore {
       ...row,
       // A session.started without a platform keeps one an earlier event set.
       platform: row.platform ?? existing.platform ?? null,
+      ...(row.mcp_server_transports ?? existing.mcp_server_transports
+        ? { mcp_server_transports: row.mcp_server_transports ?? existing.mcp_server_transports }
+        : {}),
       tool_call_count: existing.tool_call_count,
       file_read_count: existing.file_read_count,
       file_write_count: existing.file_write_count,

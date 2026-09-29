@@ -24,6 +24,7 @@ import * as http from "node:http";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -315,6 +316,12 @@ export class DashboardServer {
     }
 
     // --- JSON API routes ---
+    // Every session with its rows, correlated hook and proxy observations
+    // collapsed into one call and one finding: what the page renders.
+    if (pathname === "/api/snapshot") {
+      return sendJson(res, collapseCorrelated(await readSnapshot(this.store)));
+    }
+
     if (pathname === "/api/sessions") {
       const sessions = await this.store.listSessions();
       return sendJson(res, sessions);

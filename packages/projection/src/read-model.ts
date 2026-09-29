@@ -14,7 +14,7 @@
  * the read model can change freely because it is always regenerable.
  */
 
-import type { InterceptorKind, PlatformKind, RiskSeverity } from "@omnodex/shared";
+import type { InterceptorKind, McpServerTransport, PlatformKind, RiskSeverity } from "@omnodex/shared";
 
 export interface SessionRow {
   session_id: string;
@@ -42,6 +42,12 @@ export interface SessionRow {
    * unknown; optional for rows projected before it existed.
    */
   platform?: PlatformKind | null;
+  /**
+   * How each MCP server is reached, as session.started recorded it (the MCP
+   * proxy knows; hooks do not). Absent when nothing recorded it. Local only:
+   * not part of the sync payload.
+   */
+  mcp_server_transports?: McpServerTransport[];
 }
 
 export interface ToolCallRow {
@@ -103,6 +109,14 @@ export interface RiskEventRow {
    * call can raise the same finding; findingKey() counts them once.
    */
   correlation_id?: string | null;
+  /** Tier of the rule that fired, when recorded. Absent reads as community. */
+  rule_tier?: "community" | "advanced";
+  /**
+   * For a finding on a sequence of calls: every tool_call_id in the pattern,
+   * earliest first. Absent for single-call findings. Local only: neither
+   * this nor rule_tier is part of the sync payload.
+   */
+  related_event_ids?: string[];
 }
 
 /**

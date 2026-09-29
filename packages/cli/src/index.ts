@@ -632,7 +632,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
     log,
   }));
   // Its own projector: the rebuild above owns the one it used, and the
-  // streaming loop sets a source root per session as it tails.
+  // streaming loop passes each event's source root as it tails.
   const streamProjector = new Projector(store);
   const { stop } = startStreamingLoop(streamingRoots, store, streamProjector, server, cloudTransport, {
     machineState,
