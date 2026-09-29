@@ -72,7 +72,7 @@
           "mcp_server_as_recorded": "builtin",
           "mcp_server_correct": "plugin_omnodex-cowork_omnodex",
           "occurred_at": "2026-09-18T14:57:41.951Z",
-          "parameters": { "path": "/home/case/repo/PROJECT_TRACKER.md", "head": 3 }
+          "parameters": { "path": "/home/case/repo/README.md", "head": 3 }
         },
         "proxy": {
           "interceptor": "mcp-proxy",
@@ -81,7 +81,7 @@
           "tool_name": "filesystem__read_text_file",
           "mcp_server": "filesystem",
           "occurred_at": "2026-09-18T14:57:43.360Z",
-          "parameters": { "path": "/home/case/repo/PROJECT_TRACKER.md", "head": 3 }
+          "parameters": { "path": "/home/case/repo/README.md", "head": 3 }
         },
         "observations": [
           "The hook name ends with '__' + the proxy's tool_name exactly.",

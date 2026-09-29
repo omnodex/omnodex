@@ -234,7 +234,8 @@ export interface StreamingRoot {
  * each root's session index every second for newly registered sessions
  * and starts tailing them as they appear.
  *
- * Returns a stop() function that aborts all tails and cleans up.
+ * Returns a stop() function that aborts all tails and resolves once every
+ * tail and poll loop has finished, so nothing writes to the store after it.
  *
  * **Backwards compatible:** passing a single EventLog still works via the
  * legacy overload.
@@ -246,7 +247,7 @@ export function startStreamingLoop(
   server: DashboardServer,
   cloudTransport: StreamingTransport | null = null,
   options: { machineState?: MachineState; home?: string } = {},
-): { stop: () => void } {
+): { stop: () => Promise<void> } {
   // Normalise: single EventLog → one-element roots array.
   const roots: StreamingRoot[] = Array.isArray(logOrRoots)
     ? logOrRoots
@@ -254,6 +255,11 @@ export function startStreamingLoop(
 
   const ctrl = new AbortController();
   const activeSessions = new Set<string>();
+  const running = new Set<Promise<void>>();
+  const track = (work: Promise<void>): void => {
+    running.add(work);
+    void work.finally(() => running.delete(work));
+  };
   const evaluator = createEvaluator({
     host: "batch",
     registry: registryForHost("batch", options.home),
@@ -276,10 +282,12 @@ export function startStreamingLoop(
     // NOTE: setSourceRoot is per-apply, but since tailSession is per-session
     // and each session belongs to exactly one root, we set it before launching.
     // The projector's sourceRoot is set before each apply inside tailSession.
-    tailSession(sessionId, log, store, projector, server, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
-      (err: unknown) => {
-        console.error(`[stream] tail error for ${sessionId} (${rootPath}):`, err);
-      },
+    track(
+      tailSession(sessionId, log, store, projector, server, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
+        (err: unknown) => {
+          console.error(`[stream] tail error for ${sessionId} (${rootPath}):`, err);
+        },
+      ),
     );
   }
 
@@ -314,14 +322,21 @@ export function startStreamingLoop(
 
   // Launch a poll loop per root. Fire and forget; errors are logged inside.
   for (const root of roots) {
-    pollForRoot(root).catch((err: unknown) => {
-      console.error(`[stream] session poll error for ${root.rootPath}:`, err);
-    });
+    track(
+      pollForRoot(root).catch((err: unknown) => {
+        console.error(`[stream] session poll error for ${root.rootPath}:`, err);
+      }),
+    );
   }
 
   return {
-    stop: (): void => {
+    stop: async (): Promise<void> => {
       ctrl.abort();
+      // A poll loop can launch a tail while the first ones settle, so wait
+      // until the set stays empty.
+      while (running.size > 0) {
+        await Promise.allSettled([...running]);
+      }
     },
   };
 }

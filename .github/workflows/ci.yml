@@ -14,14 +14,17 @@ on:
 jobs:
   build-and-test:
     if: vars.CI_ENABLED == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      # One OS failing should not hide how the others did.
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node-version: [24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -31,10 +34,14 @@ jobs:
       - name: Check project references
         run: npm run check:refs
 
+      - name: Check for internal references
+        run: npm run check:internal-refs
+
       - name: Build (tsc)
         run: npx tsc -b
 
       - name: Unit tests
+        # bash on every OS, including the Windows runner (Git Bash).
+        shell: bash
         run: |
-          shopt -s globstar
           node --test $(find packages/*/test -name '*.test.mjs' ! -name '*.integration.test.mjs')

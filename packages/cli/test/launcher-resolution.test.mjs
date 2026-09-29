@@ -17,13 +17,22 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs, readFileSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { generateLauncherSource, ensureLauncherResolves } from "../dist/launcher-template.js";
 
 const NODE_DIR = path.dirname(process.execPath);
+
+// Windows needs System32 on PATH for `where`, and SystemRoot/PATHEXT in the
+// environment for child processes to start normally.
+const SYSTEM_PATH = process.platform === "win32"
+  ? [path.join(process.env.SystemRoot ?? "C:\\Windows", "System32")]
+  : ["/usr/bin", "/bin"];
+const SYSTEM_ENV = process.platform === "win32"
+  ? { SystemRoot: process.env.SystemRoot, PATHEXT: process.env.PATHEXT }
+  : {};
 
 // A fake shim that records its argv and stdin next to itself.
 const RECORDING_SHIM = `
@@ -36,7 +45,9 @@ process.stdin.on("end", () => {
 `;
 
 async function makeTemp() {
-  return fs.mkdtemp(path.join(os.tmpdir(), "omnodex-launcher-"));
+  // Long form of the path: on Windows os.tmpdir() can be an 8.3 short name
+  // (C:\Users\RUNNER~1\...) while `where` reports the long one.
+  return realpathSync.native(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-launcher-")));
 }
 
 async function writeFile(p, content, mode = 0o755) {
@@ -55,7 +66,8 @@ function runLauncher(launcher, { pathDirs, home, args = [], input = "", env = {}
     input,
     encoding: "utf8",
     env: {
-      PATH: [...pathDirs, NODE_DIR, "/usr/bin", "/bin"].join(path.delimiter),
+      PATH: [...pathDirs, NODE_DIR, ...SYSTEM_PATH].join(path.delimiter),
+      ...SYSTEM_ENV,
       HOME: home,
       USERPROFILE: home,
       OMNODEX_HOME: path.join(home, ".omnodex"),
@@ -100,6 +112,7 @@ test("launcher: finds the shim in node_modules/omnodex beside a wrapper on PATH"
     // Windows npm layout: <prefix>\omnodex(.cmd) and <prefix>\node_modules\omnodex
     const prefix = path.join(tmp, "prefix");
     await writeFile(path.join(prefix, "omnodex"), "#!/bin/sh\n");
+    await writeFile(path.join(prefix, "omnodex.cmd"), "@echo off\r\n");
     const shim = path.join(prefix, "node_modules", "omnodex", "bin", "codex-hook-shim.js");
     await writeFile(shim, RECORDING_SHIM);
 
@@ -122,6 +135,7 @@ test("launcher: forwards its arguments to the shim", async () => {
   try {
     const prefix = path.join(tmp, "prefix");
     await writeFile(path.join(prefix, "omnodex"), "#!/bin/sh\n");
+    await writeFile(path.join(prefix, "omnodex.cmd"), "@echo off\r\n");
     const shim = path.join(prefix, "node_modules", "omnodex", "bin", "antigravity-hook-shim.js");
     await writeFile(shim, RECORDING_SHIM);
 
@@ -166,6 +180,7 @@ test("launcher: shim_paths in omnodex-config.json takes priority over PATH", asy
   try {
     const prefix = path.join(tmp, "prefix");
     await writeFile(path.join(prefix, "omnodex"), "#!/bin/sh\n");
+    await writeFile(path.join(prefix, "omnodex.cmd"), "@echo off\r\n");
     await writeFile(path.join(prefix, "node_modules", "omnodex", "bin", "claude-hook-shim.js"), RECORDING_SHIM);
     const devShim = path.join(tmp, "dev", "claude-hook-shim.js");
     await writeFile(devShim, RECORDING_SHIM);

@@ -28,8 +28,7 @@
  *
  * Nothing here throws at a caller. `loadAdvancedRules` returns the rules or a
  * reason it has none, because every failure means the same thing: run the
- * community rules and say so. Design note:
- * planning/architecture/PAID_RULE_DELIVERY.md sections 4 and 7.
+ * community rules and say so.
  */
 
 import * as crypto from "node:crypto";

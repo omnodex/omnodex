@@ -25,6 +25,7 @@ import { spawn, spawnSync } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as https from "node:https";
+import { fileURLToPath } from "node:url";
 import { getInstalledVersion } from "./registry.js";
 import { writeAllLaunchers } from "./launcher-template.js";
 
@@ -49,11 +50,7 @@ interface SourceInstallInfo {
  */
 export function detectInstallMethod(): InstallMethod {
   try {
-    let dir = path.dirname(new URL(import.meta.url).pathname);
-    // On Windows, pathname starts with /C:/... — normalize it
-    if (process.platform === "win32" && dir.startsWith("/")) {
-      dir = dir.slice(1);
-    }
+    let dir = path.dirname(fileURLToPath(import.meta.url));
     for (let i = 0; i < 10; i++) {
       try {
         const gitDir = path.join(dir, ".git");
@@ -82,7 +79,7 @@ export function detectInstallMethod(): InstallMethod {
 
   // Check if we're inside node_modules (npm install)
   try {
-    const thisFile = new URL(import.meta.url).pathname;
+    const thisFile = fileURLToPath(import.meta.url);
     if (thisFile.includes("node_modules")) return "npm";
   } catch { /* fallback */ }
 
@@ -95,10 +92,7 @@ export function detectInstallMethod(): InstallMethod {
  */
 export function getSourceInstallInfo(): SourceInstallInfo | null {
   try {
-    let dir = path.dirname(new URL(import.meta.url).pathname);
-    if (process.platform === "win32" && dir.startsWith("/")) {
-      dir = dir.slice(1);
-    }
+    let dir = path.dirname(fileURLToPath(import.meta.url));
     // Find the repo root
     for (let i = 0; i < 10; i++) {
       try {

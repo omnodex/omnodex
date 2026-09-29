@@ -189,7 +189,7 @@ test("hooksFilePath returns .agents/hooks.json inside projectPath", (t) => {
   });
   assert.equal(
     interceptor.hooksFilePath(),
-    "/home/case/myrepo/.agents/hooks.json",
+    path.join("/home/case/myrepo", ".agents", "hooks.json"),
   );
 });
 

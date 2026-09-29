@@ -47,7 +47,7 @@ import {
   AntigravityInterceptor,
 } from "@omnodex/antigravity-provider";
 import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
-import { DashboardServer } from "./dashboard-server.js";
+import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
 import {
@@ -571,14 +571,12 @@ async function cmdDashboard(args: string[]): Promise<void> {
   await rebuildReadModel(store, logs);
 
   // --- Start server ---
-  const assetsDir = new URL(".", import.meta.url).pathname;
+  const assetsDir = resolveDashboardAssetsDir(import.meta.url);
   const server = new DashboardServer({ store, port, assetsDir });
   try {
     await server.ready;
   } catch (err) {
-    server.close();
-    for (const { log } of logs) await log.close();
-    await store.close();
+    await shutdownDashboard({ stopStreaming: async () => {}, server, logs, store });
     throw err;
   }
 
@@ -642,23 +640,22 @@ async function cmdDashboard(args: string[]): Promise<void> {
   });
 
   // --- Shutdown handling ---
+  // SIGINT is Ctrl+C everywhere; SIGBREAK is Ctrl+Break and SIGHUP a closed
+  // console window on Windows; SIGTERM is a service manager or `kill`. A
+  // second signal while shutting down exits at once.
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
+  let stopping = false;
+  let onSignal = (): void => {};
   await new Promise<void>((resolve) => {
-    const shutdown = (): void => {
-      stop();
-      // Flush any buffered cloud events before shutting down.
-      const transportFlush = cloudTransport?.stop().catch(() => {}) ?? Promise.resolve();
-      transportFlush.finally(() => {
-        // Close all event logs.
-        for (const { log } of logs) {
-          log.close().catch(() => {});
-        }
-        server.close();
-        resolve();
-      });
+    onSignal = (): void => {
+      if (stopping) process.exit(130);
+      stopping = true;
+      console.log("[dashboard] shutting down...");
+      shutdownDashboard({ stopStreaming: stop, transport: cloudTransport, server, logs, store }).finally(resolve);
     };
-    process.once("SIGINT", shutdown);
-    process.once("SIGTERM", shutdown);
+    for (const signal of signals) process.on(signal, onSignal);
   });
+  for (const signal of signals) process.off(signal, onSignal);
 }
 
 // ---------------------------------------------------------------------------
@@ -959,7 +956,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
 
   // Write (or refresh) the stable launcher and use it as the shim path.
   // The launcher resolves the actual shim at runtime, so hook commands
-  // survive npm updates without re-running `omnodex install`. (FS-012)
+  // survive npm updates without re-running `omnodex install`.
   const shimPath = useLegacy
     ? CLAUDE_HOOK_SHIM_PATH
     : await writeLauncher("claude-code");
@@ -1018,7 +1015,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "claude-code",
     projectPath,
@@ -1076,7 +1073,7 @@ async function installCodex(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall codex ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "codex",
     projectPath,
@@ -1144,7 +1141,7 @@ async function installAntigravity(args: string[]): Promise<void> {
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry (FS-012)
+  // Record in the installation registry
   await addInstallation({
     target: "antigravity",
     projectPath,

@@ -26,7 +26,7 @@ const HOOK_SESSION = "4c379251-hook";
 const PROXY_SESSION = "6ed63f79-proxy";
 const HOOK_AT = "2026-09-18T14:57:41.951Z";
 const PROXY_AT = "2026-09-18T14:57:43.360Z"; // 1.409s later, as measured
-const PARAMS = { path: "/home/case/repo/PROJECT_TRACKER.md", head: 3 };
+const PARAMS = { path: "/home/case/repo/README.md", head: 3 };
 const TOOL_NAME_FIXTURE = JSON.parse(
   await fs.readFile(
     new URL(
