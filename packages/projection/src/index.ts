@@ -11,3 +11,4 @@ export * from "./projector.js";
 export * from "./correlate.js";
 export * from "./codex-tool-name.js";
 export * from "./run-correlation.js";
+export * from "./collapse.js";

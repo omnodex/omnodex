@@ -131,6 +131,26 @@ test("a read-model field that is not listed stays out of the payload", async () 
   assert.equal(payload.risk_events.sess_fields[0].related_event_ids, undefined);
 });
 
+test("metadata the read model keeps for the local dashboard stays out of the payload", async () => {
+  const transports = [{ name: "filesystem", transport: "stdio" }];
+  const store = await project(new InMemoryReadModelStore(), [
+    { ...START, mcp_server_transports: transports },
+    INVOKED,
+    RISK,
+  ]);
+  // The read model has them...
+  assert.deepEqual((await store.getSession("sess_fields")).mcp_server_transports, transports);
+  const [row] = await store.listRiskEvents("sess_fields");
+  assert.equal(row.rule_tier, "advanced");
+  assert.deepEqual(row.related_event_ids, ["tc_0", "tc_1"]);
+
+  // ...and the payload does not.
+  const payload = await serializeReadModel(store);
+  assert.ok(!("mcp_server_transports" in payload.sessions[0]));
+  assert.ok(!("rule_tier" in payload.risk_events.sess_fields[0]));
+  assert.ok(!("related_event_ids" in payload.risk_events.sess_fields[0]));
+});
+
 test("platform survives projection, SQLite and serialization", async (t) => {
   const store = await sqliteStore(t);
   await project(store, [START, INVOKED]);

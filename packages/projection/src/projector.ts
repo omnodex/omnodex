@@ -38,13 +38,17 @@ export class Projector {
   }
 
   /**
-   * The source root this projector is associated with.
-   * Set via setSourceRoot() before applying events from a specific root.
+   * The default source root for apply() calls that do not pass one.
    * Null means single-root mode (backwards compatible).
    */
   private sourceRoot: string | null = null;
 
-  /** Set the source root for subsequent apply() calls. */
+  /**
+   * Set the default source root for subsequent apply() calls. Fine for a
+   * sequential replay of one root; a caller interleaving sessions from
+   * several roots must pass the root to each apply() instead, because a
+   * value shared across concurrent tails is whichever root set it last.
+   */
   setSourceRoot(root: string | null): void {
     this.sourceRoot = root;
   }
@@ -60,7 +64,8 @@ export class Projector {
     sessionId: string,
     occurredAt: string,
     interceptor: string,
-    platform: SessionRow["platform"] = null,
+    platform: SessionRow["platform"],
+    root: string | null,
   ): Promise<void> {
     const existing = await this.store.getSession(sessionId);
     if (existing) {
@@ -84,39 +89,44 @@ export class Projector {
       file_write_count: 0,
       risk_score: 0,
       last_event_at: occurredAt,
-      source_root: this.sourceRoot,
+      source_root: root,
       platform,
     });
   }
 
-  /** Apply a single event to the store. Idempotent within a single session replay. */
-  async apply(event: TraceEvent): Promise<void> {
+  /**
+   * Apply a single event to the store. Idempotent within a single session
+   * replay. `sourceRoot`, when given, is the root this event was read from;
+   * otherwise the one set by setSourceRoot() applies.
+   */
+  async apply(event: TraceEvent, opts: { sourceRoot?: string | null } = {}): Promise<void> {
+    const root = opts.sourceRoot !== undefined ? opts.sourceRoot : this.sourceRoot;
     switch (event.event_type) {
       case "session.started":
-        await this.onSessionStarted(event);
+        await this.onSessionStarted(event, root);
         return;
       case "session.ended":
         await this.onSessionEnded(event);
         return;
       case "tool.invoked":
-        await this.onToolInvoked(event);
+        await this.onToolInvoked(event, root);
         return;
       case "tool.completed":
-        await this.onToolCompleted(event);
+        await this.onToolCompleted(event, root);
         return;
       case "file.read":
-        await this.onFileRead(event);
+        await this.onFileRead(event, root);
         return;
       case "file.written":
-        await this.onFileWritten(event);
+        await this.onFileWritten(event, root);
         return;
       case "risk.detected":
-        await this.onRiskDetected(event);
+        await this.onRiskDetected(event, root);
         return;
     }
   }
 
-  private async onSessionStarted(event: SessionStartedEvent): Promise<void> {
+  private async onSessionStarted(event: SessionStartedEvent, root: string | null): Promise<void> {
     await this.store.upsertSession({
       session_id: event.session_id,
       user: event.user,
@@ -132,8 +142,9 @@ export class Projector {
       file_write_count: 0,
       risk_score: 0,
       last_event_at: event.occurred_at,
-      source_root: this.sourceRoot,
+      source_root: root,
       platform: event.platform ?? null,
+      ...(event.mcp_server_transports?.length ? { mcp_server_transports: event.mcp_server_transports } : {}),
     });
   }
 
@@ -145,8 +156,8 @@ export class Projector {
     });
   }
 
-  private async onToolInvoked(event: ToolInvokedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
+  private async onToolInvoked(event: ToolInvokedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
     const mcpServer =
       event.mcp_server === "builtin"
         ? splitMcpToolName(event.tool_name)?.mcpServer ?? event.mcp_server
@@ -186,8 +197,8 @@ export class Projector {
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
-  private async onToolCompleted(event: ToolCompletedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
+  private async onToolCompleted(event: ToolCompletedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
     await this.store.patchToolCall(event.tool_call_id, {
       ended_at: event.occurred_at,
       duration_ms: event.duration_ms,
@@ -198,8 +209,8 @@ export class Projector {
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
-  private async onFileRead(event: FileReadEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
+  private async onFileRead(event: FileReadEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
     const inserted = await this.store.insertFileEvent({
       event_id: event.event_id,
       session_id: event.session_id,
@@ -217,8 +228,8 @@ export class Projector {
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
-  private async onFileWritten(event: FileWrittenEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
+  private async onFileWritten(event: FileWrittenEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
     const inserted = await this.store.insertFileEvent({
       event_id: event.event_id,
       session_id: event.session_id,
@@ -236,8 +247,8 @@ export class Projector {
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 
-  private async onRiskDetected(event: RiskDetectedEvent): Promise<void> {
-    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null);
+  private async onRiskDetected(event: RiskDetectedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
     const inserted = await this.store.insertRiskEvent({
       event_id: event.event_id,
       session_id: event.session_id,
@@ -247,6 +258,8 @@ export class Projector {
       description: event.description,
       rule_id: event.rule_id,
       detected_at: event.occurred_at,
+      ...(event.rule_tier ? { rule_tier: event.rule_tier } : {}),
+      ...(event.related_event_ids?.length ? { related_event_ids: event.related_event_ids } : {}),
     });
     if (!inserted) return;
     const score = riskScoreFor(event.severity);

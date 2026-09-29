@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   risk_score REAL NOT NULL DEFAULT 0,
   last_event_at TEXT NOT NULL DEFAULT '',
   source_root TEXT,
-  platform TEXT
+  platform TEXT,
+  mcp_server_transports_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -92,7 +93,9 @@ CREATE TABLE IF NOT EXISTS risk_events (
   category TEXT NOT NULL,
   description TEXT NOT NULL,
   rule_id TEXT NOT NULL,
-  detected_at TEXT NOT NULL
+  detected_at TEXT NOT NULL,
+  rule_tier TEXT,
+  related_event_ids_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
@@ -198,6 +201,14 @@ export class SqliteReadModelStore implements ReadModelStore {
     // Migration 5: the session's agent runtime (2026-09-29). Rows written
     // before it stay null until the next replay.
     this.addColumnIfMissing("sessions", "platform", "TEXT");
+
+    // Migration 6: event metadata the local dashboard shows (2026-09-29):
+    // how each MCP server is reached, and a finding's rule tier and the
+    // calls in its sequence. Rows written before it read as absent until
+    // the next replay.
+    this.addColumnIfMissing("sessions", "mcp_server_transports_json", "TEXT");
+    this.addColumnIfMissing("risk_events", "rule_tier", "TEXT");
+    this.addColumnIfMissing("risk_events", "related_event_ids_json", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -223,8 +234,8 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO sessions
-        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root, platform)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root, platform, mcp_server_transports_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
         user = excluded.user,
         project_path = excluded.project_path,
@@ -236,7 +247,8 @@ export class SqliteReadModelStore implements ReadModelStore {
         status = excluded.status,
         last_event_at = excluded.last_event_at,
         source_root = excluded.source_root,
-        platform = COALESCE(excluded.platform, sessions.platform)`,
+        platform = COALESCE(excluded.platform, sessions.platform),
+        mcp_server_transports_json = COALESCE(excluded.mcp_server_transports_json, sessions.mcp_server_transports_json)`,
     );
     stmt.run(
       row.session_id,
@@ -255,6 +267,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.last_event_at,
       row.source_root,
       row.platform ?? null,
+      row.mcp_server_transports?.length ? JSON.stringify(row.mcp_server_transports) : null,
     );
   }
 
@@ -384,8 +397,8 @@ export class SqliteReadModelStore implements ReadModelStore {
   async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, rule_tier, related_event_ids_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id, rule_id, related_event_id) DO NOTHING`,
     );
     const result = stmt.run(
@@ -397,6 +410,8 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.description,
       row.rule_id,
       row.detected_at,
+      row.rule_tier ?? null,
+      row.related_event_ids?.length ? JSON.stringify(row.related_event_ids) : null,
     );
     return Number(result.changes) > 0;
   }
@@ -453,14 +468,18 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, correlation_id FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
+      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, correlation_id, rule_tier, related_event_ids_json FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
     );
-    return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map(({ correlation_id, ...r }) => ({
-      ...r,
-      severity: r.severity as RiskSeverity,
-      // Only on correlated findings, so other rows keep their shape.
-      ...(correlation_id ? { correlation_id } : {}),
-    }));
+    return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map(
+      ({ correlation_id, rule_tier, related_event_ids_json, ...r }) => ({
+        ...r,
+        severity: r.severity as RiskSeverity,
+        // Optional fields only where set, so other rows keep their shape.
+        ...(correlation_id ? { correlation_id } : {}),
+        ...(rule_tier ? { rule_tier: rule_tier as RiskEventRow["rule_tier"] } : {}),
+        ...(related_event_ids_json ? { related_event_ids: JSON.parse(related_event_ids_json) as string[] } : {}),
+      }),
+    );
   }
 
   async close(): Promise<void> {
@@ -495,6 +514,7 @@ interface SessionRowRaw {
   last_event_at: string;
   source_root: string | null;
   platform: string | null;
+  mcp_server_transports_json: string | null;
 }
 
 interface ToolCallRowRaw {
@@ -523,6 +543,8 @@ interface RiskEventRowRaw {
   rule_id: string;
   detected_at: string;
   correlation_id: string | null;
+  rule_tier: string | null;
+  related_event_ids_json: string | null;
 }
 
 function toSessionRow(raw: SessionRowRaw): SessionRow {
@@ -543,6 +565,9 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     last_event_at: raw.last_event_at,
     source_root: raw.source_root,
     platform: (raw.platform ?? null) as SessionRow["platform"],
+    ...(raw.mcp_server_transports_json
+      ? { mcp_server_transports: JSON.parse(raw.mcp_server_transports_json) as SessionRow["mcp_server_transports"] }
+      : {}),
   };
 }
 
