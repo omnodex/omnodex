@@ -58,7 +58,7 @@ The log is local-only. Nothing is sent to Omnodex servers.
 
 ### Which app a session came from
 
-`session.started` is written once the client has initialized, and records the client's own name and version. When the name identifies a runtime Omnodex knows (`claude-code`, `codex-mcp-client`), the session and every later event carry that `platform`. A launcher that knows its platform can say so with `OMNODEX_PLATFORM` (one of `claude-code`, `codex`, `cowork`, `antigravity`, `copilot`, `web`), which takes precedence; the Omnodex plugins set it. A client with neither is labelled by the name it sent.
+`session.started` is written once the client has initialized, and records the client's own name and version. When the name identifies a runtime Omnodex knows (`claude-code`, `codex-mcp-client`), the session and every later event carry that `platform`. A launcher that knows its platform can say so with `--platform <name>` or `OMNODEX_PLATFORM` (one of `claude-code`, `codex`, `cowork`, `antigravity`, `copilot`, `web`), which takes precedence; the Omnodex plugins pass `--platform`. A client with neither is labelled by the name it sent.
 
 ### Parameter redaction
 
