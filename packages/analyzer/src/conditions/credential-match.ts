@@ -35,8 +35,25 @@ export function findCredentialTypes(
   text: string,
   patterns: CredentialMatchCondition["patterns"],
 ): string[] {
-  const types = new Set<string>();
+  return [...new Set(findCredentials(text, patterns).map((c) => c.type))];
+}
 
+/** One credential found in a text: its type label and the matched value. */
+export interface CredentialSighting {
+  type: string;
+  value: string;
+}
+
+/**
+ * The credentials in a text, in order of appearance, with their values. For
+ * showing a user their own data locally (the dashboard masks the value);
+ * risk findings record only the type labels.
+ */
+export function findCredentials(
+  text: string,
+  patterns: CredentialMatchCondition["patterns"],
+): CredentialSighting[] {
+  const found: CredentialSighting[] = [];
   for (const { regex, type, group, check } of patterns) {
     const re = compiled(regex, "gi");
     let m;
@@ -46,11 +63,10 @@ export function findCredentialTypes(
       if (value.length < 4) continue;
       if (check === "secret" && !looksLikeSecret(value)) continue;
       if (check === "placeholder" && isPlaceholder(value)) continue;
-      types.add(type);
+      found.push({ type, value });
     }
   }
-
-  return [...types];
+  return found;
 }
 
 /**

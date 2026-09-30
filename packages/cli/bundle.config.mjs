@@ -80,7 +80,8 @@ writeFileSync(join(outDir, "bin", "omnodex"), `#!/usr/bin/env node\nrequire("../
 chmodSync(join(outDir, "bin", "omnodex"), 0o755);
 
 // From src/: `tsc -b` alone (as in CI) does not copy it into dist/
-copyFileSync(join(pkgDir, "src", "dashboard.html"), join(outDir, "dashboard.html"));
+// Built from src/dashboard by build-dashboard.mjs (npm install and npm run build).
+copyFileSync(join(pkgDir, "dist", "dashboard.html"), join(outDir, "dashboard.html"));
 copyFileSync(join(pkgDir, "publish-package.json"), join(outDir, "package.json"));
 
 console.log(`Bundle written to ${outDir}`);

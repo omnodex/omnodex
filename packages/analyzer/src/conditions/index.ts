@@ -5,7 +5,7 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 export { evaluatePathMatch, extractPaths } from "./path-match.js";
-export { evaluateCredentialMatch, findCredentialTypes } from "./credential-match.js";
+export { evaluateCredentialMatch, findCredentialTypes, findCredentials, type CredentialSighting } from "./credential-match.js";
 export { evaluateOutboundCall, isOutboundCall } from "./outbound-call.js";
 export { evaluateIpDestination, extractRawIps, isInKnownCidrs } from "./ip-destination.js";
 export { evaluateToolNameMatch } from "./tool-name-match.js";

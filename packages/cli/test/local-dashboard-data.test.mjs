@@ -12,19 +12,18 @@
 
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { EventLog, newEventId } from "../../event-log/dist/index.js";
 import { InMemoryReadModelStore, Projector } from "../../projection/dist/index.js";
 import { createEvaluator } from "../../analyzer/dist/index.js";
 import { tailSession } from "../dist/streaming.js";
 import { DashboardServer } from "../dist/dashboard-server.js";
+import { runtimeLabel } from "../dist/dashboard-model/index.js";
 
 const AT = "2026-09-29T12:00:00.000Z";
-const PAGE = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "dashboard.html");
 
 function base(sessionId, n, overrides = {}) {
   return {
@@ -175,27 +174,7 @@ test("/api/snapshot serves a correlated pair as one call and one finding", async
 // Runtime labels on the page
 // ---------------------------------------------------------------------------
 
-/** Pull a top-level `function name(...) { ... }` out of the page script. */
-function extractFunction(source, name) {
-  const start = source.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `${name} not found in dashboard.html`);
-  let depth = 0;
-  for (let i = source.indexOf("{", start); i < source.length; i++) {
-    if (source[i] === "{") depth++;
-    else if (source[i] === "}" && --depth === 0) return source.slice(start, i + 1);
-  }
-  throw new Error(`unbalanced braces in ${name}`);
-}
-
-function loadRuntimeLabel() {
-  const html = readFileSync(PAGE, "utf8");
-  const labels = html.slice(html.indexOf("var PLATFORM_LABELS"), html.indexOf("};", html.indexOf("var PLATFORM_LABELS")) + 2);
-  const body = [labels, extractFunction(html, "interceptorLabel"), extractFunction(html, "runtimeLabel")].join("\n");
-  return new Function(`${body}\nreturn runtimeLabel;`)();
-}
-
 test("the page labels each session by its agent runtime", () => {
-  const runtimeLabel = loadRuntimeLabel();
   const cases = [
     [{ interceptor: "claude-code-hook", platform: "claude-code" }, "Claude Code"],
     [{ interceptor: "claude-code-hook" }, "Claude Code"],
@@ -212,5 +191,4 @@ test("the page labels each session by its agent runtime", () => {
   for (const [session, expected] of cases) {
     assert.equal(runtimeLabel(session), expected, JSON.stringify(session));
   }
-  assert.ok(!readFileSync(PAGE, "utf8").includes(">Claude</text>"), "no fixed Claude node left in the graph");
 });

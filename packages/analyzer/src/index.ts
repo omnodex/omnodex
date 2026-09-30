@@ -121,5 +121,7 @@ export type {
 export {
   extractPaths,
   findCredentialTypes,
+  findCredentials,
   isOutboundCall,
 } from "./conditions/index.js";
+export type { CredentialSighting } from "./conditions/index.js";

@@ -51,7 +51,7 @@ node --test \
 cd packages/analyzer && node --test test/**/*.test.mjs test/*.test.mjs
 ```
 
-`npm run build` and `npx tsc -b` are equivalent. From a checkout the dashboard serves `packages/cli/src/dashboard.html` directly, so an edit to the page shows on reload without a build; the npm bundle ships its own copy.
+`npm run build` runs `npx tsc -b` and then builds the local dashboard page. The page is a React app in `packages/cli/src/dashboard/`, with its view logic (labels, formatting, the credential ledger) in `packages/cli/src/dashboard-model/` so `node:test` can cover it. `packages/cli/build-dashboard.mjs` bundles it with esbuild into one self-contained file, `packages/cli/dist/dashboard.html`, which `omnodex dashboard` serves; React is bundled into that file and never becomes a runtime dependency. `npm install` builds the page too (the root `prepare` script), so a checkout built with `npm install` and `npx tsc -b` has it. After editing the page, run `npm run build:dashboard -w @omnodex/cli` and reload; `npm run typecheck:dashboard -w @omnodex/cli` typechecks it, and CI runs both.
 
 ## Platforms
 

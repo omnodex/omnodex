@@ -9,7 +9,9 @@
     "omnodex": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && node build-dashboard.mjs",
+    "build:dashboard": "node build-dashboard.mjs",
+    "typecheck:dashboard": "tsc -p src/dashboard/tsconfig.json",
     "bundle": "npm run build && node bundle.config.mjs",
     "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo bundle/omnodex-bundle.cjs bundle/omnodex.cjs bundle/dashboard.html",
     "start": "node dist/index.js",
@@ -30,6 +32,10 @@
     "@omnodex/sync-encryptor": "*"
   },
   "devDependencies": {
-    "esbuild": "^0.28.0"
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

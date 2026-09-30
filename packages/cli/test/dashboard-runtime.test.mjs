@@ -5,8 +5,9 @@
  *   1. The page is found from a source checkout and from the npm bundle
  *      layout, including under a path with a space, using the platform's
  *      own path conventions (no hand-built Windows or POSIX paths).
- *   2. A source checkout serves src/dashboard.html byte for byte, whichever
- *      build command ran: `tsc -b` copies no assets into dist/.
+ *   2. A source checkout serves the page build-dashboard.mjs wrote to
+ *      dist/dashboard.html byte for byte, and a missing page gets a page
+ *      that says how to build it rather than an error.
  *   3. Shutdown closes every resource, in order, and a failing step does
  *      not stop the rest.
  *   4. Closing the server drops open SSE and keep-alive connections instead
@@ -33,7 +34,7 @@ import {
 
 const PKG_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = path.join(PKG_DIR, "dist", "index.js");
-const SOURCE_HTML = path.join(PKG_DIR, "src", "dashboard.html");
+const BUILT_HTML = path.join(PKG_DIR, "dist", "dashboard.html");
 
 async function tempDir(prefix) {
   return fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -54,22 +55,39 @@ function get(port, pathname) {
 // Asset resolution
 // ---------------------------------------------------------------------------
 
-test("a source checkout serves the page from src/, even under a path with a space", async () => {
+test("a source checkout serves the built page from dist/, even under a path with a space", async () => {
   const root = await tempDir("omnodex dash ");
   try {
     const pkg = path.join(root, "packages", "cli");
     await fs.mkdir(path.join(pkg, "dist"), { recursive: true });
-    await fs.mkdir(path.join(pkg, "src"), { recursive: true });
+    await fs.mkdir(path.join(pkg, "bundle"), { recursive: true });
     await fs.writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "@omnodex/cli" }));
-    await fs.writeFile(path.join(pkg, "src", "dashboard.html"), "current");
-    await fs.writeFile(path.join(pkg, "dist", "dashboard.html"), "stale");
+    await fs.writeFile(path.join(pkg, "dist", "dashboard.html"), "current");
+    await fs.writeFile(path.join(pkg, "bundle", "dashboard.html"), "stale");
 
     const moduleUrl = pathToFileURL(path.join(pkg, "dist", "index.js")).href;
     assert.match(moduleUrl, /%20/, "the module URL percent-encodes the space");
     const dir = resolveDashboardAssetsDir(moduleUrl);
-    assert.equal(dir, path.join(pkg, "src"));
+    assert.equal(dir, path.join(pkg, "dist"));
     assert.equal(readFileSync(path.join(dir, "dashboard.html"), "utf8"), "current");
+    // The bundle, run from a source checkout, serves the current build too.
+    const fromBundle = resolveDashboardAssetsDir(pathToFileURL(path.join(pkg, "bundle", "omnodex-bundle.cjs")).href);
+    assert.equal(readFileSync(path.join(fromBundle, "dashboard.html"), "utf8"), "current");
   } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a checkout whose page was never built serves instructions instead of an error", async () => {
+  const root = await tempDir("omnodex unbuilt ");
+  const server = new DashboardServer({ store: new InMemoryReadModelStore(), port: 0, assetsDir: root });
+  try {
+    await server.ready;
+    const page = await get(server.port, "/");
+    assert.equal(page.status, 200);
+    assert.match(page.body.toString("utf8"), /npm run build/);
+  } finally {
+    await server.close();
     await fs.rm(root, { recursive: true, force: true });
   }
 });
@@ -90,14 +108,14 @@ test("the npm bundle serves the page shipped next to the module", async () => {
   }
 });
 
-test("this checkout serves src/dashboard.html byte for byte", async () => {
+test("this checkout serves the built dist/dashboard.html byte for byte", async () => {
   const assetsDir = resolveDashboardAssetsDir(pathToFileURL(CLI).href);
   const server = new DashboardServer({ store: new InMemoryReadModelStore(), port: 0, assetsDir });
   try {
     await server.ready;
     const page = await get(server.port, "/");
     assert.equal(page.status, 200);
-    assert.ok(page.body.equals(readFileSync(SOURCE_HTML)), "served page differs from src/dashboard.html");
+    assert.ok(page.body.equals(readFileSync(BUILT_HTML)), "served page differs from dist/dashboard.html");
   } finally {
     await server.close();
   }
@@ -203,7 +221,7 @@ test("omnodex dashboard serves the page and API, and exits cleanly on SIGINT", a
 
     const page = await get(port, "/");
     assert.equal(page.status, 200);
-    assert.ok(page.body.equals(readFileSync(SOURCE_HTML)), "served page differs from src/dashboard.html");
+    assert.ok(page.body.equals(readFileSync(BUILT_HTML)), "served page differs from dist/dashboard.html");
     assert.equal((await get(port, "/api/sessions")).status, 200);
 
     if (process.platform === "win32") {
