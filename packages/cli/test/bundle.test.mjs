@@ -109,6 +109,28 @@ test("bundle: the bundled Claude Code shim writes an event", async () => {
   assert.equal(events[0].tool_name, "Bash");
 });
 
+test("bundle: Antigravity capture works without a permission hook", async () => {
+  const home = path.join(tmp, "antigravity-home");
+  const common = { conversationId: "case-bundle", workspacePaths: ["/home/case/repo"],
+    transcriptPath: "/home/case/transcript.jsonl", artifactDirectoryPath: "/home/case/artifacts" };
+  for (const [event, fields] of [
+    ["PreInvocation", { invocationNum: 0, initialNumSteps: 0 }],
+    ["PostToolUse", { stepIdx: 1, toolCall: { name: "view_file", args: { AbsolutePath: "/home/case/example.txt" } } }],
+    ["PostInvocation", { invocationNum: 0, initialNumSteps: 0 }],
+    ["Stop", { executionNum: 1, terminationReason: "model_stop", fullyIdle: true }],
+  ]) {
+    const result = spawnSync(process.execPath, [path.join(out, "bin", "antigravity-hook-shim.js"), event], {
+      input: JSON.stringify({ ...common, ...fields }), encoding: "utf8",
+      env: { ...process.env, OMNODEX_HOME: home, OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0" },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), event === "Stop" ? { decision: "allow" } : {});
+  }
+  const events = (await fs.readFile(path.join(home, "event-log", "sessions", "case-bundle.jsonl"), "utf8"))
+    .trim().split("\n").map(JSON.parse);
+  assert.deepEqual(events.map(e => e.event_type), ["session.started", "tool.invoked", "tool.completed", "session.ended"]);
+});
+
 test("bundle: the bundled MCP proxy starts and lists upstream tools", async () => {
   const home = path.join(tmp, "proxy-home");
   await fs.mkdir(home, { recursive: true });

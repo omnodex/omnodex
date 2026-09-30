@@ -16,11 +16,10 @@
  *
  *   - argv[2]:  event name ("PreInvocation" | "PostInvocation" | "PreToolUse" | "PostToolUse" | "Stop")
  *   - stdin:    JSON payload (one object per invocation)
- *   - stdout:   JSON response (PreToolUse: decision, PostToolUse/Stop: {})
+ *   - stdout:   JSON response (legacy PreToolUse: ask, Stop: allow, others: {})
  *   - stderr:   diagnostics only
  *   - exit 0:   success; Antigravity continues normally.
- *   - exit 2:   signals Antigravity to block the current tool call
- *               (PreToolUse only). We never exit 2 -- we observe, not block.
+ *   - Installed hooks do not subscribe to PreToolUse or change permissions.
  *
  * Environment:
  *
@@ -31,7 +30,7 @@
  *
  * Antigravity payload differences from Codex:
  *   - Uses camelCase fields (conversationId, toolCall.name, etc.)
- *   - PostToolUse only receives stepIdx + error (no tool name/response)
+ *   - PostToolUse includes toolCall, stepIdx and error, but no response
  *   - No hook_event_name field; event name passed via CLI argument
  *   - No session_id; uses conversationId
  *   - No tool_use_id; uses stepIdx for Pre/Post correlation
@@ -41,15 +40,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { EventLog, newEventId } from "@omnodex/event-log";
 import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import type {
   AntigravityHookEventName,
   AntigravityHookPayload,
   AntigravityPreToolUsePayload,
+  AntigravityStopPayload,
   PostToolUseCorrelation,
 } from "../antigravity-payload.js";
-import { mapAntigravityPayload } from "../antigravity-payload.js";
+import { antigravityToolCallId, mapAntigravityPayload } from "../antigravity-payload.js";
 import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
@@ -119,16 +120,60 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  let uncommittedSessionFile: string | undefined;
+  let uncommittedStopFile: string | undefined;
   try {
     const conversationId =
       "conversationId" in payload
         ? String((payload as { conversationId: string }).conversationId)
         : "unknown";
+    if (conversationId === "unknown" || !conversationId.trim() || eventName === "PostInvocation") {
+      outputResponse(eventName);
+      return 0;
+    }
+    const sessionKey = createHash("sha256").update(conversationId).digest("hex");
+    const sessionFile = path.join(stateDir, `${sessionKey}-session.json`);
+    let session: { startedAt: string } | undefined;
+    try {
+      session = JSON.parse(await fs.readFile(sessionFile, "utf8"));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    let firstActivity = false;
+    if (!session && eventName !== "Stop") {
+      session = { startedAt: new Date().toISOString() };
+      try {
+        await fs.writeFile(sessionFile, JSON.stringify(session), { flag: "wx" });
+        uncommittedSessionFile = sessionFile;
+        firstActivity = true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        session = JSON.parse(await fs.readFile(sessionFile, "utf8"));
+      }
+    }
+    let stopFile: string | undefined;
+    if (eventName === "Stop") {
+      const p = payload as AntigravityStopPayload;
+      // A Stop is an execution-loop signal. Background work must finish first.
+      if (!session || p.fullyIdle !== true || !Number.isInteger(p.executionNum)) {
+        outputResponse(eventName);
+        return 0;
+      }
+      stopFile = path.join(stateDir, `${sessionKey}-stop-${p.executionNum}.json`);
+      try {
+        await fs.writeFile(stopFile, "{}", { flag: "wx" });
+        uncommittedStopFile = stopFile;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+        outputResponse(eventName);
+        return 0;
+      }
+    }
     let correlation: PostToolUseCorrelation | undefined;
 
     if (eventName === "PreToolUse") {
       const p = payload as AntigravityPreToolUsePayload;
-      const toolCallId = `step-${p.stepIdx}`;
+      const toolCallId = antigravityToolCallId(conversationId, p.stepIdx);
       const state: PreToolUseState = {
         toolName: p.toolCall?.name ?? "unknown",
         toolCallId,
@@ -155,7 +200,11 @@ async function main(): Promise<number> {
       }
     }
 
-    const events = mapAntigravityPayload(eventName, payload, { newEventId }, correlation);
+    const options = { newEventId, emitSessionStart: firstActivity, sessionStartedAt: session?.startedAt };
+    const events = mapAntigravityPayload(eventName, payload, options, correlation);
+    if (firstActivity && eventName !== "PreInvocation") {
+      events.unshift(...mapAntigravityPayload("PreInvocation", payload, options));
+    }
     if (events.length === 0) {
       if (debug)
         console.error(
@@ -185,6 +234,8 @@ async function main(): Promise<number> {
       await log.append(finding);
     }
     await log.close();
+    uncommittedSessionFile = undefined;
+    uncommittedStopFile = undefined;
 
     if (debug) {
       console.error(
@@ -210,6 +261,12 @@ async function main(): Promise<number> {
     outputResponse(eventName);
     return 0;
   } catch (err) {
+    // A failed append must not suppress a later successful retry.
+    await Promise.allSettled(
+      [uncommittedSessionFile, uncommittedStopFile]
+        .filter((file): file is string => file !== undefined)
+        .map((file) => fs.unlink(file)),
+    );
     console.error(
       `[omnodex-antigravity] failed to write event: ${(err as Error).message}`,
     );
@@ -262,10 +319,14 @@ async function consumeState(
 
 function outputResponse(eventName?: string): void {
   if (eventName === "PreToolUse") {
-    // We observe only; always allow the tool call.
+    // Compatibility for stale installations only. Reinstall removes this
+    // handler entirely. Never automatically approve an operation, even on error.
+    process.stdout.write(JSON.stringify({ decision: "ask" }));
+  } else if (eventName === "Stop") {
+    // A decision is required. Anything other than continue permits stopping.
     process.stdout.write(JSON.stringify({ decision: "allow" }));
   } else {
-    // PostToolUse and Stop expect empty JSON.
+    // Tool completion and model invocation hooks require no intervention.
     process.stdout.write("{}");
   }
 }
@@ -286,6 +347,6 @@ main()
   .then((code) => process.exit(code))
   .catch((err) => {
     console.error(`[omnodex-antigravity] unhandled: ${err}`);
-    process.stdout.write("{}");
+    outputResponse(process.argv[2]);
     process.exit(0);
   });
