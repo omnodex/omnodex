@@ -92,7 +92,7 @@ test("the payload allowlist is exactly these fields", () => {
       "session_id", "user", "project_path", "mcp_servers", "interceptor",
       "started_at", "ended_at", "duration_ms", "status",
       "tool_call_count", "file_read_count", "file_write_count", "risk_score",
-      "last_event_at", "source_root", "platform",
+      "last_event_at", "source_root", "platform", "mcp_client_name",
     ],
     tool_calls: [
       "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
@@ -157,6 +157,13 @@ test("platform survives projection, SQLite and serialization", async (t) => {
   const payload = await serializeReadModel(store);
   assert.equal(payload.sessions[0].platform, "cowork");
   assert.equal(payload.sessions[0].interceptor, "claude-code-hook");
+});
+
+test("a proxy session's client name reaches the payload, for hosted labels", async (t) => {
+  const store = await sqliteStore(t);
+  await project(store, [{ ...START, interceptor: "mcp-proxy", platform: undefined, mcp_client: { name: "Some Client", version: "1.0" } }]);
+  const payload = await serializeReadModel(store);
+  assert.equal(payload.sessions[0].mcp_client_name, "Some Client");
 });
 
 for (const [name, makeStore] of [
