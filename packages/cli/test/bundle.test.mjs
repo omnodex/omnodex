@@ -52,9 +52,23 @@ test("bundle: package.json bins exist, including omnodex-mcp-proxy", async () =>
   const pkg = JSON.parse(await fs.readFile(path.join(out, "package.json"), "utf8"));
   assert.equal(pkg.name, "omnodex");
   assert.ok(pkg.bin["omnodex-mcp-proxy"], "omnodex-mcp-proxy bin is declared");
-  for (const file of Object.values(pkg.bin)) {
+  for (const [name, file] of Object.entries(pkg.bin)) {
+    // npm 11+ silently drops a bin whose path starts with "./" at publish,
+    // which would ship a CLI with no commands.
+    assert.ok(!file.startsWith("./"), `bin "${name}" must not start with ./ (${file})`);
     await fs.access(path.join(out, file));
   }
+});
+
+test("bundle: npm publish would not auto-correct the manifest", () => {
+  // npm checks the manifest before contacting the registry, so an
+  // unreachable registry keeps this offline; only the warnings matter.
+  const result = spawnSync("npm", ["publish", "--dry-run", "--registry", "http://127.0.0.1:9", "--fetch-retries", "0", "--fetch-timeout", "2000"], {
+    cwd: out,
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
+  assert.doesNotMatch(result.stderr, /auto-corrected|invalid and removed/, result.stderr);
 });
 
 test("bundle: npm pack includes every bin file", async () => {

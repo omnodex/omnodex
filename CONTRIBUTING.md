@@ -28,7 +28,7 @@ A CLA-bot will automatically check your CLA status when you open a pull request.
 2. Make your changes. Add or update tests as appropriate.
 3. Run the test suite: `node --test packages/*/test/**/*.test.mjs`
 4. Ensure `npx tsc -b` compiles without errors.
-5. Open a pull request against `main`.
+5. Open a pull request against `main`, titled `type(scope): summary`, for example `fix(dashboard): keep the session list sorted`. The type is one of `feat`, `fix`, `perf`, `refactor`, `revert`, `docs`, `test`, `build`, `ci` or `chore`; the scope is optional. PRs are squash-merged with the title as the commit message, and release notes are built from those titles, so a check on each PR enforces the format.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for build commands, package layout, and architectural decisions. Full documentation is available at [docs.omnodex.com](https://docs.omnodex.com/).
 
