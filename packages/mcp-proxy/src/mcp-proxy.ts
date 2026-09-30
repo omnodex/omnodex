@@ -42,6 +42,7 @@ import {
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type ProxyConfig } from "./config.js";
 import { UpstreamClientPool } from "./upstream-client.js";
+import { createToolListCache } from "./tool-cache.js";
 import { runProxyServer } from "./proxy-server.js";
 import {
   startProxyHttpServer,
@@ -131,7 +132,9 @@ export class MCPProxy implements Interceptor {
    * resolves is a no-op for the server but does clean up the rest).
    */
   async start(emit: EmitFn): Promise<StopFn> {
-    const pool = new UpstreamClientPool();
+    const pool = new UpstreamClientPool({
+      toolCache: createToolListCache(path.join(this.home, "proxy-tool-cache")),
+    });
     pool.start(this.config);
 
     // The local log is written first and awaited; the push is queued after so

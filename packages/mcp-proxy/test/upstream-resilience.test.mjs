@@ -187,14 +187,32 @@ test("an upstream slower than the discovery window is announced with list_change
     assert.deepEqual(await proxy.toolNames(), BUILT_INS);
     assert.ok(Date.now() - started < 2500, "first tools/list should return at the window");
 
+    // A call made while the upstream is still starting waits for it.
+    assert.equal(proxy.pool.getUpstreamStatuses()[0].state, "connecting");
     const early = await proxy.client.callTool({ name: "slow__ping", arguments: {} });
-    assert.equal(early.isError, true);
-    assert.match(early.content[0].text, /still connecting/);
+    assert.equal(early.isError, false);
+    assert.equal(early.content[0].text, "slow:ping:");
 
     await waitFor(() => proxy.listChangedCount() > 0, 20000, "tools/list_changed");
     assert.deepEqual(await proxy.toolNames(), [...BUILT_INS, "slow__ping"]);
-    const late = await proxy.client.callTool({ name: "slow__ping", arguments: {} });
-    assert.equal(late.isError, false);
+  } finally {
+    await proxy.stop();
+  }
+});
+
+test("a call waits for a connecting upstream only as long as its connection attempt", async () => {
+  const config = makeConfig([mockUpstream("stuck", { MOCK_STARTUP_DELAY_MS: "10000" })], {
+    discovery_window_ms: 0,
+    connect_timeout_ms: 300,
+    ...NO_RETRY,
+  });
+  const proxy = await startProxy(config);
+  try {
+    const started = Date.now();
+    const call = await proxy.client.callTool({ name: "stuck__ping", arguments: {} });
+    assert.ok(Date.now() - started < 5000, "the call should end with the connection attempt");
+    assert.equal(call.isError, true);
+    assert.match(call.content[0].text, /"stuck" is not connected/);
   } finally {
     await proxy.stop();
   }
@@ -204,7 +222,7 @@ test("an upstream slower than the discovery window is announced with list_change
 // Upstream dies after connecting
 // ---------------------------------------------------------------------------
 
-test("an upstream that dies after connecting is removed, reported and scheduled for retry", async () => {
+test("an upstream that dies after connecting stays listed, is reported and scheduled for retry", async () => {
   const config = makeConfig([mockUpstream("crashy", { MOCK_EXIT_AFTER_MS: "1500" })], {
     discovery_window_ms: 20000,
     ...NO_RETRY,
@@ -214,9 +232,12 @@ test("an upstream that dies after connecting is removed, reported and scheduled 
     assert.deepEqual(await proxy.toolNames(), [...BUILT_INS, "crashy__ping"]);
 
     // One notification when it connected (the client was already
-    // initialized), one when it went away.
+    // initialized), one when it went away. Its tools stay listed, since
+    // clients that read the list once keep offering them anyway, and a call
+    // explains why the upstream is down.
     await waitFor(() => proxy.listChangedCount() >= 2, 20000, "tools/list_changed on disconnect");
-    assert.deepEqual(await proxy.toolNames(), BUILT_INS);
+    assert.deepEqual(await proxy.toolNames(), [...BUILT_INS, "crashy__ping"]);
+    assert.equal(proxy.pool.getTools().length, 0);
 
     const [upstream] = (await proxy.status()).upstream_servers;
     assert.equal(upstream.state, "failed");

@@ -117,13 +117,16 @@ const UpstreamConnectionSchema = z.object({
    * connecting, counted from proxy start. The wait ends as soon as every
    * upstream has settled, so this is a ceiling, not a delay.
    *
-   * It needs to cover the slowest upstream, because agent clients read the
-   * tool list once at startup: measured clients ignore
-   * notifications/tools/list_changed, so an upstream that connects after the
-   * window is unusable for the rest of the session even though the proxy
-   * has it. A first run of npx or uvx takes several seconds. Raise it for
-   * slow upstreams; lower it if a hung upstream delaying the first tool
-   * listing matters more than losing that upstream's tools.
+   * Agent clients read the tool list once at startup: measured clients
+   * ignore notifications/tools/list_changed. So the proxy remembers each
+   * upstream's tools between runs ($OMNODEX_HOME/proxy-tool-cache) and lists
+   * them without waiting; a call to one waits for its upstream to connect.
+   * This window only matters the first time an upstream runs, or after its
+   * config entry changes: it needs to cover that upstream's start, or its
+   * tools are missing for that one session. A first run of npx or uvx takes
+   * several seconds. Raise it for slow upstreams; lower it if a hung upstream
+   * delaying the first tool listing matters more than losing that
+   * upstream's tools for a session.
    */
   discovery_window_ms: z.number().int().min(0).default(15000),
   /** Per-attempt limit for one upstream to start and list its tools. */

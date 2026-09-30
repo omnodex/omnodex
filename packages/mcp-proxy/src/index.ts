@@ -33,8 +33,11 @@ export {
   McpUpstreamUnavailableError,
   describeUnavailable,
 } from "./upstream-client.js";
+export { createToolListCache, upstreamCacheKey } from "./tool-cache.js";
+export type { ToolListCache } from "./tool-cache.js";
 export type {
   PrefixedTool,
+  UpstreamClientPoolOptions,
   UpstreamCallResult,
   UpstreamState,
   UpstreamStatus,
