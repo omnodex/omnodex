@@ -46,14 +46,19 @@ and does not record.
 | Tool call parameters | ✅ Yes (default) | File paths, queries, code snippets. See [Parameter redaction](#parameter-redaction). |
 | Tool call result (content) | ❌ No | Only the byte size of the response is recorded. |
 | Upstream server credentials | ❌ No | For stdio upstreams they are env vars inside the upstream process. For HTTP upstreams they come from env vars named in the config and are sent only as request headers; header values are never written to the event log, stderr or `omnodex_status`, and are scrubbed from error text. |
-| MCP handshake messages | ❌ No | `initialize`, `initialized`, ping/pong. |
+| MCP handshake messages | ❌ No | `initialize`, `initialized`, ping/pong. Only the client's own name and version from `initialize` are kept (see below). |
 | `tools/list` responses | ❌ No | Tool discovery is not a security-relevant event. |
 | Session start / end | ✅ Yes | Timestamp, the proxied upstream servers, and each one's transport. For HTTP upstreams only the URL host is recorded, never the path, query string or credentials. |
+| MCP client | ✅ Yes | The name and version the client sends in `initialize` (for example `claude-code`), and the agent runtime it identifies. Dashboards use it to label the session. |
 | Tool call duration | ✅ Yes | `duration_ms` in `tool.completed` events. |
 | Error messages | ✅ Yes | When upstream returns an error response. |
 
 **Where the log goes:** `$OMNODEX_HOME/event-log/` (default: `~/.omnodex/event-log/`).
 The log is local-only. Nothing is sent to Omnodex servers.
+
+### Which app a session came from
+
+`session.started` is written once the client has initialized, and records the client's own name and version. When the name identifies a runtime Omnodex knows (`claude-code`, `codex-mcp-client`), the session and every later event carry that `platform`. A launcher that knows its platform can say so with `--platform <name>` or `OMNODEX_PLATFORM` (one of `claude-code`, `codex`, `cowork`, `antigravity`, `copilot`, `web`), which takes precedence; the Omnodex plugins pass `--platform`. A client with neither is labelled by the name it sent.
 
 ### Parameter redaction
 

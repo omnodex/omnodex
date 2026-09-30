@@ -145,6 +145,7 @@ export class Projector {
       source_root: root,
       platform: event.platform ?? null,
       ...(event.mcp_server_transports?.length ? { mcp_server_transports: event.mcp_server_transports } : {}),
+      ...(event.mcp_client?.name ? { mcp_client_name: event.mcp_client.name } : {}),
     });
   }
 

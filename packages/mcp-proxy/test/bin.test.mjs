@@ -48,7 +48,7 @@ function rpcClient(child) {
   };
 }
 
-test("closing stdin ends the session after the calls and exits the process", async () => {
+test("closing stdin ends the session after the calls and exits the process, labelled by --platform", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-proxy-bin-"));
   let child;
   try {
@@ -69,8 +69,10 @@ test("closing stdin ends the session after the calls and exits the process", asy
       })
     );
 
-    child = spawn(process.execPath, [BIN, "--config", configPath], {
-      env: { ...process.env, OMNODEX_HOME: home },
+    const env = { ...process.env, OMNODEX_HOME: home };
+    delete env.OMNODEX_PLATFORM;
+    child = spawn(process.execPath, [BIN, "--config", configPath, "--platform", "cowork"], {
+      env,
       stdio: ["pipe", "pipe", "ignore"],
     });
     const exited = new Promise((resolve) => child.on("exit", (code) => resolve(code)));
@@ -102,6 +104,11 @@ test("closing stdin ends the session after the calls and exits the process", asy
     assert.equal(types.filter((t) => t === "session.ended").length, 1);
     assert.equal(types.at(-1), "session.ended");
     assert.ok(types.indexOf("tool.completed") < types.indexOf("session.ended"));
+
+    // The client as it named itself, and the runtime the plugin declared.
+    assert.equal(types[0], "session.started");
+    assert.deepEqual(events[0].mcp_client, { name: "bin-test", version: "0.0.0" });
+    for (const e of events) assert.equal(e.platform, "cowork", `${e.event_type} carries the platform`);
   } finally {
     // Kill a proxy that failed to exit (and its upstream) so the runner does not hang.
     if (child && child.exitCode === null) child.kill("SIGKILL");

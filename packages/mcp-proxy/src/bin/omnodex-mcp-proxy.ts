@@ -16,6 +16,8 @@
  *   omnodex-mcp-proxy --http 127.0.0.1:8787 [--config ...]   serve over HTTP
  *   omnodex-mcp-proxy --http 0.0.0.0:8787 --allow-remote       beyond loopback;
  *     requires OMNODEX_PROXY_HTTP_TOKEN, sent by clients as a bearer token
+ *   omnodex-mcp-proxy --platform cowork [--config ...]           the runtime this
+ *     proxy serves, for labelling sessions; same as OMNODEX_PLATFORM
  *
  * Usage (via Cowork plugin mcp.json):
  *   { "command": "omnodex-mcp-proxy", "args": [] }
@@ -36,6 +38,9 @@
  *   OMNODEX_AUTO_SYNC_CHILD=1  run one background sync and exit
  *   OMNODEX_PROXY_HTTP_TOKEN   bearer token required from HTTP clients (optional
  *                              on loopback, required with --allow-remote)
+ *   OMNODEX_PLATFORM           the runtime this proxy serves (claude-code, codex,
+ *                              cowork, antigravity, copilot, web); --platform
+ *                              overrides it. Plugins pass --platform.
  */
 
 import * as os from "node:os";
@@ -69,6 +74,14 @@ async function main(): Promise<void> {
   const configFlagIdx = args.indexOf("--config");
   if (configFlagIdx !== -1 && args[configFlagIdx + 1]) {
     configPath = args[configFlagIdx + 1];
+  }
+
+  // A plugin's MCP config passes --platform so its sessions are labelled by
+  // runtime even when the client's own name does not say (the Claude desktop
+  // app names itself the same for chat and Cowork).
+  const platformFlagIdx = args.indexOf("--platform");
+  if (platformFlagIdx !== -1 && args[platformFlagIdx + 1]) {
+    process.env.OMNODEX_PLATFORM = args[platformFlagIdx + 1];
   }
 
   const httpFlagIdx = args.indexOf("--http");

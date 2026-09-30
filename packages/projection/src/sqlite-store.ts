@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   last_event_at TEXT NOT NULL DEFAULT '',
   source_root TEXT,
   platform TEXT,
-  mcp_server_transports_json TEXT
+  mcp_server_transports_json TEXT,
+  mcp_client_name TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -209,6 +210,9 @@ export class SqliteReadModelStore implements ReadModelStore {
     this.addColumnIfMissing("sessions", "mcp_server_transports_json", "TEXT");
     this.addColumnIfMissing("risk_events", "rule_tier", "TEXT");
     this.addColumnIfMissing("risk_events", "related_event_ids_json", "TEXT");
+
+    // Migration 7: the MCP client a proxy session served (2026-09-29).
+    this.addColumnIfMissing("sessions", "mcp_client_name", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -234,8 +238,8 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO sessions
-        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root, platform, mcp_server_transports_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (session_id, user, project_path, mcp_servers_json, interceptor, started_at, ended_at, duration_ms, status, tool_call_count, file_read_count, file_write_count, risk_score, last_event_at, source_root, platform, mcp_server_transports_json, mcp_client_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
         user = excluded.user,
         project_path = excluded.project_path,
@@ -248,7 +252,8 @@ export class SqliteReadModelStore implements ReadModelStore {
         last_event_at = excluded.last_event_at,
         source_root = excluded.source_root,
         platform = COALESCE(excluded.platform, sessions.platform),
-        mcp_server_transports_json = COALESCE(excluded.mcp_server_transports_json, sessions.mcp_server_transports_json)`,
+        mcp_server_transports_json = COALESCE(excluded.mcp_server_transports_json, sessions.mcp_server_transports_json),
+        mcp_client_name = COALESCE(excluded.mcp_client_name, sessions.mcp_client_name)`,
     );
     stmt.run(
       row.session_id,
@@ -268,6 +273,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.source_root,
       row.platform ?? null,
       row.mcp_server_transports?.length ? JSON.stringify(row.mcp_server_transports) : null,
+      row.mcp_client_name ?? null,
     );
   }
 
@@ -515,6 +521,7 @@ interface SessionRowRaw {
   source_root: string | null;
   platform: string | null;
   mcp_server_transports_json: string | null;
+  mcp_client_name: string | null;
 }
 
 interface ToolCallRowRaw {
@@ -568,6 +575,7 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     ...(raw.mcp_server_transports_json
       ? { mcp_server_transports: JSON.parse(raw.mcp_server_transports_json) as SessionRow["mcp_server_transports"] }
       : {}),
+    ...(raw.mcp_client_name ? { mcp_client_name: raw.mcp_client_name } : {}),
   };
 }
 

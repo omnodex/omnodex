@@ -31,7 +31,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { type EmitFn } from "@omnodex/shared";
+import { type EmitFn, type PlatformKind } from "@omnodex/shared";
 import {
   type UpstreamClientPool,
   McpUpstreamUnavailableError,
@@ -40,7 +40,12 @@ import {
 import { callToolWithEvents } from "./event-emitter.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
-import { buildSessionEndedEvent, buildSessionStartedEvent } from "./core/events.js";
+import {
+  asPlatform,
+  buildSessionEndedEvent,
+  buildSessionStartedEvent,
+  platformForClient,
+} from "./core/events.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -76,6 +81,9 @@ export interface ProxyServerOptions {
 export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   const { pool, config, emit, sessionId } = opts;
   const projectPath = opts.projectPath ?? process.cwd();
+  // When the session began, even though session.started is written once the
+  // client has initialized.
+  const sessionStart = new Date().toISOString();
 
   const server = new Server(
     { name: "omnodex-mcp-proxy", version: "0.0.0" },
@@ -144,9 +152,43 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     config.upstream_connection.discovery_window_ms
   );
 
+  // ── Session start, once the client has said who it is ─────────────────────
+  // session.started waits for the MCP initialize handshake so it can record
+  // the client: its name and version, and the runtime they identify. A
+  // launcher that knows its platform says so in OMNODEX_PLATFORM, which wins.
+  // Every later event carries the platform too, so a reader that sees a
+  // session only from its tool calls still knows where it came from.
+  let platform: PlatformKind | undefined = asPlatform(process.env.OMNODEX_PLATFORM);
+  const tagged: EmitFn = (event) => emit(platform ? { ...event, platform } : event);
+  let started: Promise<void> | null = null;
+  const startSession = (): Promise<void> => {
+    started ??= (async () => {
+      const client = server.getClientVersion();
+      const mcpClient = client?.name
+        ? { name: client.name, ...(client.version ? { version: client.version } : {}) }
+        : undefined;
+      platform ??= platformForClient(client?.name);
+      await emit(buildSessionStartedEvent({
+        sessionId,
+        at: sessionStart,
+        user: process.env.USER ?? process.env.USERNAME ?? "unknown",
+        projectPath,
+        servers: config.upstream_servers.map((s) =>
+          s.transport === "http"
+            ? { name: s.name, transport: "http" as const, host: new URL(s.url).host }
+            : { name: s.name, transport: "stdio" as const }
+        ),
+        platform,
+        mcpClient,
+      }));
+    })();
+    return started;
+  };
+
   let initialized = false;
   server.oninitialized = () => {
     initialized = true;
+    void startSession();
   };
 
   // Several upstreams often connect in the same moment; send one notification.
@@ -251,7 +293,10 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     const toolCallId = randomUUID();
 
     try {
-      const outcome = await callToolWithEvents(pool, config, emit, {
+      // Written before any tool event, even for a client that skipped the
+      // initialized notification.
+      await startSession();
+      const outcome = await callToolWithEvents(pool, config, tagged, {
         prefixedName,
         args,
         toolCallId,
@@ -284,22 +329,6 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     process.stdin.once("end", () => void transport.close());
   }
   const connectStart = Date.now();
-  const sessionStart = new Date().toISOString();
-
-  // Emit session.started
-  const startedEvent = buildSessionStartedEvent({
-    sessionId,
-    at: sessionStart,
-    user: process.env.USER ?? process.env.USERNAME ?? "unknown",
-    projectPath,
-    servers: config.upstream_servers.map((s) =>
-      s.transport === "http"
-        ? { name: s.name, transport: "http" as const, host: new URL(s.url).host }
-        : { name: s.name, transport: "stdio" as const }
-    ),
-  });
-  // Awaited so session.started is always written before any later event.
-  await emit(startedEvent);
 
   // Print the parameter-logging disclosure to stderr so it appears in the
   // agent's session log (Cowork shows this in the terminal panel).
@@ -322,6 +351,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   unsubscribeTools();
   unsubscribeExhausted();
 
+  // A client that disconnected without initializing still gets a start.
+  await startSession();
   const endedAt = new Date().toISOString();
   const endedEvent = buildSessionEndedEvent({
     sessionId,
@@ -329,5 +360,5 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     durationMs: Date.now() - connectStart,
   });
   // Awaited so the event is written before the caller shuts the process down.
-  await emit(endedEvent);
+  await tagged(endedEvent);
 }

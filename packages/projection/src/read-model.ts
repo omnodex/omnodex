@@ -48,6 +48,12 @@ export interface SessionRow {
    * not part of the sync payload.
    */
   mcp_server_transports?: McpServerTransport[];
+  /**
+   * The MCP client a proxy session served, as the client named itself.
+   * Absent for hook sessions and older rows. Local only: not in the sync
+   * payload.
+   */
+  mcp_client_name?: string;
 }
 
 export interface ToolCallRow {
