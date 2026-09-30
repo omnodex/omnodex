@@ -57,6 +57,14 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      # Trusted publishing needs npm 11.5.1 or later; Node 24 usually bundles
+      # it, but an older runner image would fail only at the publish step.
+      - name: Check npm supports trusted publishing
+        run: |
+          npm --version
+          node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)" \
+            || npm install -g npm@11
+
       - run: npm ci
 
       - name: Plan the release

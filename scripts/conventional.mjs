@@ -23,7 +23,7 @@ export const TYPES = {
   chore: null,
 };
 
-export const MAX_TITLE_LENGTH = 72;
+export const MAX_TITLE_LENGTH = 100;
 
 const SUBJECT = /^(?<type>[a-z]+)(?:\((?<scope>[a-z0-9][a-z0-9-]*)\))?(?<breaking>!)?: (?<summary>\S.*)$/;
 const PR_SUFFIX = / \(#\d+\)$/;
