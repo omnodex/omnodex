@@ -46,4 +46,4 @@ jobs:
         # bash on every OS, including the Windows runner (Git Bash).
         shell: bash
         run: |
-          node --test $(find packages/*/test -name '*.test.mjs' ! -name '*.integration.test.mjs')
+          node --test $(find packages/*/test scripts/test -name '*.test.mjs' ! -name '*.integration.test.mjs')

@@ -11,6 +11,10 @@
 //   node scripts/release.mjs stamp <package-dir> <version>
 //     Writes the version into a built package's package.json.
 //
+//   node scripts/release.mjs notes [<last-tag>]
+//     Prints release notes for the commits since <last-tag> that touch what
+//     ships, grouped by type (see conventional.mjs).
+//
 // The released version lives in git tags (vX.Y.Z) and on npm, never in a
 // commit: the next version is one bump past the higher of npm's latest and
 // the newest v* tag. Releases stay on 0.x: "minor" for features, "patch"
@@ -19,6 +23,8 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { releaseNotes } from "./conventional.mjs";
 
 const PACKAGE = "omnodex";
 /** What ships in the npm package. A release with no change here is skipped. */
@@ -90,12 +96,21 @@ function stamp(dir, version) {
   console.log(`${file}: version ${version}`);
 }
 
-const [cmd, ...rest] = process.argv.slice(2);
+function notes(lastTag) {
+  if (!lastTag) return "First release published by the Release workflow.\n";
+  const log = git("log", "--format=%s", `${lastTag}..HEAD`, "--", ...SHIPPED_PATHS);
+  return releaseNotes(log.split("\n"));
+}
+
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+const [cmd, ...rest] = isMain ? process.argv.slice(2) : [];
 if (cmd === "plan") {
   const i = rest.indexOf("--bump");
   plan(i === -1 ? "patch" : rest[i + 1]);
 } else if (cmd === "stamp") {
   stamp(rest[0], rest[1]);
+} else if (cmd === "notes") {
+  process.stdout.write(notes(rest[0]));
 } else if (cmd) {
   console.error(`unknown command: ${cmd}`);
   process.exit(2);

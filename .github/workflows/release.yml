@@ -3,7 +3,9 @@
 # Run it from Actions > Release > Run workflow on main, choosing patch
 # (fixes) or minor (features). It runs the full CI matrix, builds the
 # bundle, stamps the next version, publishes with provenance, and tags the
-# commit vX.Y.Z. The version lives in the tag and on npm, not in a commit.
+# commit vX.Y.Z, then creates a GitHub release with notes grouped from the
+# commit subjects since the last tag. The version lives in the tag and on
+# npm, not in a commit.
 # If nothing that ships has changed since the last tag it stops, unless
 # "force" is set. A weekly schedule can call the same job later.
 #
@@ -42,7 +44,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # push the vX.Y.Z tag
+      contents: write   # push the vX.Y.Z tag and create the GitHub release
       id-token: write   # npm trusted publishing and provenance
     steps:
       - uses: actions/checkout@v5
@@ -95,3 +97,12 @@ jobs:
           git tag "${{ steps.plan.outputs.tag }}"
           git push origin "${{ steps.plan.outputs.tag }}"
           echo "Published omnodex@${{ steps.plan.outputs.version }} and tagged ${{ steps.plan.outputs.tag }}." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create the GitHub release
+        if: steps.plan.outputs.changed == 'true' || inputs.force
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/release.mjs notes "${{ steps.plan.outputs.last_tag }}" > release-notes.md
+          gh release create "${{ steps.plan.outputs.tag }}" --verify-tag \
+            --title "omnodex ${{ steps.plan.outputs.version }}" --notes-file release-notes.md

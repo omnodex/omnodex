@@ -1,0 +1,32 @@
+# PR title - checks that a pull request title follows the commit convention.
+#
+# PRs are squash-merged with the title as the commit subject on main, and
+# the Release workflow groups its notes from those subjects, so the title
+# must read "type(scope): summary" (see scripts/conventional.mjs). Editing
+# the title reruns the check.
+
+name: PR title
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Check the title
+        env:
+          # Passed through the environment, never interpolated into the script.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/check-pr-title.mjs
