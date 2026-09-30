@@ -235,14 +235,34 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const home = os.homedir();
   // How each session's MCP servers are reached, from its session.started.
   const transports = new Map<string, Map<string, McpServerTransport>>();
-  const contextFor = (event: ToolInvokedEvent): EvaluationContext => ({
-    workspaceRoots: event.cwd ? workspaceRoots(event.cwd) : undefined,
-    home,
-    machineState: opts.machineState,
-    mcpServerTransport: transports.get(event.session_id)?.get(event.mcp_server),
-  });
+  // Where each session started: its session.started project path, or the
+  // first working directory a call reports. An agent that runs cd moves the
+  // cwd its later calls report, but the workspace is still where it began.
+  const startDirs = new Map<string, string>();
+  const noteStart = (sessionId: string, dir: string | undefined): void => {
+    if (dir && !startDirs.has(sessionId) && !isTooBroadForWorkspace(dir, home)) startDirs.set(sessionId, dir);
+  };
+  const contextFor = (event: ToolInvokedEvent): EvaluationContext => {
+    if (event.cwd) noteStart(event.session_id, event.cwd);
+    const start = startDirs.get(event.session_id);
+    // The current directory counts too, unless the agent has moved to the
+    // filesystem root or home, which would cover every write.
+    const cwdCounts = event.cwd && !(start && isTooBroadForWorkspace(event.cwd, home));
+    const roots = [
+      ...(cwdCounts ? workspaceRoots(event.cwd!) : []),
+      ...(start && start !== event.cwd ? workspaceRoots(start) : []),
+    ];
+    return {
+      workspaceRoots: roots.length ? [...new Set(roots)] : undefined,
+      home,
+      machineState: opts.machineState,
+      mcpServerTransport: transports.get(event.session_id)?.get(event.mcp_server),
+    };
+  };
   const noteSession = (event: TraceEvent): void => {
-    if (event.event_type === "session.started" && event.mcp_server_transports?.length) {
+    if (event.event_type !== "session.started") return;
+    noteStart(event.session_id, event.project_path);
+    if (event.mcp_server_transports?.length) {
       transports.set(event.session_id, new Map(event.mcp_server_transports.map((t) => [t.name, t])));
     }
   };
@@ -290,6 +310,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
 
   function endSession(sessionId: string): void {
     transports.delete(sessionId);
+    startDirs.delete(sessionId);
     eventEngine.endSession(sessionId);
     statefulEngine.endSession(sessionId);
   }
@@ -346,4 +367,15 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
       };
     },
   };
+}
+
+/**
+ * A starting directory too broad to be a workspace: the filesystem root or
+ * the user's home. Desktop apps can start an MCP server there, and taking
+ * it as the workspace would put almost every write inside it.
+ */
+function isTooBroadForWorkspace(dir: string, home: string): boolean {
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const d = norm(dir);
+  return d === "" || /^[a-z]:$/.test(d) || d === norm(home);
 }

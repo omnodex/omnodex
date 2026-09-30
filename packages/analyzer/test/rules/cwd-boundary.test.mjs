@@ -308,3 +308,71 @@ test("expands ~ with the host's home directory", () => {
   );
   assert.equal(outside.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// The workspace is where the session started, wherever the agent cds to
+// ---------------------------------------------------------------------------
+
+function sessionEvaluator() {
+  // Each directory is its own only root, so no git or config lookups.
+  return createEvaluator({
+    host: "batch",
+    registry: new RuleRegistry([RULE_CWD_BOUNDARY_WRITE]),
+    newEventId: () => "evt-x",
+    workspaceRoots: (cwd) => [cwd],
+  });
+}
+
+function started(projectPath, sessionId = "sess-test") {
+  return {
+    schema_version: 1, event_id: `start-${sessionId}`, session_id: sessionId,
+    occurred_at: "2026-05-01T00:00:00.000Z", recorded_at: "2026-05-01T00:00:00.000Z",
+    interceptor: "claude-code-hook", event_type: "session.started",
+    user: "case", project_path: projectPath,
+  };
+}
+
+const write = (id, cwd, file_path) => makeEvent({ tool_call_id: id, cwd, parameters: { file_path, content: "x" } });
+
+test("a write back in the starting directory after a cd is inside the workspace", () => {
+  const ev = sessionEvaluator();
+  ev.evaluate(started("/home/case/work"));
+  // The agent ran cd into a child repo; later calls report that as cwd.
+  assert.deepEqual(ev.evaluate(write("tc-1", "/home/case/work/repos/api", "/home/case/work/notes/plan.md")), []);
+  assert.deepEqual(ev.evaluate(write("tc-2", "/home/case/work/repos/api", "/home/case/work/repos/api/src/a.ts")), []);
+  assert.equal(ev.evaluate(write("tc-3", "/home/case/work/repos/api", "/home/case/elsewhere/a.ts")).length, 1);
+});
+
+test("without session.started the first reported cwd is the starting directory", () => {
+  const ev = sessionEvaluator();
+  assert.deepEqual(ev.evaluate(write("tc-1", "/home/case/work", "/home/case/work/a.md")), []);
+  assert.deepEqual(ev.evaluate(write("tc-2", "/home/case/work/sub", "/home/case/work/b.md")), []);
+});
+
+test("a home or root starting directory does not widen the workspace", () => {
+  const ev = sessionEvaluator();
+  ev.evaluate(started(os.homedir()));
+  const inHome = path.join(os.homedir(), "somewhere-else", "a.ts");
+  assert.equal(ev.evaluate(write("tc-1", "/home/case/work", inHome)).length, 1);
+  const root = sessionEvaluator();
+  root.evaluate(started("/", "sess-root"));
+  const e = write("tc-2", "/home/case/work", "/home/case/other/a.ts");
+  e.session_id = "sess-root";
+  assert.equal(root.evaluate(e).length, 1);
+});
+
+test("a cd to the filesystem root mid-session does not cover every write", () => {
+  const ev = sessionEvaluator();
+  ev.evaluate(started("/home/case/work"));
+  assert.equal(ev.evaluate(write("tc-1", "/", "/etc/cron.d/job")).length, 1);
+  assert.deepEqual(ev.evaluate(write("tc-2", "/", "/home/case/work/a.md")), []);
+});
+
+test("sessions keep their own starting directories", () => {
+  const ev = sessionEvaluator();
+  ev.evaluate(started("/home/case/a", "sess-a"));
+  ev.evaluate(started("/home/case/b", "sess-b"));
+  const e = write("tc-1", "/home/case/b/sub", "/home/case/a/x.md");
+  e.session_id = "sess-b";
+  assert.equal(ev.evaluate(e).length, 1);
+});
