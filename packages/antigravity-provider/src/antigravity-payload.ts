@@ -13,8 +13,8 @@
  * a `toolCall` object.
  *
  * Supported events: PreInvocation, PostInvocation, PreToolUse, PostToolUse, Stop.
- * PreInvocation fills the session-start gap (Antigravity has no SessionStart).
- * PostInvocation provides an additional session-end signal.
+ * The first observed invocation starts capture; model calls never end it.
+ * Only an idle Stop marks execution complete, not conversation deletion.
  *
  * Key differences from Codex:
  *   - Config directory is `.agents/` (not `.codex/`).
@@ -23,7 +23,7 @@
  *     "Shared Agent Harness" so hooks registered once apply everywhere.
  *   - Payload uses `conversationId` (not `session_id`).
  *   - PreToolUse nests tool info under `toolCall.name` / `toolCall.args`.
- *   - PostToolUse only receives `stepIdx` and `error` — no tool name/args/response.
+ *   - PostToolUse includes `toolCall`, `stepIdx`, and `error`, but no response.
  *   - Stop receives `executionNum`, `terminationReason`, `fullyIdle`.
  *   - Common fields: conversationId, workspacePaths, transcriptPath,
  *     artifactDirectoryPath.
@@ -60,6 +60,7 @@ export interface AntigravityCommonFields {
   workspacePaths: string[];
   transcriptPath: string;
   artifactDirectoryPath: string;
+  modelName?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -67,13 +68,13 @@ export interface AntigravityCommonFields {
 // ---------------------------------------------------------------------------
 
 export interface AntigravityPreInvocationPayload extends AntigravityCommonFields {
-  executionNum: number;
+  invocationNum: number;
+  initialNumSteps: number;
 }
 
 export interface AntigravityPostInvocationPayload extends AntigravityCommonFields {
-  executionNum: number;
-  terminationReason?: string;
-  error?: string;
+  invocationNum: number;
+  initialNumSteps: number;
 }
 
 export interface AntigravityPreToolUsePayload extends AntigravityCommonFields {
@@ -85,6 +86,7 @@ export interface AntigravityPreToolUsePayload extends AntigravityCommonFields {
 }
 
 export interface AntigravityPostToolUsePayload extends AntigravityCommonFields {
+  toolCall?: AntigravityPreToolUsePayload["toolCall"];
   stepIdx: number;
   error?: string;
 }
@@ -110,6 +112,9 @@ export type AntigravityHookPayload =
 export interface MapperOptions {
   newEventId: () => string;
   nowIso?: () => string;
+  /** The shim deduplicates starts across processes, including resumed captures. */
+  emitSessionStart?: boolean;
+  sessionStartedAt?: string;
 }
 
 /**
@@ -133,11 +138,11 @@ export interface PostToolUseCorrelation {
  *   1. Every event has `interceptor = "antigravity-hook"`.
  *   2. `occurred_at` is the mapper clock because Antigravity does not
  *      publish per-event timestamps in its payload.
- *   3. PreInvocation emits `session.started` (fills the session-start gap).
- *   4. PostInvocation emits `session.ended`.
+ *   3. Only the first invocation emits `session.started` by default.
+ *   4. PostInvocation is a model-call signal and emits no session events.
  *   5. PreToolUse emits `tool.invoked`.
  *   6. PostToolUse emits `tool.completed` (tool name provided via correlation).
- *   7. Stop also maps to `session.ended` (duplicates are harmless).
+ *   7. Only a fully idle Stop maps to `session.ended`.
  */
 export function mapAntigravityPayload(
   eventName: AntigravityHookEventName,
@@ -159,6 +164,7 @@ export function mapAntigravityPayload(
   switch (eventName) {
     case "PreInvocation": {
       const p = payload as AntigravityPreInvocationPayload;
+      if (!(options.emitSessionStart ?? (p.invocationNum === 0))) return [];
       const event: SessionStartedEvent = {
         ...base,
         event_id: options.newEventId(),
@@ -170,17 +176,8 @@ export function mapAntigravityPayload(
       return [event];
     }
 
-    case "PostInvocation": {
-      const p = payload as AntigravityPostInvocationPayload;
-      const event: SessionEndedEvent = {
-        ...base,
-        event_id: options.newEventId(),
-        event_type: "session.ended",
-        duration_ms: 0,
-        status: p.error ? "errored" : "completed" as const,
-      };
-      return [event];
-    }
+    case "PostInvocation":
+      return [];
 
     case "PreToolUse": {
       const p = payload as AntigravityPreToolUsePayload;
@@ -189,7 +186,7 @@ export function mapAntigravityPayload(
         ...base,
         event_id: options.newEventId(),
         event_type: "tool.invoked",
-        tool_call_id: `step-${p.stepIdx}`,
+        tool_call_id: antigravityToolCallId(sessionId, p.stepIdx),
         tool_name: toolName,
         mcp_server: mcpServerFor(toolName),
         parameters: p.toolCall?.args ?? {},
@@ -200,26 +197,35 @@ export function mapAntigravityPayload(
 
     case "PostToolUse": {
       const p = payload as AntigravityPostToolUsePayload;
+      // Installed hooks observe after execution to avoid permission decisions.
+      // Older PreToolUse hooks can still supply timing through correlation.
+      const invoked = !correlation?.toolCallId && p.toolCall
+        ? mapAntigravityPayload("PreToolUse", { ...p, toolCall: p.toolCall }, options)
+        : [];
       const completed: ToolCompletedEvent = {
         ...base,
         event_id: options.newEventId(),
         event_type: "tool.completed",
-        tool_call_id: correlation?.toolCallId ?? `step-${p.stepIdx}`,
+        tool_call_id: correlation?.toolCallId ?? antigravityToolCallId(sessionId, p.stepIdx),
         duration_ms: correlation?.durationMs ?? 0,
         status: p.error ? "error" : "success",
         response_bytes: 0,
       };
-      return [completed];
+      return [...invoked, completed];
     }
 
     case "Stop": {
       const p = payload as AntigravityStopPayload;
+      if (p.fullyIdle !== true) return [];
+      const elapsed = options.sessionStartedAt
+        ? Date.parse(now) - Date.parse(options.sessionStartedAt)
+        : 0;
       const event: SessionEndedEvent = {
         ...base,
         event_id: options.newEventId(),
         event_type: "session.ended",
-        duration_ms: 0,
-        status: p.error ? "errored" : "completed",
+        duration_ms: Number.isFinite(elapsed) ? Math.max(0, elapsed) : 0,
+        status: p.error || p.terminationReason === "error" ? "errored" : "completed",
       };
       return [event];
     }
@@ -232,4 +238,9 @@ export function mapAntigravityPayload(
 
 function mcpServerFor(toolName: string): string {
   return splitMcpToolName(toolName)?.mcpServer ?? "builtin";
+}
+
+/** Read models key calls globally, while stepIdx is only conversation-local. */
+export function antigravityToolCallId(conversationId: string, stepIdx: number): string {
+  return `antigravity-${conversationId}-step-${stepIdx}`;
 }

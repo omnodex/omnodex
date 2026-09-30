@@ -33,9 +33,11 @@ test("install writes named hook with three events", async (t) => {
   // Top-level key is "omnodex", not "hooks".
   assert.ok(file.omnodex, 'expected "omnodex" named hook');
   assert.ok(!file.hooks, 'should not have a "hooks" wrapper');
+  assert.equal(file.omnodex.PreToolUse, undefined, 'monitoring must not gate permissions');
+  assert.equal(file.omnodex.PostInvocation, undefined);
 
   // PreToolUse and PostToolUse use matcher groups.
-  for (const eventName of ["PreToolUse", "PostToolUse"]) {
+  for (const eventName of ["PostToolUse"]) {
     const groups = file.omnodex[eventName];
     assert.ok(groups, `expected ${eventName} array`);
     assert.equal(groups.length, 1);
@@ -78,8 +80,22 @@ test("install is idempotent", async (t) => {
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const file = JSON.parse(raw);
   // Should have exactly one matcher group per tool event.
-  assert.equal(file.omnodex.PreToolUse.length, 1);
-  assert.equal(file.omnodex.PreToolUse[0].hooks.length, 1);
+  assert.equal(file.omnodex.PostToolUse.length, 1);
+  assert.equal(file.omnodex.PostToolUse[0].hooks.length, 1);
+});
+
+test("reinstall removes legacy permission and model-end handlers while preserving team policies", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = makeInterceptor(projectPath);
+  await mkdir(path.join(projectPath, ".agents"));
+  const team = { PreToolUse: [{ matcher: "run_command", hooks: [{ type: "command", command: "case-policy" }] }] };
+  await writeFile(interceptor.hooksFilePath(), JSON.stringify({ omnodex: { PreToolUse: [], PostInvocation: [] }, team }));
+  await interceptor.install();
+  const file = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+  assert.deepEqual(file.team, team);
+  assert.equal(file.omnodex.PreToolUse, undefined);
+  assert.equal(file.omnodex.PostInvocation, undefined);
+  assert.ok(file.omnodex.PostToolUse);
 });
 
 test("install preserves other named hooks", async (t) => {
@@ -158,7 +174,7 @@ test("debug flag adds OMNODEX_DEBUG=1 to shim command", async (t) => {
   await interceptor.install();
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const file = JSON.parse(raw);
-  const cmd = file.omnodex.PreToolUse[0].hooks[0].command;
+  const cmd = file.omnodex.PostToolUse[0].hooks[0].command;
   assert.match(cmd, /OMNODEX_DEBUG=1/);
 });
 
@@ -171,8 +187,8 @@ test("shim command includes event name as argument", async (t) => {
   );
   const file = JSON.parse(raw);
 
-  const preCmd = file.omnodex.PreToolUse[0].hooks[0].command;
-  assert.match(preCmd, /PreToolUse$/);
+  const invocationCmd = file.omnodex.PreInvocation[0].command;
+  assert.match(invocationCmd, /PreInvocation$/);
 
   const postCmd = file.omnodex.PostToolUse[0].hooks[0].command;
   assert.match(postCmd, /PostToolUse$/);
@@ -214,14 +230,14 @@ test("Windows platform uses cmd.exe set syntax", async (t) => {
   await interceptor.install();
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const file = JSON.parse(raw);
-  const cmd = file.omnodex.PreToolUse[0].hooks[0].command;
+  const cmd = file.omnodex.PostToolUse[0].hooks[0].command;
   // Must use set "VAR=value" && ... syntax, not POSIX VAR=value prefix.
   assert.match(cmd, /^set "OMNODEX_HOME=/);
   assert.match(cmd, / && /);
   // Must NOT use single-quote shell quoting.
   assert.ok(!cmd.includes("'"), "Windows commands must not use single quotes");
   // Event name still appended.
-  assert.match(cmd, /PreToolUse$/);
+  assert.match(cmd, /PostToolUse$/);
 });
 
 test("Windows platform with debug uses chained set commands", async (t) => {
@@ -236,7 +252,7 @@ test("Windows platform with debug uses chained set commands", async (t) => {
   await interceptor.install();
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const file = JSON.parse(raw);
-  const cmd = file.omnodex.PreToolUse[0].hooks[0].command;
+  const cmd = file.omnodex.PostToolUse[0].hooks[0].command;
   assert.match(cmd, /set "OMNODEX_HOME=.*" && set "OMNODEX_DEBUG=1" && /);
 });
 
@@ -251,7 +267,7 @@ test("POSIX platform uses env-prefix syntax (default)", async (t) => {
   await interceptor.install();
   const raw = await readFile(interceptor.hooksFilePath(), "utf8");
   const file = JSON.parse(raw);
-  const cmd = file.omnodex.PreToolUse[0].hooks[0].command;
+  const cmd = file.omnodex.PostToolUse[0].hooks[0].command;
   assert.match(cmd, /^OMNODEX_HOME=/);
   assert.ok(!cmd.includes('set "'), "POSIX commands must not use set");
 });

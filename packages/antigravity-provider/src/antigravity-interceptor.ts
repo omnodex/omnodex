@@ -13,9 +13,7 @@
  *
  * Events subscribed:
  *
- *   PreInvocation  (session lifecycle)
- *   PostInvocation (session lifecycle)
- *   PreToolUse     (matcher "*")
+ *   PreInvocation  (first observed activity)
  *   PostToolUse    (matcher "*")
  *   Stop
  *
@@ -27,7 +25,6 @@
  *
  *   {
  *     "omnodex": {
- *       "PreToolUse": [{ matcher, hooks: [handler] }],
  *       "PostToolUse": [{ matcher, hooks: [handler] }],
  *       "Stop": [handler]
  *     }
@@ -106,10 +103,12 @@ interface HookHandler {
 const HOOK_NAME = "omnodex";
 
 /** Events that use matcher groups (PreToolUse, PostToolUse). */
-const TOOL_EVENTS = ["PreToolUse", "PostToolUse"] as const;
+// PreToolUse requires a gating decision, with no documented observer response.
+// Observing PostToolUse leaves native permissions and other policy hooks alone.
+const TOOL_EVENTS = ["PostToolUse"] as const;
 
 /** Events that use flat handler lists (Stop, PreInvocation, PostInvocation). */
-const FLAT_EVENTS = ["Stop", "PreInvocation", "PostInvocation"] as const;
+const FLAT_EVENTS = ["Stop", "PreInvocation"] as const;
 
 export class AntigravityInterceptor implements Interceptor {
   readonly name = "antigravity-hooks";

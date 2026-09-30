@@ -11,8 +11,8 @@ import { captureEvaluationCases } from "../../analyzer/test/helpers/shim-harness
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const preToolUse = (conversationId, command) => ({
-  args: ["PreToolUse"],
+const postToolUse = (conversationId, command) => ({
+  args: ["PostToolUse"],
   payload: {
     conversationId,
     workspacePaths: ["/tmp/repo"],
@@ -26,8 +26,8 @@ const preToolUse = (conversationId, command) => ({
 captureEvaluationCases(test, assert, {
   shim: path.resolve(__dirname, "../dist/bin/antigravity-hook-shim.js"),
   interceptor: "antigravity-hook",
-  sensitiveRead: (id) => preToolUse(id, "cat /etc/shadow"),
-  harmlessCall: (id) => preToolUse(id, "ls -la"),
+  sensitiveRead: (id) => postToolUse(id, "cat /etc/shadow"),
+  harmlessCall: (id) => postToolUse(id, "ls -la"),
   // Evaluation must not change the hook's answer.
-  checkResult: (result) => assert.deepEqual(JSON.parse(result.stdout), { decision: "allow" }),
+  checkResult: (result) => assert.deepEqual(JSON.parse(result.stdout), {}),
 });

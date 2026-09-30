@@ -20,6 +20,43 @@ const COMMON = {
   artifactDirectoryPath: "/home/case/repo/.gemini/jetski/artifacts",
 };
 
+test("model invocations are not repeated conversation boundaries", () => {
+  const opts = makeOptions();
+  const events = [0, 1, 2].flatMap((invocationNum) => {
+    const payload = { ...COMMON, invocationNum, initialNumSteps: invocationNum * 2 };
+    return [
+      ...mapAntigravityPayload("PreInvocation", payload, opts),
+      ...mapAntigravityPayload("PostInvocation", payload, opts),
+    ];
+  });
+  assert.deepEqual(events.map((e) => e.event_type), ["session.started"]);
+});
+
+test("Stop with active background tasks does not end capture", () => {
+  assert.deepEqual(mapAntigravityPayload("Stop", {
+    ...COMMON, executionNum: 1, terminationReason: "model_stop", fullyIdle: false,
+  }, makeOptions()), []);
+});
+
+test("idle Stop measures elapsed capture time and recognizes error termination", () => {
+  const [event] = mapAntigravityPayload("Stop", {
+    ...COMMON, executionNum: 1, terminationReason: "error", fullyIdle: true,
+  }, { ...makeOptions(), sessionStartedAt: "2026-05-30T23:59:59.000Z" });
+  assert.equal(event.duration_ms, 1000);
+  assert.equal(event.status, "errored");
+});
+
+test("PostToolUse captures documented toolCall without a permission hook", () => {
+  const events = mapAntigravityPayload("PostToolUse", {
+    ...COMMON, stepIdx: 3, error: "exit status 1",
+    toolCall: { name: "run_command", args: { CommandLine: "false" } },
+  }, makeOptions());
+  assert.deepEqual(events.map((e) => e.event_type), ["tool.invoked", "tool.completed"]);
+  assert.equal(events[0].tool_call_id, events[1].tool_call_id);
+  assert.equal(events[0].parameters.CommandLine, "false");
+  assert.equal(events[1].status, "error");
+});
+
 // -- PreToolUse ---------------------------------------------------------------
 
 test("PreToolUse maps to tool.invoked with builtin mcp_server", () => {
@@ -37,7 +74,7 @@ test("PreToolUse maps to tool.invoked with builtin mcp_server", () => {
   assert.equal(ev.event_type, "tool.invoked");
   assert.equal(ev.interceptor, "antigravity-hook");
   assert.equal(ev.platform, "antigravity");
-  assert.equal(ev.tool_call_id, "step-3");
+  assert.equal(ev.tool_call_id, `antigravity-${COMMON.conversationId}-step-3`);
   assert.equal(ev.tool_name, "run_command");
   assert.equal(ev.mcp_server, "builtin");
   assert.deepEqual(ev.parameters, { CommandLine: "cat /etc/hosts" });
@@ -143,7 +180,7 @@ test("PostToolUse without correlation falls back to stepIdx", () => {
       durationMs: 0,
     },
   );
-  assert.equal(events[0].tool_call_id, "step-7");
+  assert.equal(events[0].tool_call_id, `antigravity-${COMMON.conversationId}-step-7`);
   assert.equal(events[0].duration_ms, 0);
 });
 

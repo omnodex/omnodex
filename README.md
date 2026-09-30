@@ -102,6 +102,8 @@ omnodex install antigravity --mcp     # MCP proxy
 
 Writes `.agents/hooks.json` and, with `--mcp`, `.agents/mcp_config.json`. The CLI (`agy`), Desktop App, and Antigravity IDE share this configuration.
 
+Hooks observe completed tool calls through `PostToolUse`, with parameters and success/error status. They do not install a `PreToolUse` permission hook. Re-run `omnodex install antigravity` after upgrading an older installation to remove that handler. Hook-only tool duration is unknown (recorded as zero); use the MCP proxy for measured MCP timing. `PreInvocation` starts capture once per conversation, and `Stop` records an idle execution end only when `fullyIdle` is true. Model invocations do not end sessions, and idle execution does not mean the conversation was deleted. See the [Antigravity guide](https://docs.omnodex.com/guides/antigravity/) for setup and validation limits.
+
 ### MCP proxy
 
 For any MCP-capable agent, the proxy sits between the agent and its upstream MCP servers and records every call:

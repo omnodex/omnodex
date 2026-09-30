@@ -6,9 +6,8 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const HOOKS = fileURLToPath(new URL("./capture-hooks.mjs", import.meta.url));
+const HOOKS = new URL("./capture-hooks.mjs", import.meta.url).href;
 
 /** A scratch OMNODEX_HOME and HOME, removed after the test. */
 export async function scratch(t) {
