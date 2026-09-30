@@ -296,14 +296,22 @@ Upstreams connect in parallel and independently. A slow, failing or crashed upst
 never affects the others or the built-in tools (`omnodex_status`, `omnodex_connect`,
 `omnodex_connection_status`).
 
-- **Discovery window.** The first `tools/list`, and any call to a tool the proxy does
-  not know yet, waits up to `discovery_window_ms` from proxy start for upstreams still
-  connecting. The wait ends as soon as every upstream has settled, so the setting is a
-  ceiling, not a delay. See [Sizing the discovery window](#sizing-the-discovery-window).
+- **Known tools.** The proxy remembers each upstream's tool list between runs, in
+  `$OMNODEX_HOME/proxy-tool-cache/` (one file per upstream config entry, tool
+  definitions only). On later runs those tools are listed at once, whether or not the
+  upstream has finished starting, and a call to one waits for its upstream to connect
+  (up to its connection attempt). An upstream that goes down keeps its tools listed,
+  and calls to them say why it is unavailable. Changing an upstream's config entry
+  starts it fresh.
+- **Discovery window.** The first `tools/list` waits up to `discovery_window_ms` from
+  proxy start for upstreams whose tools are not known yet: the first run of a new
+  upstream, or one whose entry changed. The wait ends as soon as those have settled,
+  so the setting is a ceiling, not a delay. See
+  [Sizing the discovery window](#sizing-the-discovery-window).
 - **Changes.** When an upstream connects or disconnects later, the proxy sends
   `notifications/tools/list_changed`. Claude Code acts on it and picks the tools up
-  mid-session; the Codex clients and Cowork ignore it, so for those the discovery
-  window is what matters.
+  mid-session; the Codex clients and Cowork ignore it, so for those the known tools
+  and the discovery window are what matters.
 - **Retries.** A failed or disconnected upstream is retried after
   `retry_initial_delay_ms`, doubling each time. Once the next delay would reach
   `retry_give_up_delay_ms` (with the defaults: 9 attempts over about 4 minutes), retries
@@ -313,8 +321,8 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
 - **Calls to a down upstream** return an error saying the upstream is connecting, is
   retrying, or has stopped retrying, with its last error.
 - **Rejected credentials.** An HTTP upstream that answers 401 or 403, while
-  connecting or on a later call, moves to `needs_auth`, its tools are removed, and it
-  is not retried on a timer, since only new credentials can fix it.
+  connecting or on a later call, moves to `needs_auth` and is not retried on a timer,
+  since only new credentials can fix it.
 - **Lost sessions.** When a remote server no longer recognizes the session (HTTP 404),
   the proxy starts a new session and retries the call once.
 - **Timeouts and cancellation.** Each tool call is limited to `tool_timeout_sec`
@@ -336,12 +344,12 @@ behavior with an upstream that connects 12s after start:
 | Codex CLI | No |
 | Cowork Desktop | No |
 
-For the clients that answer no, an upstream connecting after the window is unusable
-for the rest of that session, even though the proxy has it connected and
-`omnodex_status` shows it. Restarting the agent does not help on its own, because the
-proxy restarts with it and the upstream is slow again.
+For the clients that answer no, an upstream whose tools the proxy has never seen,
+and that connects after the window, is missing for the rest of that session, even
+though the proxy has it connected and `omnodex_status` shows it. From the next run on
+its tools are known and listed at once, however slowly it starts.
 
-So the window has to cover your slowest upstream. To measure one, start the proxy by
+So the window has to cover your slowest upstream's first run. To measure one, start the proxy by
 hand and watch how long it takes:
 
 ```bash
@@ -369,13 +377,14 @@ as they have all settled. It costs time only when one is slow or hanging: the ag
 first tool listing can block for up to the window. `initialize` is answered immediately
 either way, so the agent still starts; Codex answered normally with a 12s first listing.
 
-**Lowering it** makes that first listing quicker at the cost of dropping any upstream
-that has not connected yet for the whole session. Use a low value only when every
+**Lowering it** makes a first run's listing quicker at the cost of dropping any new
+upstream that has not connected yet for that session. Use a low value only when every
 upstream is a fast local process, or when you would rather the agent start with fewer
 tools than wait.
 
-`connect_timeout_ms` is a separate, longer limit on one connection attempt. An upstream
-can still be connecting when the window closes; it is simply not in the first listing.
+`connect_timeout_ms` is a separate, longer limit on one connection attempt. A new
+upstream can still be connecting when the window closes; it is simply not in the first
+listing.
 
 ---
 

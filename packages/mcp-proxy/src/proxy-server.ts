@@ -17,9 +17,11 @@
  * for the name prefix, so agents that inspect inputSchema, descriptions, or
  * annotations see the real upstream definitions.
  *
- * The server answers the agent without waiting for upstreams. Only tools/list
- * and calls to unknown tools wait, up to discovery_window_ms from start, for
- * upstreams still connecting. Later changes to the connected set are announced with
+ * The server answers the agent without waiting for upstreams. tools/list
+ * offers each upstream's last known tools at once (tool-cache.ts), and waits,
+ * up to discovery_window_ms from start, only for upstreams it has never seen
+ * list their tools. A call to a tool whose upstream is still connecting waits
+ * for that upstream. Later changes to the connected set are announced with
  * notifications/tools/list_changed.
  */
 
@@ -147,10 +149,9 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
 
   // ── Upstream discovery and change notifications ──────────────────────────
   // Counted from start, so the window stays inside the host's own startup
-  // timeout however late the first tools/list arrives.
-  const discovery = pool.waitForInitialAttempts(
-    config.upstream_connection.discovery_window_ms
-  );
+  // timeout however late the first tools/list arrives. Upstreams whose tools
+  // are known from an earlier run are listed without waiting.
+  const discovery = pool.waitForDiscovery(config.upstream_connection.discovery_window_ms);
 
   // ── Session start, once the client has said who it is ─────────────────────
   // session.started waits for the MCP initialize handshake so it can record
@@ -216,7 +217,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   // ── tools/list ────────────────────────────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     await discovery;
-    const tools = pool.getTools().map((t) => t.definition);
+    const tools = pool.getListedTools().map((t) => t.definition);
     return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, ...tools] };
   });
 
@@ -270,10 +271,13 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       };
     }
 
-    // A call can arrive before any tools/list; give its upstream the same
-    // discovery window. Resolves immediately once the window has passed.
+    // The tool may be listed before its upstream has connected (from the
+    // tool cache, or a call made before any tools/list): wait for the
+    // upstream's connection attempt. connect_timeout_ms bounds each of its
+    // two steps (initialize, then tools/list); the cap here is a backstop.
     if (!pool.getServerName(prefixedName)) {
-      await discovery;
+      const { connect_timeout_ms } = config.upstream_connection;
+      await pool.waitForUpstream(prefixedName, 2 * connect_timeout_ms + 1000);
     }
 
     // A tool on an upstream that is down: say why instead of "tool not found".

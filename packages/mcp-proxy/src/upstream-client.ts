@@ -16,6 +16,8 @@
  *   4. Returning raw call results for the event-emitter layer to wrap
  *   5. Keeping each upstream's connection state, retrying failed upstreams
  *      with a doubling delay, and reporting changes to the connected set
+ *   6. Offering each upstream's last known tools (tool-cache.ts) while it is
+ *      not connected, so a slow start does not hide them from the agent
  *
  * Upstreams are independent: they connect in parallel, and one that is slow,
  * fails to start, or dies later never affects the others.
@@ -48,6 +50,7 @@ import {
   toolNamePrefix,
 } from "./config.js";
 import { prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
+import type { ToolListCache } from "./tool-cache.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -138,6 +141,11 @@ class UpstreamConnection {
     this.prefix = toolNamePrefix(server);
   }
 
+  /** The upstream's tools as it listed them, unprefixed. */
+  listedTools(): Tool[] {
+    return [...this.toolMap.values()];
+  }
+
   /**
    * Calls tools/list on the upstream, builds the local tool map, and returns
    * the prefixed tool entries ready for the proxy's unified index.
@@ -148,15 +156,7 @@ class UpstreamConnection {
 
     for (const tool of result.tools) {
       this.toolMap.set(tool.name, tool);
-      const definition = prefixToolDefinition(this.prefix, tool);
-      prefixed.push({
-        prefixedName: definition.name,
-        originalName: tool.name,
-        serverName: this.server.name,
-        // Return the definition with the agent-visible name so the inbound
-        // server can pass it through verbatim without re-deriving the prefix.
-        definition,
-      });
+      prefixed.push(toPrefixedTool(this.server, this.prefix, tool));
     }
 
     return prefixed;
@@ -191,6 +191,13 @@ class UpstreamConnection {
   }
 }
 
+function toPrefixedTool(server: UpstreamServer, prefix: string, tool: Tool): PrefixedTool {
+  // The definition carries the agent-visible name, so the inbound server can
+  // pass it through verbatim without re-deriving the prefix.
+  const definition = prefixToolDefinition(prefix, tool);
+  return { prefixedName: definition.name, originalName: tool.name, serverName: server.name, definition };
+}
+
 /** Mutable per-upstream bookkeeping behind UpstreamStatus. */
 interface UpstreamEntry {
   server: UpstreamServer;
@@ -198,6 +205,15 @@ interface UpstreamEntry {
   state: UpstreamState;
   connection: UpstreamConnection | undefined;
   tools: PrefixedTool[];
+  /** Tools from the last time this upstream listed them, offered while it is not connected. */
+  knownTools: PrefixedTool[];
+  /** knownTools as stored, to skip rewriting an unchanged list. */
+  knownToolsJson: string | null;
+  /** True when knownTools came from an earlier run (the tool cache). */
+  knownFromCache: boolean;
+  /** The first connection attempt, and the one in progress, if any. */
+  firstAttempt: Promise<void>;
+  currentAttempt: Promise<void> | null;
   lastError: string | null;
   lastAttemptAt: number | null;
   connectedAt: number | null;
@@ -230,7 +246,13 @@ interface UpstreamEntry {
  * that disconnects after connecting has its tools removed and is retried the
  * same way.
  */
+export interface UpstreamClientPoolOptions {
+  /** Where upstream tool lists are remembered between runs. None by default. */
+  toolCache?: ToolListCache;
+}
+
 export class UpstreamClientPool {
+  private readonly toolCache: ToolListCache | undefined;
   private readonly entries: UpstreamEntry[] = [];
   /** prefixedName -> connection that owns it */
   private toolIndex = new Map<string, UpstreamConnection>();
@@ -244,6 +266,10 @@ export class UpstreamClientPool {
   private readonly toolsChangedListeners = new Set<() => void>();
   private readonly exhaustedListeners = new Set<(status: UpstreamStatus) => void>();
 
+  constructor(options?: UpstreamClientPoolOptions) {
+    this.toolCache = options?.toolCache;
+  }
+
   /**
    * Starts connecting to every upstream in parallel and returns immediately.
    * Never throws for upstream failures: they are recorded per upstream.
@@ -255,12 +281,19 @@ export class UpstreamClientPool {
     this.started = true;
     this.settings = config.upstream_connection;
     for (const server of config.upstream_servers) {
+      const prefix = toolNamePrefix(server);
+      const cached = this.toolCache?.load(server) ?? [];
       this.entries.push({
         server,
-        prefix: toolNamePrefix(server),
+        prefix,
         state: "connecting",
         connection: undefined,
         tools: [],
+        knownTools: cached.map((tool) => toPrefixedTool(server, prefix, tool)),
+        knownToolsJson: cached.length > 0 ? JSON.stringify(cached) : null,
+        knownFromCache: cached.length > 0,
+        firstAttempt: Promise.resolve(),
+        currentAttempt: null,
         lastError: null,
         lastAttemptAt: null,
         connectedAt: null,
@@ -272,7 +305,8 @@ export class UpstreamClientPool {
         secrets: [],
       });
     }
-    this.initialAttempts = Promise.all(this.entries.map((e) => this.attempt(e))).then(
+    for (const entry of this.entries) entry.firstAttempt = this.attempt(entry);
+    this.initialAttempts = Promise.all(this.entries.map((e) => e.firstAttempt)).then(
       () => undefined
     );
   }
@@ -291,14 +325,28 @@ export class UpstreamClientPool {
    * timeoutMs, whichever comes first.
    */
   async waitForInitialAttempts(timeoutMs: number): Promise<void> {
-    let timer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, timeoutMs);
-    });
-    try {
-      await Promise.race([this.initialAttempts, timeout]);
-    } finally {
-      clearTimeout(timer);
+    await raceTimeout(this.initialAttempts, timeoutMs);
+  }
+
+  /**
+   * Like waitForInitialAttempts, but only for upstreams with no tools from an
+   * earlier run: those with a cached list can be offered without waiting.
+   */
+  async waitForDiscovery(timeoutMs: number): Promise<void> {
+    const pending = this.entries.filter((e) => !e.knownFromCache).map((e) => e.firstAttempt);
+    await raceTimeout(Promise.all(pending), timeoutMs);
+  }
+
+  /**
+   * If prefixedName belongs to an upstream that is connecting right now,
+   * waits for that attempt to finish, or timeoutMs, whichever comes first.
+   * Lets a call to a listed tool wait out its upstream's start.
+   */
+  async waitForUpstream(prefixedName: string, timeoutMs: number): Promise<void> {
+    const resolved = resolvePrefixedName(prefixedName, this.entries.map((e) => e.prefix));
+    const entry = resolved && this.entries.find((e) => e.prefix === resolved.prefix);
+    if (entry?.state === "connecting" && entry.currentAttempt) {
+      await raceTimeout(entry.currentAttempt, timeoutMs);
     }
   }
 
@@ -320,9 +368,29 @@ export class UpstreamClientPool {
     return () => this.exhaustedListeners.delete(listener);
   }
 
-  /** Returns the full prefixed tool list for tools/list responses. */
+  /** Returns the tools of the connected upstreams. */
   getTools(): PrefixedTool[] {
     return this.cachedTools;
+  }
+
+  /**
+   * Returns the tool list to offer the agent: every connected upstream's
+   * tools, plus the last known tools of each upstream that is not connected,
+   * in config order. A call to one of the latter waits for its upstream if
+   * it is connecting, or explains why it is unavailable.
+   */
+  getListedTools(): PrefixedTool[] {
+    const listed: PrefixedTool[] = [];
+    const names = new Set<string>();
+    for (const entry of this.entries) {
+      const tools = entry.connection ? entry.tools : entry.knownTools;
+      for (const tool of tools) {
+        if (names.has(tool.prefixedName)) continue;
+        names.add(tool.prefixedName);
+        listed.push(tool);
+      }
+    }
+    return listed;
   }
 
   /**
@@ -447,7 +515,15 @@ export class UpstreamClientPool {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private async attempt(entry: UpstreamEntry): Promise<void> {
+  private attempt(entry: UpstreamEntry): Promise<void> {
+    const attempt = this.runAttempt(entry).finally(() => {
+      if (entry.currentAttempt === attempt) entry.currentAttempt = null;
+    });
+    entry.currentAttempt = attempt;
+    return attempt;
+  }
+
+  private async runAttempt(entry: UpstreamEntry): Promise<void> {
     entry.state = "connecting";
     entry.lastAttemptAt = Date.now();
     entry.nextRetryAt = null;
@@ -471,6 +547,7 @@ export class UpstreamClientPool {
       }
       entry.connection = connection;
       entry.tools = tools;
+      this.rememberTools(entry, connection);
       entry.state = "connected";
       entry.connectedAt = Date.now();
       entry.failuresBeforeConnect = entry.failedAttempts;
@@ -490,6 +567,16 @@ export class UpstreamClientPool {
         this.recordFailure(entry, message);
       }
     }
+  }
+
+  /** Keeps the upstream's fresh tool list to offer if it goes away, and caches it. */
+  private rememberTools(entry: UpstreamEntry, connection: UpstreamConnection): void {
+    entry.knownTools = entry.tools;
+    const listed = connection.listedTools();
+    const json = JSON.stringify(listed);
+    if (json === entry.knownToolsJson) return;
+    entry.knownToolsJson = json;
+    this.toolCache?.save(entry.server, listed);
   }
 
   private createTransport(entry: UpstreamEntry): Transport {
@@ -628,6 +715,18 @@ export class UpstreamClientPool {
     this.toolIndex = index;
     this.cachedTools = tools;
     for (const listener of this.toolsChangedListeners) listener();
+  }
+}
+
+async function raceTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
