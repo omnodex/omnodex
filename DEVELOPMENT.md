@@ -66,6 +66,14 @@ OMNODEX_HOME=/tmp/omnodex-smoke node packages/cli/dist/index.js dashboard
 
 Open `http://localhost:7890` in a Windows browser; the page loads and lists the demo session. Press Ctrl+C; the command prints `shutting down...` and returns to the prompt, and `rm -rf /tmp/omnodex-smoke` then succeeds.
 
+## Releasing
+
+The CLI is published to npm as `omnodex` by the Release workflow (Actions > Release > Run workflow, on `main`). Choose `patch` for fixes or `minor` for features; versions stay on 0.x. The workflow runs the full CI matrix, builds the bundle, checks that npm would publish `publish-package.json` without rewriting it, publishes with provenance through npm trusted publishing, and tags the commit `vX.Y.Z`.
+
+The released version lives in the tag and on npm, not in a commit: `node scripts/release.mjs plan --bump patch` shows what the next release would be, taken as one bump past the higher of npm's latest and the newest `v*` tag. If nothing under `packages/` (or the root manifests) changed since the last tag, the workflow does not publish unless `force` is set.
+
+Source installs are always the latest code; the npm package can lag behind until the next release.
+
 ## Package map
 
 ``` folder tree

@@ -1,0 +1,97 @@
+# Release - publishes the omnodex CLI to npm.
+#
+# Run it from Actions > Release > Run workflow on main, choosing patch
+# (fixes) or minor (features). It runs the full CI matrix, builds the
+# bundle, stamps the next version, publishes with provenance, and tags the
+# commit vX.Y.Z. The version lives in the tag and on npm, not in a commit.
+# If nothing that ships has changed since the last tag it stops, unless
+# "force" is set. A weekly schedule can call the same job later.
+#
+# Publishing uses npm trusted publishing (OIDC), so no npm token is stored:
+# the package's settings on npmjs.com must trust this repository and
+# workflow file.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "patch for fixes, minor for features (versions stay 0.x)"
+        type: choice
+        options: [patch, minor]
+        default: patch
+      force:
+        description: "Publish even if nothing that ships changed since the last release"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # push the vX.Y.Z tag
+      id-token: write   # npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - run: npm ci
+
+      - name: Plan the release
+        id: plan
+        run: node scripts/release.mjs plan --bump "${{ inputs.bump }}"
+
+      - name: Nothing to release
+        if: steps.plan.outputs.changed != 'true' && !inputs.force
+        run: echo "Nothing that ships changed since ${{ steps.plan.outputs.last_tag }}; not publishing." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the package
+        if: steps.plan.outputs.changed == 'true' || inputs.force
+        run: |
+          npx tsc -b
+          node packages/cli/bundle.config.mjs --out release/package
+          node scripts/release.mjs stamp release/package "${{ steps.plan.outputs.version }}"
+
+      - name: Check npm would publish the manifest as written
+        if: steps.plan.outputs.changed == 'true' || inputs.force
+        working-directory: release/package
+        run: |
+          npm publish --dry-run --access public 2> dry-run.log || { cat dry-run.log; exit 1; }
+          if grep -Eq "auto-corrected|invalid and removed" dry-run.log; then
+            cat dry-run.log
+            echo "npm would rewrite package.json at publish; fix publish-package.json first." >&2
+            exit 1
+          fi
+          rm dry-run.log
+
+      - name: Publish to npm
+        if: steps.plan.outputs.changed == 'true' || inputs.force
+        working-directory: release/package
+        run: npm publish --provenance --access public
+
+      - name: Tag the release
+        if: steps.plan.outputs.changed == 'true' || inputs.force
+        run: |
+          git tag "${{ steps.plan.outputs.tag }}"
+          git push origin "${{ steps.plan.outputs.tag }}"
+          echo "Published omnodex@${{ steps.plan.outputs.version }} and tagged ${{ steps.plan.outputs.tag }}." >> "$GITHUB_STEP_SUMMARY"
