@@ -981,7 +981,7 @@ header {
       // An MCP client we have no platform for is named as it named itself.
       return s.mcp_client_name ? s.mcp_client_name + " via MCP Proxy" : "MCP Proxy";
     }
-    if (s.interceptor === "claude-code-hook" && s.platform === "cowork") return "Cowork (cloud)";
+    if (s.interceptor === "claude-code-hook" && s.platform === "cowork") return "Cowork Cloud";
     return platform || interceptorLabel(s.interceptor);
   }
 

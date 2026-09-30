@@ -50,8 +50,8 @@ export interface SessionRow {
   mcp_server_transports?: McpServerTransport[];
   /**
    * The MCP client a proxy session served, as the client named itself.
-   * Absent for hook sessions and older rows. Local only: not in the sync
-   * payload.
+   * Absent for hook sessions and older rows. In the sync payload, for the
+   * hosted dashboard's label fallback.
    */
   mcp_client_name?: string;
 }

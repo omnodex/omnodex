@@ -199,7 +199,7 @@ test("the page labels each session by its agent runtime", () => {
   const cases = [
     [{ interceptor: "claude-code-hook", platform: "claude-code" }, "Claude Code"],
     [{ interceptor: "claude-code-hook" }, "Claude Code"],
-    [{ interceptor: "claude-code-hook", platform: "cowork" }, "Cowork (cloud)"],
+    [{ interceptor: "claude-code-hook", platform: "cowork" }, "Cowork Cloud"],
     [{ interceptor: "cowork-desktop" }, "Cowork"],
     [{ interceptor: "codex-hook", platform: "codex" }, "Codex"],
     [{ interceptor: "codex-hook" }, "Codex"],
