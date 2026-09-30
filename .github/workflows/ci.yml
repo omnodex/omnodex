@@ -10,6 +10,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Called by the Release workflow, which publishes only if this passes.
+  workflow_call:
 
 jobs:
   build-and-test:
@@ -44,4 +46,4 @@ jobs:
         # bash on every OS, including the Windows runner (Git Bash).
         shell: bash
         run: |
-          node --test $(find packages/*/test -name '*.test.mjs' ! -name '*.integration.test.mjs')
+          node --test $(find packages/*/test scripts/test -name '*.test.mjs' ! -name '*.integration.test.mjs')

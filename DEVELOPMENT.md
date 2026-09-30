@@ -66,6 +66,16 @@ OMNODEX_HOME=/tmp/omnodex-smoke node packages/cli/dist/index.js dashboard
 
 Open `http://localhost:7890` in a Windows browser; the page loads and lists the demo session. Press Ctrl+C; the command prints `shutting down...` and returns to the prompt, and `rm -rf /tmp/omnodex-smoke` then succeeds.
 
+## Releasing
+
+The CLI is published to npm as `omnodex` by the Release workflow (Actions > Release > Run workflow, on `main`). Choose `patch` for fixes or `minor` for features; versions stay on 0.x. The workflow runs the full CI matrix, builds the bundle, checks that npm would publish `publish-package.json` without rewriting it, publishes with provenance through npm trusted publishing, tags the commit `vX.Y.Z`, and creates a GitHub release for the tag.
+
+Release notes are grouped by type from the commit subjects since the last tag that touch shipped code: Features (`feat`), Fixes (`fix`), Performance (`perf`) and Other changes (`refactor`, `revert`, and older subjects that predate the convention). `docs`, `test`, `build`, `ci` and `chore` are left out. Every PR is squash-merged with its title as the subject, so the PR title check (`scripts/check-pr-title.mjs`, rules in `scripts/conventional.mjs`) is what keeps the notes readable. `node scripts/release.mjs notes <last-tag>` previews them.
+
+The released version lives in the tag and on npm, not in a commit: `node scripts/release.mjs plan --bump patch` shows what the next release would be, taken as one bump past the higher of npm's latest and the newest `v*` tag. If nothing under `packages/` (or the root manifests) changed since the last tag, the workflow does not publish unless `force` is set.
+
+Source installs are always the latest code; the npm package can lag behind until the next release.
+
 ## Package map
 
 ``` folder tree
