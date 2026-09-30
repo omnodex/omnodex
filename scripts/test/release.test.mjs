@@ -24,9 +24,9 @@ test("checkTitle accepts a conventional title and flags the rest", () => {
   assert.deepEqual(checkTitle("fix(dashboard): keep the session list sorted"), []);
   assert.equal(checkTitle("Feature/local dash data").length, 1);
   assert.match(checkTitle("fix: close ENG-12 in the proxy").join(), /internal reference "ENG-12"/);
-  assert.match(checkTitle(`feat: ${"x".repeat(80)}`).join(), /characters/);
+  assert.match(checkTitle(`feat: ${"x".repeat(100)}`).join(), /characters/);
   // The squash-merge suffix does not count toward the length.
-  assert.deepEqual(checkTitle(`feat: ${"x".repeat(66)} (#123)`), []);
+  assert.deepEqual(checkTitle(`feat: ${"x".repeat(94)} (#123)`), []);
 });
 
 test("releaseNotes groups by type and leaves out maintenance", () => {
