@@ -12,7 +12,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { evaluatePathMatch, isOutboundCall } from "../dist/conditions/index.js";
+import { evaluatePathMatch, isOutboundCall, stripFileHeredocs } from "../dist/conditions/index.js";
 
 let seq = 0;
 function event(tool_name, parameters) {
@@ -85,5 +85,35 @@ describe("outbound_call and write tools", () => {
 
   it("keeps treating a localhost fetch as not outbound", () => {
     assert.ok(!isOutboundCall(event("WebFetch", { url: "http://localhost:7890/api" })));
+  });
+
+  it("does not call a shell command outbound for a file it saves through a heredoc", () => {
+    const saved = [
+      "mkdir -p docs && cat > docs/api.md <<'EOF'",
+      "Call it with: curl https://api.example.com/v1 -H 'Authorization: Bearer <token>'",
+      "EOF",
+      "ls docs",
+    ].join("\n");
+    assert.ok(!isOutboundCall(event("Bash", { command: saved })));
+    const teed = "tee notes.txt <<EOF\nwget https://example.org/file\nEOF";
+    assert.ok(!isOutboundCall(event("Bash", { command: teed })));
+  });
+
+  it("still calls a heredoc that runs outbound, and a request after a saved heredoc", () => {
+    const script = "python3 - <<'EOF'\nimport urllib.request\nurllib.request.urlopen('https://api.example.com')\nEOF";
+    assert.ok(isOutboundCall(event("Bash", { command: script })));
+    const piped = "cat <<EOF | bash\ncurl https://api.example.com\nEOF";
+    assert.ok(isOutboundCall(event("Bash", { command: piped })));
+    const after = "cat > payload.json <<'EOF'\n{}\nEOF\ncurl -d @payload.json https://api.example.com";
+    assert.ok(isOutboundCall(event("Bash", { command: after })));
+  });
+});
+
+describe("stripFileHeredocs", () => {
+  it("drops only bodies that cat or tee save to a file", () => {
+    assert.equal(stripFileHeredocs("cat > a.md <<'EOF'\nbody\nEOF\necho done"), "cat > a.md <<'EOF'\necho done");
+    assert.equal(stripFileHeredocs("cat <<EOF > a.md\nbody\nEOF"), "cat <<EOF > a.md");
+    assert.equal(stripFileHeredocs("cat <<EOF | sh\nbody\nEOF"), "cat <<EOF | sh\nbody\nEOF");
+    assert.equal(stripFileHeredocs("python3 - <<'EOF'\nbody\nEOF"), "python3 - <<'EOF'\nbody\nEOF");
   });
 });

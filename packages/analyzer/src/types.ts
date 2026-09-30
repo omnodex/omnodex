@@ -178,6 +178,15 @@ export interface CredentialPattern {
    * only the type label is recorded in risk findings.
    */
   group?: number;
+  /**
+   * Check that the matched value is a secret, not text about one. "secret"
+   * skips placeholders and variable references ("${TOKEN}", "<your key>",
+   * "notarealtoken"), vendor documentation example keys, and values without
+   * both letters and digits (prose such as "Bearer tokens"). "placeholder"
+   * skips only placeholders and variable references, for secrets such as
+   * passwords that can be letters alone. Omitted: every match counts.
+   */
+  check?: "secret" | "placeholder";
 }
 
 /**
