@@ -129,6 +129,27 @@ export function extractExecText(event: ToolInvokedEvent): string | null {
   return parts.length > 0 ? parts.join("\n") : null;
 }
 
+/**
+ * A shell command without the heredoc bodies that `cat` or `tee` save to a
+ * file (`cat > notes.md <<'EOF' ... EOF`): that text is stored, not run.
+ * Heredocs fed to an interpreter (`python3 - <<EOF`, `bash <<EOF`) run, so
+ * they are kept.
+ */
+export function stripFileHeredocs(command: string): string {
+  const out: string[] = [];
+  let end: string | null = null;
+  for (const line of command.split("\n")) {
+    if (end !== null) {
+      if (line.trim() === end) end = null;
+      continue;
+    }
+    out.push(line);
+    const m = /\b(?:cat|tee)\b[^\n]*<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/.exec(line);
+    if (m && /\btee\b|>/.test(line.replace(/<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?/, ""))) end = m[1]!;
+  }
+  return out.join("\n");
+}
+
 export interface StagedContent {
   path: string;
   text: string;

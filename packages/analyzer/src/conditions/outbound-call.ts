@@ -26,7 +26,7 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext } from "../types.js";
-import { isWriteTool } from "./scope.js";
+import { extractExecText, isWriteTool, stripFileHeredocs } from "./scope.js";
 
 const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
@@ -55,7 +55,11 @@ export function isOutboundCall(event: ToolInvokedEvent): boolean {
   // which put credential-exfiltration findings on ordinary edits.
   if (isWriteTool(event) && !fetchLike) return false;
 
-  const paramStr = JSON.stringify(event.parameters);
+  // For a shell command, only what runs: a file saved through a heredoc may
+  // mention URLs and curl without calling anything.
+  const exec = extractExecText(event);
+  const command = exec === null ? null : stripFileHeredocs(exec);
+  const paramStr = command ?? JSON.stringify(event.parameters);
   const urlHosts = extractUrls(paramStr);
 
   // If URL parameters are present, let the URL decide.
@@ -67,11 +71,7 @@ export function isOutboundCall(event: ToolInvokedEvent): boolean {
   // No URL parameters — fall back to tool name and bash command heuristics.
   if (fetchLike) return true;
 
-  if (name === "bash" && typeof event.parameters["command"] === "string") {
-    if (/\b(curl|wget|httpie?)\b/.test(event.parameters["command"] as string)) {
-      return true;
-    }
-  }
+  if (command !== null && /\b(curl|wget|httpie?)\b/.test(command)) return true;
 
   return false;
 }

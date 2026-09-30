@@ -16,6 +16,7 @@ import { RuleEngine } from "../../dist/engine.js";
 import { COMMUNITY_RULES } from "../../dist/rules/index.js";
 import { RULE_THREAT_DESTRUCTIVE_COMMAND } from "../../dist/rules/index.js";
 import { extractExecText, extractStagedContent, isStagedTarget } from "../../dist/conditions/index.js";
+import { FAKE } from "../fixtures/credentials.mjs";
 
 let seq = 0;
 function event(tool_name, parameters, mcp_server = "builtin") {
@@ -102,7 +103,7 @@ test("every community credential_match condition has an explicit scope", () => {
 });
 
 test("payload rules still fire on a secret in any field", () => {
-  const token = "ghp_" + "a".repeat(36);
+  const token = FAKE.github;
   const findings = run("RULE_CREDENTIAL_IN_PARAMS", planeCard(`token is ${token}`));
   assert.equal(findings.length, 1);
 });

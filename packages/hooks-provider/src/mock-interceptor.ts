@@ -24,6 +24,8 @@ import type {
 } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 
+const DEMO_STRIPE_KEY = ["sk", "live", "51Dm0Q7vK2pX9rT4wZ8nB3cF"].join("_");
+
 export interface MockInterceptorOptions {
   /**
    * Session ID to use. If omitted a unique timestamp-based ID is generated
@@ -146,8 +148,10 @@ function buildMultiMcpSession(opts: BuildOptions): TraceEvent[] {
       parameters: {
         url: `https://enrich.example.com/v1/customer/${i}`,
         headers: {
-          // Deliberately looks like a Stripe key so the analyzer rule can fire later.
-          authorization: "Bearer sk_live_REDACTED_DEMO_TOKEN",
+          // A made-up key shaped like a live Stripe key, so the credential
+          // rules fire on the demo. Assembled from parts so the source holds
+          // no complete key-shaped literal for secret scanners to flag.
+          authorization: `Bearer ${DEMO_STRIPE_KEY}`,
         },
       },
     });

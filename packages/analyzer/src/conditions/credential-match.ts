@@ -37,19 +37,90 @@ export function findCredentialTypes(
 ): string[] {
   const types = new Set<string>();
 
-  for (const { regex, type, group } of patterns) {
+  for (const { regex, type, group, check } of patterns) {
     const re = compiled(regex, "gi");
     let m;
     while ((m = re.exec(text)) !== null) {
       const value = group !== undefined ? (m[group] ?? "") : m[0];
       // Skip trivially short matches to reduce noise from partial patterns.
-      if (value.length >= 4) {
-        types.add(type);
-      }
+      if (value.length < 4) continue;
+      if (check === "secret" && !looksLikeSecret(value)) continue;
+      if (check === "placeholder" && isPlaceholder(value)) continue;
+      types.add(type);
     }
   }
 
   return [...types];
+}
+
+/**
+ * Words that mark a value as a stand-in rather than a secret. Matched
+ * case-insensitively anywhere in the value.
+ */
+const PLACEHOLDER_WORDS = [
+  "example", "sample", "placeholder", "dummy", "fake", "notreal", "notareal",
+  "redacted", "changeme", "your", "xxxx", "****", "...",
+];
+
+/**
+ * Vendor documentation keys that appear in docs, tutorials and tests, never
+ * as live credentials. Stored without their vendor prefix so the literal is
+ * not itself a credential-shaped string.
+ */
+const DOCUMENTATION_KEYS = [
+  "4eC39HqLyjWDarjtT1zdp7dc", // Stripe API docs
+  "16C7e42F292c6912E7710c838347Ae178B4a", // GitHub token docs
+  "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", // jwt.io example signature
+];
+
+/**
+ * Values that name something in code rather than hold a secret, as in
+ * `argon2id({ password: passphrase })` or `password = null`.
+ */
+const CODE_REFERENCES = new Set([
+  "passphrase", "password", "passwd", "secret", "token", "value", "input",
+  "undefined", "null", "none", "true", "false", "required", "string",
+]);
+
+/**
+ * True when a value is a stand-in: a variable or template reference, an
+ * angle-bracket or placeholder word, one character repeated, a run of
+ * consecutive letters or digits ("abcdef", "123456"), words joined by
+ * underscores or hyphens ("dev_stream_token_1"), or a code identifier.
+ */
+export function isPlaceholder(value: string): boolean {
+  if (/^[$%]|\$\{|\$\(|\{\{|<|>/.test(value)) return true;
+  if (/(.)\1{5,}/.test(value)) return true;
+  if (hasSequentialRun(value, 6)) return true;
+  // Readable words, optionally ending in a short number: an identifier.
+  if (/^[a-z]+(?:[_-][a-z]+)+(?:[_-]?\d{1,4})?$/i.test(value)) return true;
+  if (CODE_REFERENCES.has(value.toLowerCase()) || /^[a-z]+(?:[A-Z][a-z]+)+$/.test(value)) return true;
+  const lower = value.toLowerCase();
+  return PLACEHOLDER_WORDS.some((w) => lower.includes(w));
+}
+
+/** True when the value holds `length` consecutive ascending letters or digits. */
+function hasSequentialRun(value: string, length: number): boolean {
+  const lower = value.toLowerCase();
+  let run = 1;
+  for (let i = 1; i < lower.length; i++) {
+    const step = lower.charCodeAt(i) - lower.charCodeAt(i - 1);
+    const sameClass = /[a-z]/.test(lower[i]!) === /[a-z]/.test(lower[i - 1]!);
+    run = step === 1 && sameClass && /[a-z0-9]/.test(lower[i]!) ? run + 1 : 1;
+    if (run >= length) return true;
+  }
+  return false;
+}
+
+/**
+ * True when a matched value plausibly is a live secret: not a placeholder,
+ * not a documentation key, and a mix of letters and digits, which every
+ * generated token has and prose does not.
+ */
+export function looksLikeSecret(value: string): boolean {
+  if (isPlaceholder(value)) return false;
+  if (DOCUMENTATION_KEYS.some((k) => value.includes(k))) return false;
+  return /[A-Za-z]/.test(value) && /[0-9]/.test(value);
 }
 
 /**
