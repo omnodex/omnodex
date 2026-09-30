@@ -42,6 +42,9 @@ jobs:
       - name: Build (tsc)
         run: npx tsc -b
 
+      - name: Typecheck the dashboard page
+        run: npm run typecheck:dashboard -w @omnodex/cli
+
       - name: Unit tests
         # bash on every OS, including the Windows runner (Git Bash).
         shell: bash

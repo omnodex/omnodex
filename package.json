@@ -20,7 +20,8 @@
     "clean": "node scripts/rm.mjs \"packages/*/dist\" \"packages/*/tsconfig.tsbuildinfo\" \"packages/*/node_modules\" node_modules",
     "spike": "npm run build --workspaces --if-present && node --test packages/*/test/**/*.test.mjs",
     "check:refs": "node scripts/check-project-references.mjs",
-    "check:internal-refs": "node scripts/check-internal-refs.mjs"
+    "check:internal-refs": "node scripts/check-internal-refs.mjs",
+    "prepare": "node packages/cli/build-dashboard.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

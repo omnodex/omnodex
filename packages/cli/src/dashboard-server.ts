@@ -81,10 +81,11 @@ export function isLoopbackOrigin(origin: string | undefined, port: number): bool
  * The directory to serve dashboard.html from, given the running module's
  * URL (`import.meta.url`, or its CommonJS equivalent in the npm bundle).
  *
- * In a source checkout (the module sits in the CLI package's dist/) this is
- * src/, so the page is always the current one whichever build command ran:
- * `tsc -b` compiles the TypeScript but copies no assets. Anywhere else, such
- * as the npm bundle, the page ships next to the module.
+ * In a source checkout (the module sits in the CLI package's dist/ or
+ * bundle/) this is dist/, where build-dashboard.mjs writes the page on
+ * `npm install` and `npm run build`, so a source run always serves the page
+ * built from the current sources. Anywhere else, such as the npm bundle, the
+ * page ships next to the module.
  *
  * fileURLToPath, not URL.pathname: pathname keeps a leading "/" before a
  * Windows drive letter and leaves spaces percent-encoded on every platform.
@@ -92,12 +93,26 @@ export function isLoopbackOrigin(origin: string | undefined, port: number): bool
 export function resolveDashboardAssetsDir(moduleUrl: string): string {
   const moduleDir = path.dirname(fileURLToPath(moduleUrl));
   const pkgDir = path.dirname(moduleDir);
-  const srcDir = path.join(pkgDir, "src");
-  if (isCliPackage(pkgDir) && fs.existsSync(path.join(srcDir, "dashboard.html"))) {
-    return srcDir;
+  const distDir = path.join(pkgDir, "dist");
+  if (isCliPackage(pkgDir) && fs.existsSync(path.join(distDir, "dashboard.html"))) {
+    return distDir;
   }
   return moduleDir;
 }
+
+/**
+ * Served when the page has not been built, instead of an error: a source
+ * checkout that ran `tsc -b` without `npm install` or `npm run build`.
+ */
+const NOT_BUILT_PAGE = `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><title>Omnodex Dashboard</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:640px;margin:60px auto;padding:0 20px;line-height:1.5">
+<h1 style="font-size:20px">The dashboard page has not been built</h1>
+<p>The API is running, but this install has no built page. In your Omnodex checkout, run:</p>
+<pre style="background:#f3f4f6;padding:12px">npm run build</pre>
+<p>Then reload this page.</p>
+</body></html>
+`;
 
 function isCliPackage(dir: string): boolean {
   try {
@@ -363,7 +378,12 @@ export class DashboardServer {
     // --- Static: serve dashboard.html at root ---
     if (pathname === "/" || pathname === "/index.html") {
       const htmlPath = path.join(this.assetsDir, "dashboard.html");
-      const html = fs.readFileSync(htmlPath, "utf-8");
+      let html: string;
+      try {
+        html = fs.readFileSync(htmlPath, "utf-8");
+      } catch {
+        html = NOT_BUILT_PAGE;
+      }
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
       return;

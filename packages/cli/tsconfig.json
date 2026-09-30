@@ -8,6 +8,9 @@
   "include": [
     "src/**/*"
   ],
+  "exclude": [
+    "src/dashboard"
+  ],
   "references": [
     {
       "path": "../shared"
