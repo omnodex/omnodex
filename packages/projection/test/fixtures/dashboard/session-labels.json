@@ -1,0 +1,183 @@
+{
+  "description": "How each dashboard names a session's source: platform first, then interceptor; proxy sessions read \"<Platform> via MCP Proxy\", then \"<client> via MCP Proxy\", then \"MCP Proxy\". A Claude Code hook session on platform cowork is a Cowork cloud task.",
+  "snapshot": {
+    "sessions": [
+      {
+        "session_id": "l1",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "claude-code-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "claude-code"
+      },
+      {
+        "session_id": "l2",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "claude-code-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "cowork"
+      },
+      {
+        "session_id": "l3",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "codex-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null
+      },
+      {
+        "session_id": "l4",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "antigravity-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "antigravity"
+      },
+      {
+        "session_id": "l5",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "mcp-proxy",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "cowork",
+        "mcp_client_name": "claude-ai"
+      },
+      {
+        "session_id": "l6",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "mcp-proxy",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "mcp_client_name": "Some Client"
+      },
+      {
+        "session_id": "l7",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "mcp-proxy",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 0,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null
+      }
+    ],
+    "tool_calls": {},
+    "file_events": {},
+    "risk_events": {}
+  },
+  "expected": {
+    "calls": 0,
+    "findings": 0,
+    "sessions": {
+      "l1": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Claude Code"
+      },
+      "l2": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Cowork Cloud"
+      },
+      "l3": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Codex"
+      },
+      "l4": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Antigravity"
+      },
+      "l5": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Cowork via MCP Proxy"
+      },
+      "l6": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Some Client via MCP Proxy"
+      },
+      "l7": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "MCP Proxy"
+      }
+    }
+  }
+}

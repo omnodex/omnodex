@@ -13,6 +13,7 @@
 
 import type { FileEventRow, ReadModelSnapshot, RiskEventRow, SessionRow } from "@omnodex/projection";
 import type { CollapsedToolCallRow } from "@omnodex/projection";
+import { riskScoreFor } from "@omnodex/shared";
 import { totalEvents } from "./labels.js";
 
 /** The selection value for every session with activity. */
@@ -80,6 +81,24 @@ export function viewTotals(sessions: readonly SessionRow[]): ViewTotals {
     for (const srv of s.mcp_servers ?? []) servers.add(srv);
   }
   return { toolCalls, fileReads, fileWrites, risk, mcpServers: servers.size, sessions: sessions.length };
+}
+
+/**
+ * The stats row from the rows shown, for when a time range or a graph
+ * selection covers only part of each session, so session totals would
+ * overstate it.
+ */
+export function rowTotals(view: SessionView): ViewTotals {
+  const servers = new Set(view.toolCalls.map((tc) => tc.mcp_server).filter((s) => s && s !== "builtin"));
+  const sessions = new Set([...view.toolCalls, ...view.fileEvents, ...view.riskEvents].map((r) => r.session_id));
+  return {
+    toolCalls: view.toolCalls.length,
+    fileReads: view.fileEvents.filter((e) => e.direction === "read").length,
+    fileWrites: view.fileEvents.filter((e) => e.direction === "write").length,
+    risk: view.riskEvents.reduce((n, r) => n + riskScoreFor(r.severity), 0),
+    mcpServers: servers.size,
+    sessions: sessions.size,
+  };
 }
 
 export type { CollapsedToolCallRow, FileEventRow, ReadModelSnapshot, RiskEventRow, SessionRow };
