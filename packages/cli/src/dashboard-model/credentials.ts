@@ -44,3 +44,59 @@ export function credentialLedger(toolCalls: readonly CollapsedToolCallRow[]): Le
   }
   return entries;
 }
+
+/** One place a credential was used. */
+export interface CredentialUse {
+  toolCallId: string;
+  sessionId: string;
+  tool: string;
+  server: string;
+  at: string;
+}
+
+/** One credential, with every call it appeared in, newest first. */
+export interface CredentialGroup {
+  /** Stable key for the credential within this page; never the raw value. */
+  key: string;
+  type: string;
+  masked: string;
+  uses: CredentialUse[];
+  firstSeen: string;
+  lastSeen: string;
+}
+
+/**
+ * The ledger grouped by credential rather than by sighting: how many calls
+ * carried each one, where, and when it was first and last seen. Groups are
+ * ordered by most recent use.
+ */
+export function groupedLedger(toolCalls: readonly CollapsedToolCallRow[]): CredentialGroup[] {
+  const groups = new Map<string, CredentialGroup>();
+  let n = 0;
+  const ids = new Map<string, string>();
+  for (const tc of toolCalls) {
+    const seenInCall = new Set<string>();
+    for (const { type, value } of findCredentials(tc.parameters_json || "{}", CREDENTIAL_PATTERNS)) {
+      const identity = `${type}\u0000${value}`;
+      if (seenInCall.has(identity)) continue;
+      seenInCall.add(identity);
+      let key = ids.get(identity);
+      if (!key) {
+        key = `cred-${++n}`;
+        ids.set(identity, key);
+      }
+      const use: CredentialUse = { toolCallId: tc.tool_call_id, sessionId: tc.session_id, tool: tc.tool_name, server: tc.mcp_server, at: tc.started_at };
+      const g = groups.get(key);
+      if (g) {
+        g.uses.push(use);
+        if (use.at < g.firstSeen) g.firstSeen = use.at;
+        if (use.at > g.lastSeen) g.lastSeen = use.at;
+      } else {
+        groups.set(key, { key, type, masked: maskCredential(value), uses: [use], firstSeen: use.at, lastSeen: use.at });
+      }
+    }
+  }
+  const list = [...groups.values()];
+  for (const g of list) g.uses.sort((a, b) => b.at.localeCompare(a.at));
+  return list.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+}

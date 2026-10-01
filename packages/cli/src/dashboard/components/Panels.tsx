@@ -5,9 +5,8 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import {
-  credentialLedger,
   displayStatus,
   formatRisk,
   formatTime,
@@ -19,9 +18,11 @@ import {
   shortSessionId,
   sourcesLabel,
   timeAgo,
-  viewTotals,
+  parseParameters,
   type SourceTone,
+  type ViewTotals,
 } from "../../dashboard-model/index.js";
+import { ParamView } from "./Views.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
 
 /** What the detail panel shows: a tool call, or a finding. */
@@ -53,7 +54,9 @@ const STATUS_COLOR: Record<string, string> = {
   in_progress: "var(--mint)", errored: "var(--red)", interrupted: "var(--yellow)",
 };
 
-export function SessionDetails({ view, utc }: { view: SessionView; utc: boolean }): React.JSX.Element {
+export function SessionDetails({ view, utc, hidden, onToggleHidden }: {
+  view: SessionView; utc: boolean; hidden?: boolean; onToggleHidden?: (sessionId: string) => void;
+}): React.JSX.Element {
   const s = view.session;
   if (!s) {
     const counts = new Map<string, { n: number; session: SessionRow }>();
@@ -99,7 +102,14 @@ export function SessionDetails({ view, utc }: { view: SessionView; utc: boolean 
       <div className="sd-col">
         <Row label="Session ID" mono>{s.session_id}</Row>
         <Row label="Type"><SourceBadge session={s} /></Row>
-        <Row label="Status"><span style={{ color: STATUS_COLOR[s.status] ?? "var(--slate)" }}>{displayStatus(s.status)}</span></Row>
+        <Row label="Status">
+          <span style={{ color: STATUS_COLOR[s.status] ?? "var(--slate)" }}>{displayStatus(s.status)}</span>
+          {onToggleHidden && (
+            <button className="filter-link hide-btn" onClick={() => onToggleHidden(s.session_id)} title="Hidden sessions stay in your data; this browser just leaves them out">
+              {hidden ? "Unhide session" : "Hide session"}
+            </button>
+          )}
+        </Row>
         <Row label="User">{s.user}</Row>
         {s.project_path && <Row label="Project" mono>{s.project_path}</Row>}
       </div>
@@ -122,8 +132,8 @@ function StatCard({ label, value, tone, sub }: { label: string; value: React.Rea
   );
 }
 
-export function StatsRow({ view }: { view: SessionView }): React.JSX.Element {
-  const t = viewTotals(view.sessions);
+export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTotals }): React.JSX.Element {
+  const t = totals;
   const band = riskBandLabel(t.risk);
   const s = view.session;
   return (
@@ -134,7 +144,7 @@ export function StatsRow({ view }: { view: SessionView }): React.JSX.Element {
       {s ? (
         <StatCard label="Duration" value={s.duration_ms != null ? `${(s.duration_ms / 1000).toFixed(1)}s` : "active"} tone="cyan" sub={displayStatus(s.status)} />
       ) : (
-        <StatCard label="Sessions" value={t.sessions} tone="cyan" sub="active" />
+        <StatCard label="Sessions" value={t.sessions} tone="cyan" sub="in view" />
       )}
     </div>
   );
@@ -158,108 +168,6 @@ function Panel({ title, badge, badgeTone, full, scroll, children }: {
 
 function Empty({ icon, children }: { icon: string; children: React.ReactNode }): React.JSX.Element {
   return <div className="empty-state"><div className="icon">{icon}</div>{children}</div>;
-}
-
-export function ConnectionGraph({ view, sessions }: { view: SessionView; sessions: readonly SessionRow[] }): React.JSX.Element {
-  const box = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(600);
-  useEffect(() => {
-    const measure = () => setWidth(box.current?.clientWidth || 600);
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
-
-  const byServer = new Map<string, { tools: Set<string>; calls: number }>();
-  for (const tc of view.toolCalls) {
-    const entry = byServer.get(tc.mcp_server) ?? { tools: new Set<string>(), calls: 0 };
-    entry.tools.add(tc.tool_name);
-    entry.calls += 1;
-    byServer.set(tc.mcp_server, entry);
-  }
-  const servers = [...byServer];
-  const height = 280;
-
-  let content: React.ReactNode;
-  if (servers.length === 0) {
-    content = (
-      <text x={width / 2} y={140} textAnchor="middle" fill="#8b9ec2" fontFamily="var(--mono)" fontSize={13}>No tool calls in this session</text>
-    );
-  } else {
-    const bySession = new Map(sessions.map((s) => [s.session_id, s]));
-    const runtimes = [...new Set(view.toolCalls.map((tc) => runtimeLabel(bySession.get(tc.session_id))))];
-    const agentLabel = runtimes.length === 1 ? runtimes[0]! : `${runtimes.length} runtimes`;
-    const agentW = Math.max(100, agentLabel.length * 9 + 30);
-    const cx = width / 2;
-    const cy = 60;
-    const spread = Math.min(width - 200, servers.length * 200);
-    content = (
-      <>
-        <g className="graph-node">
-          <title>{runtimes.join(", ")}</title>
-          <rect x={cx - agentW / 2} y={cy - 20} width={agentW} height={40} fill="var(--navy-light)" stroke="var(--cyan)" />
-          <text x={cx} y={cy + 5} fill="var(--cyan)" fontWeight={600}>{agentLabel}</text>
-        </g>
-        {servers.map(([name, { tools, calls }], i) => {
-          const sx = (width - spread) / 2 + (servers.length === 1 ? spread / 2 : (i / (servers.length - 1)) * spread);
-          const sy = height - 70;
-          const nodeW = Math.max(100, name.length * 10 + 40);
-          const midY = (cy + 20 + sy - 20) / 2;
-          return (
-            <g key={name}>
-              <path className="graph-edge" d={`M ${cx} ${cy + 20} C ${cx} ${midY} ${sx} ${midY} ${sx} ${sy - 20}`} stroke="var(--cyan)" opacity={0.3} />
-              <text className="graph-edge-label" x={(cx + sx) / 2} y={midY - 4} textAnchor="middle">{calls} calls</text>
-              <g className="graph-node">
-                <rect x={sx - nodeW / 2} y={sy - 20} width={nodeW} height={44} fill="var(--navy-light)" stroke="var(--navy-border)" />
-                <text x={sx} y={sy} fontWeight={500}>{name}</text>
-                <text x={sx} y={sy + 14} className="node-count">{tools.size} tools</text>
-              </g>
-            </g>
-          );
-        })}
-      </>
-    );
-  }
-
-  return (
-    <Panel title="Connection Graph" badge={`${servers.length} servers`} badgeTone="cyan">
-      <div className="graph-container" ref={box}>
-        <svg className="graph-svg" viewBox={`0 0 ${width} ${height}`}>{content}</svg>
-      </div>
-    </Panel>
-  );
-}
-
-/** Ledger type labels map onto the four badge styles. */
-function credentialClass(type: string): string {
-  if (type === "bearer" || type === "password") return type;
-  if (type === "token" || type === "github-pat" || type === "slack-bot") return "token";
-  return "api-key";
-}
-
-export function CredentialLedger({ view, onSelect }: { view: SessionView; onSelect: (d: Detail) => void }): React.JSX.Element {
-  const entries = credentialLedger(view.toolCalls);
-  return (
-    <Panel title="Credential Ledger" badge={`${entries.length} found`} badgeTone="orange" scroll>
-      {entries.length === 0 ? (
-        <Empty icon="🔒">No credentials detected in tool parameters.</Empty>
-      ) : (
-        <table className="cred-table">
-          <thead><tr><th>Type</th><th>Value</th><th>Tool</th><th>Server</th></tr></thead>
-          <tbody>
-            {entries.map((c) => (
-              <tr key={`${c.toolCallId}:${c.type}:${c.masked}`} style={{ cursor: "pointer" }} onClick={() => onSelect({ kind: "call", id: c.toolCallId })}>
-                <td><span className={`cred-type ${credentialClass(c.type)}`}>{c.type}</span></td>
-                <td className="cred-value">{c.masked}</td>
-                <td className="cred-tool">{c.tool}</td>
-                <td className="cred-server">{c.server}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Panel>
-  );
 }
 
 function riskKey(r: RiskEventRow): string {
@@ -343,14 +251,6 @@ export function Timeline({ view, sessions, utc, detail, newCallIds, onSelect }: 
   );
 }
 
-function parseParams(json: string): unknown {
-  try {
-    return JSON.parse(json);
-  } catch {
-    return json;
-  }
-}
-
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return <div className="detail-row"><div className="detail-key">{label}</div><div className="detail-val">{children}</div></div>;
 }
@@ -373,7 +273,7 @@ function CallDetail({ tc, utc }: { tc: CollapsedToolCallRow; utc: boolean }): Re
       <DetailRow label="Duration">{tc.duration_ms != null ? `${tc.duration_ms} ms` : "n/a"}</DetailRow>
       <DetailRow label="Response">{tc.response_bytes != null ? `${tc.response_bytes} bytes` : "n/a"}</DetailRow>
       {tc.error_message && <DetailRow label="Error"><span style={{ color: "var(--red)" }}>{tc.error_message}</span></DetailRow>}
-      <DetailRow label="Parameters"><pre>{JSON.stringify(parseParams(tc.parameters_json), null, 2)}</pre></DetailRow>
+      <DetailRow label="Parameters"><ParamView node={parseParameters(tc.parameters_json)} raw={tc.parameters_json} /></DetailRow>
     </>
   );
 }
@@ -415,7 +315,7 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
             <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>Related Tool Call</h4>
             <DetailRow label="Tool">{related.tool_name}</DetailRow>
             <DetailRow label="Server">{related.mcp_server}</DetailRow>
-            <DetailRow label="Parameters"><pre>{JSON.stringify(parseParams(related.parameters_json), null, 2)}</pre></DetailRow>
+            <DetailRow label="Parameters"><ParamView node={parseParameters(related.parameters_json)} raw={related.parameters_json} /></DetailRow>
           </div>
         )}
       </>
