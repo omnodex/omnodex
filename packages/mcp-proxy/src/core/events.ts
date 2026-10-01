@@ -34,12 +34,14 @@ export function asPlatform(value: string | undefined): PlatformKind | undefined 
 /**
  * The runtime an MCP client's initialize name identifies, when it is one we
  * have captured. Anything else maps to nothing and is recorded by name only.
- * A launcher that knows its platform (OMNODEX_PLATFORM) takes precedence:
- * the Claude desktop app, for one, names itself the same for chat and Cowork.
+ * A name listed here wins over a launcher's OMNODEX_PLATFORM, which applies
+ * only to names that do not settle it: the Claude desktop app, for one,
+ * names itself "claude-ai" for both chat and Cowork.
  */
 const CLIENT_PLATFORMS: Readonly<Record<string, PlatformKind>> = {
   "claude-code": "claude-code",
   "codex-mcp-client": "codex",
+  "antigravity-client": "antigravity",
 };
 
 export function platformForClient(name: string | undefined): PlatformKind | undefined {
