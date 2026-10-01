@@ -21,6 +21,7 @@
     "spike": "npm run build --workspaces --if-present && node --test packages/*/test/**/*.test.mjs",
     "check:refs": "node scripts/check-project-references.mjs",
     "check:internal-refs": "node scripts/check-internal-refs.mjs",
+    "check:licence": "node scripts/check-licence.mjs",
     "prepare": "node packages/cli/build-dashboard.mjs"
   },
   "devDependencies": {

@@ -1,8 +1,9 @@
-// SPDX-FileCopyrightText: 2026 Omnodex
-// SPDX-License-Identifier: AGPL-3.0-or-later
-// Licensed under the GNU Affero General Public License v3.0
-// See https://omnodex.com/licensing for commercial license options
-// Commercial licensing available for organizations that cannot use AGPL
+// Copyright (c) 2026 Omnodex, LLC. All rights reserved.
+// SPDX-License-Identifier: AGPL-3.0-only
+//
+// This file is part of Omnodex, licensed under the GNU Affero General
+// Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
+// A commercial license is available for use without copyleft obligations.
 
 // Builds the local dashboard page (src/dashboard, React) into one
 // self-contained file, dist/dashboard.html, with its script, styles and

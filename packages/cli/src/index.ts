@@ -22,6 +22,7 @@
  * All data is written under $OMNODEX_HOME, defaulting to ~/.omnodex.
  */
 
+import { skipConnectReason } from "./connect-prompt.js";
 import * as os from "node:os";
 import * as readline from "node:readline/promises";
 import * as path from "node:path";
@@ -686,9 +687,17 @@ async function finishCloudConnection(
  */
 async function connectAfterInstall(
   omnodexHome: string,
-  opts: { platform?: string; projectLabel?: string },
+  opts: { platform?: string; projectLabel?: string; args: readonly string[] },
 ): Promise<void> {
+  const skip = skipConnectReason(opts.args, process.stdin.isTTY);
+  if (skip === "--no-connect") return;
   let creds = await resolveCredentials(omnodexHome);
+
+  if (!creds?.apiToken && skip) {
+    console.log("");
+    console.log(`[connect] skipped the dashboard sign-in (${skip}). To connect this host later, run: omnodex connect`);
+    return;
+  }
 
   if (!creds?.apiToken) {
     // No token: run device code flow
@@ -1028,6 +1037,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
+    args,
     platform: platformFromTarget("claude-code"),
     projectLabel: path.basename(projectPath),
   });
@@ -1086,6 +1096,7 @@ async function installCodex(args: string[]): Promise<void> {
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
+    args,
     platform: platformFromTarget("codex"),
     projectLabel: path.basename(projectPath),
   });
@@ -1154,6 +1165,7 @@ async function installAntigravity(args: string[]): Promise<void> {
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
+    args,
     platform: platformFromTarget("antigravity"),
     projectLabel: path.basename(projectPath),
   });
@@ -1972,6 +1984,8 @@ commands:
                      Defaults to cwd if project is omitted.
                      Flags:
                        --debug               verbose shim logging
+                       --no-connect          skip the dashboard sign-in
+                                             (also skipped without a terminal)
                        --legacy-shim         use legacy absolute path (not
                                              recommended — breaks on update)
                        --project-settings    (claude-code only) edit
