@@ -1,0 +1,179 @@
+{
+  "description": "Hook, proxy and Codex rows with nothing correlated. Readers change nothing: every call and finding stays where it was.",
+  "snapshot": {
+    "sessions": [
+      {
+        "session_id": "cc",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "claude-code-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 2,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null
+      },
+      {
+        "session_id": "cx",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [],
+        "interceptor": "codex-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 1,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "codex"
+      },
+      {
+        "session_id": "px",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [
+          "github"
+        ],
+        "interceptor": "mcp-proxy",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 1,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null
+      }
+    ],
+    "tool_calls": {
+      "cc": [
+        {
+          "tool_call_id": "cc-1",
+          "session_id": "cc",
+          "tool_name": "Bash",
+          "mcp_server": "builtin",
+          "interceptor": "claude-code-hook",
+          "correlation_id": null,
+          "parameters_json": "{}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "status": "success",
+          "response_bytes": null,
+          "error_message": null
+        },
+        {
+          "tool_call_id": "cc-2",
+          "session_id": "cc",
+          "tool_name": "Read",
+          "mcp_server": "builtin",
+          "interceptor": "claude-code-hook",
+          "correlation_id": null,
+          "parameters_json": "{}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "status": "success",
+          "response_bytes": null,
+          "error_message": null
+        }
+      ],
+      "cx": [
+        {
+          "tool_call_id": "cx-1",
+          "session_id": "cx",
+          "tool_name": "Bash",
+          "mcp_server": "builtin",
+          "interceptor": "codex-hook",
+          "correlation_id": null,
+          "parameters_json": "{}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "status": "success",
+          "response_bytes": null,
+          "error_message": null
+        }
+      ],
+      "px": [
+        {
+          "tool_call_id": "px-1",
+          "session_id": "px",
+          "tool_name": "create_issue",
+          "mcp_server": "github",
+          "interceptor": "mcp-proxy",
+          "correlation_id": null,
+          "parameters_json": "{}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "status": "success",
+          "response_bytes": null,
+          "error_message": null
+        }
+      ]
+    },
+    "file_events": {
+      "cc": [
+        {
+          "event_id": "fe-1",
+          "session_id": "cc",
+          "direction": "read",
+          "path": "/home/case/repo/a.ts",
+          "bytes": 120,
+          "at": "2026-09-29T12:00:00.000Z"
+        }
+      ]
+    },
+    "risk_events": {
+      "cx": [
+        {
+          "event_id": "f-cx",
+          "session_id": "cx",
+          "related_event_id": "cx-1",
+          "severity": "HIGH",
+          "category": "credential_exposure",
+          "description": "d",
+          "rule_id": "RULE_THREAT_DESTRUCTIVE_COMMAND",
+          "detected_at": "2026-09-29T12:00:01.000Z"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "calls": 4,
+    "findings": 1,
+    "sessions": {
+      "cc": {
+        "calls": 2,
+        "findings": 0,
+        "tool_call_count": 2,
+        "label": "Claude Code"
+      },
+      "cx": {
+        "calls": 1,
+        "findings": 1,
+        "tool_call_count": 1,
+        "label": "Codex"
+      },
+      "px": {
+        "calls": 1,
+        "findings": 0,
+        "tool_call_count": 1,
+        "label": "MCP Proxy"
+      }
+    }
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "description": "One MCP call seen by the agent's hook and by the proxy, correlated. Readers show one call, in the agent's session, and count the rule both raised once; the finding only the proxy raised moves to the agent's session.",
+  "snapshot": {
+    "sessions": [
+      {
+        "session_id": "agent",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [
+          "filesystem"
+        ],
+        "interceptor": "claude-code-hook",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 1,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0.4,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "claude-code"
+      },
+      {
+        "session_id": "proxy",
+        "user": "case",
+        "project_path": "/home/case/repo",
+        "mcp_servers": [
+          "filesystem"
+        ],
+        "interceptor": "mcp-proxy",
+        "started_at": "2026-09-29T12:00:00.000Z",
+        "ended_at": null,
+        "duration_ms": null,
+        "status": "completed",
+        "tool_call_count": 1,
+        "file_read_count": 0,
+        "file_write_count": 0,
+        "risk_score": 0.8,
+        "last_event_at": "2026-09-29T12:00:00.000Z",
+        "source_root": null,
+        "platform": "claude-code",
+        "mcp_client_name": "claude-code"
+      }
+    ],
+    "tool_calls": {
+      "agent": [
+        {
+          "tool_call_id": "hook-1",
+          "session_id": "agent",
+          "tool_name": "mcp__filesystem__read_file",
+          "mcp_server": "filesystem",
+          "interceptor": "claude-code-hook",
+          "correlation_id": "corr-1",
+          "parameters_json": "{\"path\":\"/home/case/repo/README.md\"}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": null,
+          "duration_ms": null,
+          "status": "in_progress",
+          "response_bytes": null,
+          "error_message": null
+        }
+      ],
+      "proxy": [
+        {
+          "tool_call_id": "proxy-1",
+          "session_id": "proxy",
+          "tool_name": "read_file",
+          "mcp_server": "filesystem",
+          "interceptor": "mcp-proxy",
+          "correlation_id": "corr-1",
+          "parameters_json": "{\"path\":\"/home/case/repo/README.md\"}",
+          "started_at": "2026-09-29T12:00:00.000Z",
+          "ended_at": "2026-09-29T12:00:01.000Z",
+          "duration_ms": 12,
+          "status": "success",
+          "response_bytes": 480,
+          "error_message": null
+        }
+      ]
+    },
+    "file_events": {},
+    "risk_events": {
+      "agent": [
+        {
+          "event_id": "f-hook",
+          "session_id": "agent",
+          "related_event_id": "hook-1",
+          "severity": "MEDIUM",
+          "category": "credential_exposure",
+          "description": "d",
+          "rule_id": "RULE_SENSITIVE_PATH_READ",
+          "detected_at": "2026-09-29T12:00:01.000Z",
+          "correlation_id": "corr-1"
+        }
+      ],
+      "proxy": [
+        {
+          "event_id": "f-proxy",
+          "session_id": "proxy",
+          "related_event_id": "proxy-1",
+          "severity": "MEDIUM",
+          "category": "credential_exposure",
+          "description": "d",
+          "rule_id": "RULE_SENSITIVE_PATH_READ",
+          "detected_at": "2026-09-29T12:00:01.000Z",
+          "correlation_id": "corr-1"
+        },
+        {
+          "event_id": "f-proxy-only",
+          "session_id": "proxy",
+          "related_event_id": "proxy-1",
+          "severity": "MEDIUM",
+          "category": "credential_exposure",
+          "description": "d",
+          "rule_id": "RULE_SUPPLY_CHAIN_NEW_MCP_SERVER",
+          "detected_at": "2026-09-29T12:00:01.000Z",
+          "correlation_id": "corr-1"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "calls": 1,
+    "findings": 2,
+    "sessions": {
+      "agent": {
+        "calls": 1,
+        "findings": 2,
+        "tool_call_count": 1,
+        "label": "Claude Code"
+      },
+      "proxy": {
+        "calls": 0,
+        "findings": 0,
+        "tool_call_count": 0,
+        "label": "Claude Code via MCP Proxy"
+      }
+    }
+  }
+}
