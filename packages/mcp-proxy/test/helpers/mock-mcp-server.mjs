@@ -10,6 +10,7 @@
  *   MOCK_SERVER_NAME    reported in serverInfo (default: "mock")
  *   MOCK_TOOLS          JSON array of tool names to expose (default: 3 tools)
  *   MOCK_RESULT_TEXT    text to return from every tools/call (default: "ok")
+ *   MOCK_RESULT_BYTES   generate this many ASCII bytes instead of result text
  *   MOCK_ERROR          if "1", every tools/call returns isError:true
  *   MOCK_STRUCTURED     if "1", tools declare an outputSchema and return
  *                       structuredContent alongside the text content
@@ -33,7 +34,9 @@ if (startupDelayMs > 0) {
 }
 
 const name = process.env.MOCK_SERVER_NAME ?? "mock";
-const resultText = process.env.MOCK_RESULT_TEXT ?? "ok";
+const resultText = process.env.MOCK_RESULT_BYTES
+  ? "x".repeat(Number(process.env.MOCK_RESULT_BYTES))
+  : process.env.MOCK_RESULT_TEXT ?? "ok";
 const returnError = process.env.MOCK_ERROR === "1";
 const structured = process.env.MOCK_STRUCTURED === "1";
 
