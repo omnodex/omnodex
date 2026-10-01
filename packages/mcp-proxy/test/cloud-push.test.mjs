@@ -10,6 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { createCloudPushQueue } from "../dist/cloud-push.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 
 const HOME = "/home/case/.omnodex";
 
@@ -76,7 +77,7 @@ test("the quiet period sends a partial batch on its own", async () => {
   const queue = createCloudPushQueue({ home: HOME, pushFn, flushDelayMs: 5 });
 
   queue.enqueue(event("a"));
-  await new Promise((r) => setTimeout(r, 40));
+  await waitFor(() => batches.length === 1, 10000, "quiet-period flush");
 
   assert.deepEqual(batches.map((b) => b.ids), [["a"]]);
   await queue.close();

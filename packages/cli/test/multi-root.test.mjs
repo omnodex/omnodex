@@ -20,6 +20,7 @@ import {
   Projector,
 } from "../../projection/dist/index.js";
 import { startStreamingLoop } from "../dist/streaming.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 import {
   loadDashboardConfig,
   parseRootsFlag,
@@ -41,6 +42,17 @@ function makeMockServer() {
       messages.push(msg);
     },
   };
+}
+
+function observeInitialScan(log) {
+  let scanned = false;
+  const listSessions = log.listSessions.bind(log);
+  log.listSessions = async () => {
+    const ids = await listSessions();
+    scanned = true;
+    return ids;
+  };
+  return () => scanned;
 }
 
 function sessionStarted(sessionId, seq = 0) {
@@ -172,6 +184,8 @@ test("startStreamingLoop tails two roots and projects sessions from both", async
     await projector.apply(event);
   }
 
+  const scannedA = observeInitialScan(logA);
+  const scannedB = observeInitialScan(logB);
   const { stop } = startStreamingLoop(
     [
       { rootPath: rootA, log: logA },
@@ -182,12 +196,18 @@ test("startStreamingLoop tails two roots and projects sessions from both", async
     server,
   );
 
-  // Give the streaming loop time to start tailing.
-  await new Promise((r) => setTimeout(r, 1500));
+  // New sessions are discovered by the running loop, rather than already
+  // satisfying these assertions through the historical replay above.
+  await waitFor(() => scannedA() && scannedB());
+  await logA.append(sessionStarted("sess_live_a", 4));
+  await logA.append(toolInvoked("sess_live_a", 5));
+  await logB.append(sessionStarted("sess_live_b", 6));
+  await logB.append(toolInvoked("sess_live_b", 7));
+  await waitFor(async () => (await store.listToolCalls("sess_live_a")).length === 1 && (await store.listToolCalls("sess_live_b")).length === 1);
 
   const sessions = await store.listSessions();
   const sessionIds = sessions.map((s) => s.session_id).sort();
-  assert.deepStrictEqual(sessionIds, ["sess_a", "sess_b"]);
+  assert.deepStrictEqual(sessionIds, ["sess_a", "sess_b", "sess_live_a", "sess_live_b"]);
 
   // Verify source_root is tagged.
   const sessA = await store.getSession("sess_a");
@@ -201,7 +221,7 @@ test("startStreamingLoop tails two roots and projects sessions from both", async
   assert.strictEqual(callsA.length, 1);
   assert.strictEqual(callsB.length, 1);
 
-  stop();
+  await stop();
   await logA.close();
   await logB.close();
 });
@@ -222,15 +242,18 @@ test("startStreamingLoop backwards compat: single EventLog still works", async (
   }
 
   // Pass a single EventLog (legacy API).
+  const scanned = observeInitialScan(log);
   const { stop } = startStreamingLoop(log, store, projector, server);
 
-  await new Promise((r) => setTimeout(r, 1500));
+  await waitFor(scanned);
+  await log.append(sessionStarted("sess_single_live", 1));
+  await waitFor(async () => Boolean(await store.getSession("sess_single_live")));
 
   const sessions = await store.listSessions();
-  assert.strictEqual(sessions.length, 1);
-  assert.strictEqual(sessions[0].session_id, "sess_single");
+  assert.strictEqual(sessions.length, 2);
+  assert.deepStrictEqual(sessions.map((s) => s.session_id).sort(), ["sess_single", "sess_single_live"]);
 
-  stop();
+  await stop();
   await log.close();
 });
 
@@ -256,6 +279,13 @@ test("startStreamingLoop detects new sessions appearing in any root", async () =
     await projector.apply(event);
   }
 
+  let emptyRootScanned = false;
+  const listSessions = logB.listSessions.bind(logB);
+  logB.listSessions = async () => {
+    const ids = await listSessions();
+    emptyRootScanned = true;
+    return ids;
+  };
   const { stop } = startStreamingLoop(
     [
       { rootPath: rootA, log: logA },
@@ -266,19 +296,19 @@ test("startStreamingLoop detects new sessions appearing in any root", async () =
     server,
   );
 
-  await new Promise((r) => setTimeout(r, 1500));
+  await waitFor(() => emptyRootScanned);
 
   // Add a new session to root B after the loop started.
   await logB.append(sessionStarted("sess_late", 5));
 
   // Wait for the poll loop to discover it.
-  await new Promise((r) => setTimeout(r, 2000));
+  await waitFor(async () => Boolean(await store.getSession("sess_late")));
 
   const sessions = await store.listSessions();
   const sessionIds = sessions.map((s) => s.session_id).sort();
   assert.deepStrictEqual(sessionIds, ["sess_early", "sess_late"]);
 
-  stop();
+  await stop();
   await logA.close();
   await logB.close();
 });

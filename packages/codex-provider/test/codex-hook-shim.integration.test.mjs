@@ -22,7 +22,9 @@ async function fresh(t) {
 function runShim(home, payload) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SHIM], {
-      env: { ...process.env, OMNODEX_HOME: home },
+      // Event-mapping tests do not own a detached background worker. Keep
+      // that worker from recreating the fixture during directory cleanup.
+      env: { ...process.env, OMNODEX_HOME: home, OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stderr = "";
@@ -157,7 +159,7 @@ test("shim exits 0 on empty stdin without crashing", async (t) => {
   const home = await fresh(t);
   const child = await new Promise((resolve, reject) => {
     const c = spawn(process.execPath, [SHIM], {
-      env: { ...process.env, OMNODEX_HOME: home },
+      env: { ...process.env, OMNODEX_HOME: home, OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     c.stdin.end();
@@ -171,7 +173,7 @@ test("shim exits 0 on malformed JSON without crashing", async (t) => {
   const home = await fresh(t);
   const child = await new Promise((resolve, reject) => {
     const c = spawn(process.execPath, [SHIM], {
-      env: { ...process.env, OMNODEX_HOME: home },
+      env: { ...process.env, OMNODEX_HOME: home, OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0" },
       stdio: ["pipe", "pipe", "pipe"],
     });
     c.stdin.write("not json at all");

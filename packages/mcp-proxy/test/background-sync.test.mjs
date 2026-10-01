@@ -18,6 +18,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { startAutoSyncTimer } from "../dist/background-sync.js";
 import { MCPProxy } from "../dist/mcp-proxy.js";
 import { ProxyConfigSchema } from "../dist/config.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const MOCK_SERVER = path.join(__dirname, "helpers", "mock-mcp-server.mjs");
@@ -41,7 +42,7 @@ test("the timer asks for a sync repeatedly, with the home and script to respawn"
     },
   });
   try {
-    await new Promise((r) => setTimeout(r, 60));
+    await waitFor(() => calls.length >= 2);
     assert.ok(calls.length >= 2, `expected repeated ticks, got ${calls.length}`);
     // detect: the child also runs rule detection before it syncs.
     assert.deepEqual(calls[0], { home: HOME, scriptPath: SCRIPT, detect: true });
@@ -50,7 +51,8 @@ test("the timer asks for a sync repeatedly, with the home and script to respawn"
   }
 });
 
-test("stop() ends the timer and is safe to call twice", async () => {
+test("stop() ends the timer and is safe to call twice", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
   let calls = 0;
   const timer = await startAutoSyncTimer({
     home: HOME,
@@ -61,26 +63,28 @@ test("stop() ends the timer and is safe to call twice", async () => {
       return "started";
     },
   });
-  await new Promise((r) => setTimeout(r, 40));
+  t.mock.timers.tick(40);
   timer.stop();
   timer.stop();
 
   const after = calls;
-  await new Promise((r) => setTimeout(r, 40));
+  t.mock.timers.tick(40);
   assert.equal(calls, after, "timer kept firing after stop()");
 });
 
 test("a rejecting startBackgroundSync does not surface as an unhandled rejection", async () => {
+  let calls = 0;
   const timer = await startAutoSyncTimer({
     home: HOME,
     scriptPath: SCRIPT,
     intervalMs: 10,
     startSyncFn: async () => {
+      calls++;
       throw new Error("state file unreadable");
     },
   });
   try {
-    await new Promise((r) => setTimeout(r, 40));
+    await waitFor(() => calls >= 2);
   } finally {
     timer.stop();
   }
@@ -138,7 +142,7 @@ async function runSession(options = {}) {
   const client = new Client({ name: "cloud-test-client", version: "0.0.0" }, {});
   await client.connect(clientTransport);
   await client.callTool({ name: "filesystem__get_info", arguments: { input: "q" } });
-  if (options.dwellMs) await new Promise((r) => setTimeout(r, options.dwellMs));
+  if (options.waitForSync) await waitFor(() => syncCalls.length >= 1);
   await client.close();
   await proxy.whenClosed();
   await stop();
@@ -169,7 +173,7 @@ test("the sync timer runs for the session when a respawn script is given", async
   const { syncCalls } = await runSession({
     autoSyncScriptPath: SCRIPT,
     autoSyncIntervalMs: 10,
-    dwellMs: 60,
+    waitForSync: true,
   });
 
   assert.ok(syncCalls.length >= 1, "expected at least one sync while connected");
@@ -178,7 +182,7 @@ test("the sync timer runs for the session when a respawn script is given", async
 });
 
 test("without a respawn script the proxy never starts a sync", async () => {
-  const { syncCalls, pushed } = await runSession({ dwellMs: 60 });
+  const { syncCalls, pushed } = await runSession();
 
   assert.deepEqual(syncCalls, []);
   assert.ok(pushed.length > 0, "live push is independent of the sync timer");

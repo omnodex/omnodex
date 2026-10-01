@@ -22,6 +22,7 @@ import { createEvaluator } from "../../analyzer/dist/index.js";
 import { tailSession } from "../dist/streaming.js";
 import { DashboardServer } from "../dist/dashboard-server.js";
 import { runtimeLabel } from "../dist/dashboard-model/index.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 
 const AT = "2026-09-29T12:00:00.000Z";
 
@@ -76,6 +77,11 @@ test("concurrently tailed sessions keep their own root in every path format", as
   const logs = await Promise.all(roots.map(async (_, i) => {
     const log = new EventLog({ root: path.join(tmp, `log${i}`) });
     await log.init();
+    const tail = log.tail.bind(log);
+    log.tail = (...args) => {
+      log.tailStarted = true;
+      return tail(...args);
+    };
     return log;
   }));
 
@@ -86,19 +92,17 @@ test("concurrently tailed sessions keep their own root in every path format", as
   const running = [];
   for (let i = 0; i < roots.length; i++) {
     running.push(tailSession(`sess${i}`, logs[i], store, projector, server, evaluator, ctrl.signal, false, roots[i]));
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => logs[i].tailStarted);
   }
   const events = roots.map((_, i) => sessionEvents(`sess${i}`, 3));
   for (let n = 0; n < events[0].length; n++) {
     for (let i = 0; i < roots.length; i++) await logs[i].append(events[i][n]);
   }
 
-  const deadline = Date.now() + 3000;
-  while (Date.now() < deadline) {
+  await waitFor(async () => {
     const counts = await Promise.all(roots.map(async (_, i) => (await store.getSession(`sess${i}`))?.tool_call_count ?? 0));
-    if (counts.every((c) => c === 3)) break;
-    await new Promise((r) => setTimeout(r, 20));
-  }
+    return counts.every((c) => c === 3);
+  });
   ctrl.abort();
   await Promise.all(running);
   for (const log of logs) await log.close();

@@ -93,17 +93,15 @@ describe("judgeCaptured", () => {
     let created = 0;
     let release;
     const gate = new Promise((r) => (release = r));
+    const loaded = gate.then(() => ({ createEvaluator: () => (created++, { evaluate: () => [] }) }));
     const findings = await judgeCaptured([sensitive()], {
       newEventId,
       timeoutMs: 20,
-      load: async () => {
-        await gate;
-        return { createEvaluator: () => (created++, { evaluate: () => [] }) };
-      },
+      load: () => loaded,
     });
     assert.deepEqual(findings, []);
     release();
-    await new Promise((r) => setTimeout(r, 10));
+    await loaded;
     assert.equal(created, 0);
   });
 

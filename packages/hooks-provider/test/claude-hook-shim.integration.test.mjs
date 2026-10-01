@@ -25,7 +25,9 @@ const SHIM = path.resolve(
 async function runShim(payload, env) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SHIM], {
-      env: { ...process.env, ...env },
+      // Mapping tests opt out of detached work; the explicit sync case
+      // below opts back in and waits for its recorded completion.
+      env: { ...process.env, OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0", ...env },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const stdoutChunks = [];
