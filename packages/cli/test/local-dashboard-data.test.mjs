@@ -21,7 +21,7 @@ import { InMemoryReadModelStore, Projector } from "../../projection/dist/index.j
 import { createEvaluator } from "../../analyzer/dist/index.js";
 import { tailSession } from "../dist/streaming.js";
 import { DashboardServer } from "../dist/dashboard-server.js";
-import { runtimeLabel } from "../dist/dashboard-model/index.js";
+import { runtimeLabel, sessionName } from "../dist/dashboard-model/index.js";
 
 const AT = "2026-09-29T12:00:00.000Z";
 
@@ -191,4 +191,11 @@ test("the page labels each session by its agent runtime", () => {
   for (const [session, expected] of cases) {
     assert.equal(runtimeLabel(session), expected, JSON.stringify(session));
   }
+});
+
+test("sessionName: title, then project folder, then short session id", () => {
+  const base = { session_id: "0123456789abcdef", project_path: "/home/case/repo" };
+  assert.equal(sessionName({ ...base, title: "fs015_2" }), "fs015_2");
+  assert.equal(sessionName(base), "repo");
+  assert.equal(sessionName({ ...base, project_path: "" }), "0123456789ab");
 });

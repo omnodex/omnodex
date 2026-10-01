@@ -38,10 +38,11 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
-import { EventLog, newEventId } from "@omnodex/event-log";
+import { EventLog, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
 import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
+import { TITLE_HOOKS, readTranscriptTitle } from "../session-title.js";
 import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
@@ -141,6 +142,16 @@ async function main(): Promise<number> {
     // ----------------------------
 
     const events = mapClaudeCodePayload(payload, { newEventId });
+    // The session's title lives in its transcript; record it when it changes.
+    if (TITLE_HOOKS.has(payload.hook_event_name)) {
+      const renamed = await sessionRenamedIfChanged(await readTranscriptTitle(payload.transcript_path), {
+        home,
+        sessionId: payload.session_id,
+        interceptor: "claude-code-hook",
+        newEventId,
+      });
+      if (renamed) events.push(renamed);
+    }
     if (events.length === 0) {
       if (debug)
         console.error(
