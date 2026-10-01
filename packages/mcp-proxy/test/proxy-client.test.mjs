@@ -1,8 +1,8 @@
 // Tests for recording which MCP client the proxy served.
 // session.started waits for the initialize handshake so it can record the
-// client's own name and version, and the runtime they identify. A launcher
-// that knows its platform (OMNODEX_PLATFORM) takes precedence, and every
-// later event carries the platform too.
+// client's own name and version, and the runtime they identify. A client
+// name that identifies its runtime wins; a launcher's OMNODEX_PLATFORM decides
+// for names that do not, and every later event carries the platform too.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -77,11 +77,20 @@ test("an unrecognised client is recorded by name, with no platform", async () =>
   for (const e of events) assert.equal(e.platform, undefined);
 });
 
-test("a platform the launcher declares wins over the client's name", async () => {
+test("a platform the launcher declares decides when the client's name does not", async () => {
   const events = await runSession({ clientName: "claude-ai", platformEnv: "cowork" });
   assert.equal(events[0].platform, "cowork");
   assert.equal(events[0].mcp_client.name, "claude-ai");
   for (const e of events) assert.equal(e.platform, "cowork");
+});
+
+test("a client that names its runtime wins over the launcher's platform", async () => {
+  // The Cowork plugin, loaded by Claude Code through the shared desktop plugins.
+  const events = await runSession({ clientName: "claude-code", platformEnv: "cowork" });
+  assert.equal(events[0].platform, "claude-code");
+  for (const e of events) assert.equal(e.platform, "claude-code");
+  const antigravity = await runSession({ clientName: "antigravity-client", platformEnv: "cowork" });
+  assert.equal(antigravity[0].platform, "antigravity");
 });
 
 test("a launcher value that names no platform is ignored", async () => {

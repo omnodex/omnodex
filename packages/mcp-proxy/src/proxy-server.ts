@@ -156,7 +156,11 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   // ── Session start, once the client has said who it is ─────────────────────
   // session.started waits for the MCP initialize handshake so it can record
   // the client: its name and version, and the runtime they identify. A
-  // launcher that knows its platform says so in OMNODEX_PLATFORM, which wins.
+  // client whose own name identifies its runtime is believed first: a plugin
+  // installed in one app can be loaded by another (the Claude desktop app
+  // shares plugins between Claude Code and Cowork). A launcher's
+  // OMNODEX_PLATFORM decides when the name does not, as with the desktop app,
+  // which names itself the same for chat and Cowork.
   // Every later event carries the platform too, so a reader that sees a
   // session only from its tool calls still knows where it came from.
   let platform: PlatformKind | undefined = asPlatform(process.env.OMNODEX_PLATFORM);
@@ -168,7 +172,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       const mcpClient = client?.name
         ? { name: client.name, ...(client.version ? { version: client.version } : {}) }
         : undefined;
-      platform ??= platformForClient(client?.name);
+      platform = platformForClient(client?.name) ?? platform;
       await emit(buildSessionStartedEvent({
         sessionId,
         at: sessionStart,
