@@ -163,3 +163,63 @@ test("SQL_INJECTION: does NOT fire for OR in a legitimate context without tautol
   });
   assert.equal(sqlEngine.evaluate(event).length, 0);
 });
+
+// Each named signature, case folding, spacing and comment terminator variant.
+const signatures = [
+  ["sql-union-inject", "UNION SELECT secret FROM users"],
+  ["sql-union-inject", "uNiOn   aLl   sElEcT secret FROM users"],
+  ...["--", "#", "/* comment */"].map(comment => ["sql-comment-inject", `';   ${comment}`]),
+  ["sql-boolean-inject", "oR   1 = 1 -- comment"],
+  ...["DROP", "DELETE", "INSERT", "UPDATE", "CREATE", "ALTER", "TRUNCATE"]
+    .map(verb => ["sql-stacked-query", `;   ${verb.toLowerCase()} table_name`]),
+  ...["SLEEP", "BENCHMARK", "PG_SLEEP", "WAITFOR DELAY"]
+    .map(fn => ["sql-time-based-inject", `${fn.toLowerCase()} (5)`]),
+  ...["LOAD_FILE", "UTL_HTTP", "UTL_INADDR", "UTL_FILE"]
+    .map(fn => ["sql-oob-exfil", `${fn.toLowerCase()} ('case')`]),
+];
+for (const [signature, query] of signatures) {
+  test(`SQL_INJECTION MUST_FIRE: ${signature}: ${query}`, () => {
+    const findings = sqlEngine.evaluate(makeDbEvent("query", "postgres-case", { query }));
+    assert.equal(findings.length, 1);
+    assert.match(findings[0].description, new RegExp(signature));
+  });
+}
+
+for (const server of ["filesystem", "github", "browser", "builtin"]) {
+  test(`SQL_INJECTION MUST_NOT_FIRE: injection documentation on ${server}`, () => {
+    assert.equal(sqlEngine.evaluate(makeDbEvent("write_documentation", server, {
+      content: "SQL examples: UNION SELECT, OR 1=1, ';--, ; DROP TABLE, SLEEP(5), LOAD_FILE('case')",
+    })).length, 0);
+  });
+}
+for (const query of [
+  "SELECT * FROM users WHERE id = ?", "INSERT INTO users(name) VALUES ('case')",
+  "UPDATE users SET name = 'case' WHERE id = 1", "DELETE FROM users WHERE id = 1",
+  "SELECT union_selector, sleep_count FROM metrics WHERE error = 1 OR warning = 1",
+  "SELECT * FROM users /* ordinary comment */ WHERE id = 1",
+]) {
+  test(`SQL_INJECTION MUST_NOT_FIRE: ordinary query ${query}`, () => {
+    assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 0);
+  });
+}
+
+// Keep bypass cases executable without changing the rule in this test-only task.
+// TODO assertions describe desired behavior; the separate detection fix owns them.
+for (const query of [
+  "UNION\tSELECT secret FROM users", "UNION\nSELECT secret FROM users",
+  "UNION/**/SELECT secret FROM users", "OR/**/1=1",
+  "UNION%20SELECT%20secret%20FROM%20users", "OR%201%3D1",
+  "WAITFOR DELAY '00:00:05'", "UTL_HTTP.REQUEST('https://example.com')",
+]) {
+  test(`SQL_INJECTION MUST_FIRE known gap: ${JSON.stringify(query)}`, { todo: "normalization or signature coverage requires a separate rule change" }, () => {
+    assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 1);
+  });
+}
+test("SQL_INJECTION MUST_NOT_FIRE known gap: documentation field on database server", { todo: "all-field scope also scans documentation text" }, () => {
+  assert.equal(sqlEngine.evaluate(makeDbEvent("describe_schema", "postgres", {
+    documentation: "Prevent SQL injection such as UNION SELECT and OR 1=1.",
+  })).length, 0);
+});
+test("SQL_INJECTION MUST_FIRE known gap: uppercase database server", { todo: "server regex lacks case-insensitive matching" }, () => {
+  assert.equal(sqlEngine.evaluate(makeDbEvent("query", "POSTGRES", { query: "UNION SELECT secret FROM users" })).length, 1);
+});
