@@ -2,7 +2,7 @@
   "name": "omnodex",
   "version": "0.2.0",
   "description": "Security and observability for AI agent execution.",
-  "license": "AGPL-3.0-or-later",
+  "license": "AGPL-3.0-only",
   "bin": {
     "omnodex": "bin/omnodex",
     "omnodex-mcp-proxy": "bin/omnodex-mcp-proxy.js"

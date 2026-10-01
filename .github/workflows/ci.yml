@@ -39,6 +39,9 @@ jobs:
       - name: Check for internal references
         run: npm run check:internal-refs
 
+      - name: Check licence notices
+        run: npm run check:licence
+
       - name: Build (tsc)
         run: npx tsc -b
 
