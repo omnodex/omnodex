@@ -26,6 +26,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { InMemoryReadModelStore } from "../../projection/dist/index.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 import {
   DashboardServer,
   resolveDashboardAssetsDir,
@@ -163,10 +164,12 @@ test("closing the server drops an open SSE stream instead of waiting for it", as
   const server = new DashboardServer({ store: new InMemoryReadModelStore(), port: 0, assetsDir });
   try {
     await server.ready;
+    let streamConnected = false;
     const streamClosed = new Promise((resolve, reject) => {
       const req = http.get(
         { host: "127.0.0.1", port: server.port, path: "/api/events", headers: { host: `localhost:${server.port}` } },
         (res) => {
+          streamConnected = true;
           res.on("data", () => {});
           res.on("close", resolve);
         },
@@ -175,7 +178,7 @@ test("closing the server drops an open SSE stream instead of waiting for it", as
       setTimeout(() => reject(new Error("SSE stream still open")), 5_000).unref();
     });
     // Let the stream connect before closing.
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await waitFor(() => streamConnected, 5000, "SSE connection");
     const started = Date.now();
     await server.close();
     await streamClosed;

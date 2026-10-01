@@ -61,6 +61,13 @@ test("a routed call that arrives live is paired and counted once", async (t) => 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-livecorr-"));
   const log = new EventLog({ root });
   await log.init();
+  let initialScanFinished = false;
+  const listSessions = log.listSessions.bind(log);
+  log.listSessions = async () => {
+    const sessions = await listSessions();
+    initialScanFinished = true;
+    return sessions;
+  };
   const store = new InMemoryReadModelStore();
   const messages = [];
   const server = { broadcast: (m) => messages.push(m) };
@@ -82,7 +89,7 @@ test("a routed call that arrives live is paired and counted once", async (t) => 
   // Sessions present when the loop starts are taken as already rebuilt (the
   // dashboard rebuilds first), so let its first pass finish before any
   // session exists. These then arrive as new, and are tailed from the start.
-  await new Promise((r) => setTimeout(r, 300));
+  assert.ok(await waitFor(() => initialScanFinished), "initial session scan did not finish");
   await log.append(started("hook", "claude-code-hook"));
   await log.append(started("proxy", "mcp-proxy"));
   assert.ok(await waitFor(async () => (await store.listSessions()).length === 2), "sessions were not tailed");

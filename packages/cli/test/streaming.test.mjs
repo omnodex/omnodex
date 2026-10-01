@@ -20,13 +20,21 @@ import * as assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { EventLog, newEventId } from "../../event-log/dist/index.js";
+import { EventLog as BaseEventLog, newEventId } from "../../event-log/dist/index.js";
 import {
   InMemoryReadModelStore,
   Projector,
 } from "../../projection/dist/index.js";
 import { createEvaluator } from "../../analyzer/dist/index.js";
 import { broadcastProjection, tailSession } from "../dist/streaming.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
+
+class EventLog extends BaseEventLog {
+  tail(...args) {
+    this.tailStarted = true;
+    return super.tail(...args);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,14 +60,6 @@ function makeMockServer() {
  * fixed delay when waiting for the async file-tail to project appended events,
  * so the test is deterministic rather than racing a hard-coded sleep.
  */
-async function waitFor(predicate, timeoutMs = 2000, intervalMs = 10) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (predicate()) return true;
-    await new Promise((r) => setTimeout(r, intervalMs));
-  }
-  return false;
-}
 
 function base(sessionId, eventId, seq) {
   return {
@@ -76,7 +76,7 @@ function sessionStarted(sessionId) {
   return {
     ...base(sessionId, `evt_${sessionId}_start`, 0),
     event_type: "session.started",
-    user: "tester",
+    user: "case",
     project_path: "/tmp/demo",
     mcp_servers: [],
   };
@@ -249,7 +249,7 @@ test("tailSession: projects new events and runs detection", async () => {
   );
 
   // Append a sensitive tool call after a short delay
-  await new Promise((r) => setTimeout(r, 50));
+  await waitFor(() => log.tailStarted);
   const sensitiveEvent = sensitiveToolInvoked("sess_ts2", 1);
   await log.append(sensitiveEvent);
 
@@ -420,10 +420,11 @@ test("tailSession: a restart does not re-fire first-seen rules for history", asy
     "sess_fs", log, store, projector, server,
     createEvaluator({ host: "batch", newEventId }), ctrl.signal,
   );
-  await new Promise((r) => setTimeout(r, 50));
+  await waitFor(() => log.tailStarted);
   await log.append(mcpToolInvoked("sess_fs", 2, "plane"));
   await waitFor(() => server.messages.some((m) => m.type === "tool_call.inserted"));
-  await new Promise((r) => setTimeout(r, 100));
+  await log.append(toolCompleted("sess_fs", 2));
+  await waitFor(() => server.messages.some((m) => m.type === "tool_call.patched"));
   ctrl.abort();
   await tail;
 
@@ -452,7 +453,7 @@ test("tailSession: a finding appended by another process is not written again", 
     "sess_ext", log, store, projector, server,
     createEvaluator({ host: "batch", newEventId }), ctrl.signal,
   );
-  await new Promise((r) => setTimeout(r, 50));
+  await waitFor(() => log.tailStarted);
 
   // Another host judged tc_sess_ext_1 and recorded its finding; the tail
   // sees that finding before it sees a repeat observation of the call.
@@ -468,7 +469,8 @@ test("tailSession: a finding appended by another process is not written again", 
   await waitFor(() => server.messages.some((m) => m.type === "risk_event.inserted"));
   await log.append(sensitiveToolInvoked("sess_ext", 1));
   await waitFor(() => server.messages.some((m) => m.type === "tool_call.inserted"));
-  await new Promise((r) => setTimeout(r, 100));
+  await log.append(toolCompleted("sess_ext", 1));
+  await waitFor(() => server.messages.some((m) => m.type === "tool_call.patched"));
   ctrl.abort();
   await tail;
 
@@ -497,7 +499,7 @@ test("tailSession: leaves per-event findings on hook and proxy calls to the capt
     "sess_cap", log, store, projector, server,
     createEvaluator({ host: "batch", newEventId }), ctrl.signal,
   );
-  await new Promise((r) => setTimeout(r, 50));
+  await waitFor(() => log.tailStarted);
 
   // The hook shim and the proxy write their own finding just after the
   // event; the tail reads the event first and must not race them.
@@ -506,7 +508,8 @@ test("tailSession: leaves per-event findings on hook and proxy calls to the capt
   // A call from an interceptor that does not evaluate is still judged here.
   await log.append(sensitiveToolInvoked("sess_cap", 3));
   await waitFor(() => server.messages.some((m) => m.type === "risk_event.inserted"));
-  await new Promise((r) => setTimeout(r, 100));
+  await log.append(toolCompleted("sess_cap", 3));
+  await waitFor(() => server.messages.some((m) => m.type === "tool_call.patched"));
   ctrl.abort();
   await tail;
 

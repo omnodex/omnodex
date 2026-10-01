@@ -13,6 +13,7 @@ import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { EventLog } from "../dist/index.js";
+import { waitFor } from "../../../scripts/test-wait.mjs";
 
 async function mkTmp() {
   return await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-tail-"));
@@ -89,8 +90,8 @@ test("tail() picks up events appended after it started", async (t) => {
     }
   })();
 
-  // Append two more events after a short delay so the tail loop is running.
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  // The historical row proves the tail is running before new rows arrive.
+  await waitFor(() => collected.length === 1);
   await log.append(makeToolEvent("sess_live", 2));
   await log.append(makeToolEvent("sess_live", 3));
 
