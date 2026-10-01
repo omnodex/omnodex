@@ -92,7 +92,7 @@ test("the payload allowlist is exactly these fields", () => {
       "session_id", "user", "project_path", "mcp_servers", "interceptor",
       "started_at", "ended_at", "duration_ms", "status",
       "tool_call_count", "file_read_count", "file_write_count", "risk_score",
-      "last_event_at", "source_root", "platform", "mcp_client_name",
+      "last_event_at", "source_root", "platform", "mcp_client_name", "title",
     ],
     tool_calls: [
       "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",

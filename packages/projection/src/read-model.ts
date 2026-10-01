@@ -54,6 +54,12 @@ export interface SessionRow {
    * hosted dashboard's label fallback.
    */
   mcp_client_name?: string;
+  /**
+   * The session's title, from its latest session.renamed event: the name
+   * the user gave it, or the one the agent runtime generated. Absent when
+   * none was recorded. In the sync payload, for the hosted session list.
+   */
+  title?: string;
 }
 
 export interface ToolCallRow {

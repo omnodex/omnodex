@@ -183,6 +183,16 @@ export interface SessionEndedEvent extends BaseEvent {
   status: "completed" | "errored" | "interrupted";
 }
 
+/**
+ * The session's title changed: the user renamed it, or the agent runtime
+ * named it. Interceptors emit it only when the title differs from the last
+ * one they recorded, so the latest event for a session is its title.
+ */
+export interface SessionRenamedEvent extends BaseEvent {
+  event_type: "session.renamed";
+  title: string;
+}
+
 export interface ToolInvokedEvent extends BaseEvent {
   event_type: "tool.invoked";
   tool_call_id: string;
@@ -391,6 +401,7 @@ export interface RuleUpdatedEvent extends BaseEvent {
 export type TraceEvent =
   | SessionStartedEvent
   | SessionEndedEvent
+  | SessionRenamedEvent
   | ToolInvokedEvent
   | ToolCompletedEvent
   | FileReadEvent

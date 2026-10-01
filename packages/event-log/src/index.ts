@@ -294,3 +294,12 @@ export function newEventId(): string {
   for (let i = 0; i < 16; i++) buf[i] = Math.floor(Math.random() * 256);
   return buf.toString("hex");
 }
+
+export {
+  TITLE_TAIL_BYTES,
+  claimTitleChange,
+  cleanTitle,
+  readJsonlTail,
+  sessionRenamedIfChanged,
+} from "./session-title.js";
+export type { FoundTitle, SessionRenamedOptions, TitleSource } from "./session-title.js";
