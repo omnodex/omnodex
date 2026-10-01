@@ -14,7 +14,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ALL_SESSIONS, listedSessions, rowTotals, selectView, viewTotals } from "../dashboard-model/view.js";
 import {
-  NO_FILTERS, filterOptions, filterSessions, localZoneName, narrowView, projectName, runtimeLabel, shortSessionId, timeAgo,
+  NO_FILTERS, filterOptions, filterSessions, localZoneName, narrowView, projectName, runtimeLabel, sessionName, timeAgo,
   type DashboardFilters,
 } from "../dashboard-model/index.js";
 import type { SessionRow } from "../dashboard-model/view.js";
@@ -80,7 +80,8 @@ function useTheme(mode: ThemeMode): void {
 function sessionOptionLabel(s: SessionRow): string {
   const prefix = s.status === "in_progress" ? "● " : "";
   const source = s.interceptor ? `[${runtimeLabel(s)}] ` : "";
-  const name = projectName(s.project_path) || shortSessionId(s.session_id);
+  const project = s.title ? projectName(s.project_path) : null;
+  const name = sessionName(s) + (project ? `  ·  ${project}` : "");
   const when = s.last_event_at ? `  ·  ${timeAgo(s.last_event_at)}` : "";
   return prefix + source + name + when;
 }

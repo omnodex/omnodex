@@ -84,6 +84,11 @@ export function projectName(projectPath: string | null | undefined): string | nu
   return parts.length > 0 ? parts[parts.length - 1]! : null;
 }
 
+/** What a list calls a session: its title, else its project folder, else its short id. */
+export function sessionName(s: Pick<SessionRow, "title" | "project_path" | "session_id">): string {
+  return s.title || projectName(s.project_path) || shortSessionId(s.session_id);
+}
+
 export function displayStatus(status: string | null | undefined): string {
   if (status === "in_progress") return "Active";
   if (!status) return "Unknown";

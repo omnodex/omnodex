@@ -68,7 +68,8 @@ export async function broadcastProjection(
 ): Promise<void> {
   switch (event.event_type) {
     case "session.started":
-    case "session.ended": {
+    case "session.ended":
+    case "session.renamed": {
       const row = await store.getSession(event.session_id);
       if (row) server.broadcast({ type: "session.upserted", payload: row });
       break;

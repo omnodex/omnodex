@@ -12,10 +12,9 @@ import {
   formatTime,
   formatWithTz,
   interceptorTone,
-  projectName,
   riskBandLabel,
   runtimeLabel,
-  shortSessionId,
+  sessionName,
   sourcesLabel,
   timeAgo,
   parseParameters,
@@ -100,6 +99,7 @@ export function SessionDetails({ view, utc, hidden, onToggleHidden }: {
   return (
     <div className="session-details">
       <div className="sd-col">
+        {s.title && <Row label="Title">{s.title}</Row>}
         <Row label="Session ID" mono>{s.session_id}</Row>
         <Row label="Type"><SourceBadge session={s} /></Row>
         <Row label="Status">
@@ -233,7 +233,7 @@ export function Timeline({ view, sessions, utc, detail, newCallIds, onSelect }: 
                 <div className="timeline-content">
                   {owner && (
                     <span className="timeline-session-badge" style={toneStyle(interceptorTone(owner.interceptor))}>
-                      {projectName(owner.project_path) || shortSessionId(owner.session_id)}
+                      {sessionName(owner)}
                     </span>
                   )}
                   <span className="timeline-tool">{tc.tool_name}</span>

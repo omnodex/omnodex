@@ -18,6 +18,7 @@ import type {
   FileWrittenEvent,
   RiskDetectedEvent,
   SessionEndedEvent,
+  SessionRenamedEvent,
   SessionStartedEvent,
   ToolCompletedEvent,
   ToolInvokedEvent,
@@ -108,6 +109,9 @@ export class Projector {
       case "session.ended":
         await this.onSessionEnded(event);
         return;
+      case "session.renamed":
+        await this.onSessionRenamed(event, root);
+        return;
       case "tool.invoked":
         await this.onToolInvoked(event, root);
         return;
@@ -155,6 +159,11 @@ export class Projector {
       duration_ms: event.duration_ms,
       status: event.status,
     });
+  }
+
+  private async onSessionRenamed(event: SessionRenamedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
+    await this.store.patchSession(event.session_id, { title: event.title });
   }
 
   private async onToolInvoked(event: ToolInvokedEvent, root: string | null): Promise<void> {

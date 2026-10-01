@@ -45,13 +45,16 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * sessions.mcp_client_name: a proxy session is labelled "<platform> via MCP
  * Proxy", or by the name its MCP client gave itself when no platform is
  * known. Hosted needs the name for that fallback.
+ *
+ * sessions.title: the session list names a session by its title when one
+ * was recorded, rather than by its project folder.
  */
 export const PAYLOAD_FIELDS = {
   sessions: [
     "session_id", "user", "project_path", "mcp_servers", "interceptor",
     "started_at", "ended_at", "duration_ms", "status",
     "tool_call_count", "file_read_count", "file_write_count", "risk_score",
-    "last_event_at", "source_root", "platform", "mcp_client_name",
+    "last_event_at", "source_root", "platform", "mcp_client_name", "title",
   ],
   tool_calls: [
     "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
