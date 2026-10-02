@@ -150,6 +150,13 @@ export interface BaseEvent {
    * from the interceptor field.
    */
   platform?: PlatformKind;
+  /**
+   * The subagent the event happened in, as the runtime identifies it.
+   * Absent for the main agent and for runtimes without subagents. Lets a
+   * tool call be attributed to the subagent that made it, and joins it to
+   * that subagent's subagent.started and subagent.stopped events.
+   */
+  agent_id?: string;
 }
 
 export interface SessionStartedEvent extends BaseEvent {
@@ -262,6 +269,78 @@ export interface RiskDetectedEvent extends BaseEvent {
   related_event_ids?: string[];
 }
 
+
+/**
+ * The user submitted a prompt: one per turn. The text is kept in full, as
+ * tool parameters are, because the event log is meant to answer what the
+ * agent was asked to do as well as what it did.
+ */
+export interface PromptSubmittedEvent extends BaseEvent {
+  event_type: "prompt.submitted";
+  prompt: string;
+  /**
+   * The runtime's own id for the turn, when it sends one (Claude Code's
+   * prompt_id, Codex's turn_id). Groups the turn's tool calls.
+   */
+  prompt_id?: string;
+}
+
+/** The agent started a subagent. */
+export interface SubagentStartedEvent extends BaseEvent {
+  event_type: "subagent.started";
+  /**
+   * The runtime's id for the subagent; events inside it carry it too. On
+   * subagent.started and subagent.stopped it names the subagent itself, not
+   * where the event happened (runtimes do not nest subagents today).
+   */
+  agent_id: string;
+  /** What kind of subagent, as the runtime names it (Explore, Plan, ...). */
+  agent_type?: string;
+}
+
+/** A subagent finished and handed its result back. */
+export interface SubagentStoppedEvent extends BaseEvent {
+  event_type: "subagent.stopped";
+  agent_id: string;
+  agent_type?: string;
+  /** Since the matching subagent.started, when the interceptor saw it. */
+  duration_ms?: number;
+  /** How the subagent ended, when the runtime says. */
+  status?: "completed" | "errored" | "interrupted";
+  /**
+   * Byte size of the subagent's final message. The text itself is not
+   * stored, as with tool responses.
+   */
+  response_bytes?: number;
+}
+
+/**
+ * The runtime asked the user to allow an action. Not every tool call asks:
+ * whether one does depends on the session's permission settings.
+ */
+export interface PermissionRequestedEvent extends BaseEvent {
+  event_type: "permission.requested";
+  tool_name: string;
+  /** As on tool.invoked: the owning MCP server, or "builtin". */
+  mcp_server: string;
+  /** The tool's parameters, as on tool.invoked. */
+  parameters: Record<string, unknown>;
+  /** The tool call this is for, when the runtime sends its id. */
+  tool_call_id?: string;
+  /** The kind of permission asked for, when the runtime names it. */
+  permission_type?: string;
+}
+
+/** The runtime refused an action: the user, a rule or a classifier said no. */
+export interface PermissionDeniedEvent extends BaseEvent {
+  event_type: "permission.denied";
+  tool_name: string;
+  mcp_server: string;
+  parameters: Record<string, unknown>;
+  tool_call_id?: string;
+  /** Why, as the runtime puts it. */
+  reason?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Cloud API types (used by license-client, sync-encryptor, feature-extractor)
@@ -407,6 +486,11 @@ export type TraceEvent =
   | FileReadEvent
   | FileWrittenEvent
   | RiskDetectedEvent
+  | PromptSubmittedEvent
+  | SubagentStartedEvent
+  | SubagentStoppedEvent
+  | PermissionRequestedEvent
+  | PermissionDeniedEvent
   | SyncPushedEvent
   | FeatureExtractedEvent
   | RuleUpdatedEvent;
