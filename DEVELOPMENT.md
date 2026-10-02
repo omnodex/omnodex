@@ -51,6 +51,12 @@ node --test \
 cd packages/analyzer && node --test test/**/*.test.mjs test/*.test.mjs
 ```
 
+`detect`, `replay`, `dashboard` and `remove` read every root, and the default `~/.omnodex` is always one of them, even when `OMNODEX_HOME` points elsewhere (some hosts write there whatever `OMNODEX_HOME` says). So the commands above also read your real event log, and `detect` and `dashboard` append findings to it. To keep a run inside a scratch or copied home, add `OMNODEX_SINGLE_ROOT=1`: the default home is then left out, and only `OMNODEX_HOME`, that home's `dashboard.roots` and `--roots` are used. `detect`, `replay` and `dashboard` print their roots before they start.
+
+```bash
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js detect
+```
+
 `npm run build` runs `npx tsc -b` and then builds the local dashboard page. The page is a React app in `packages/cli/src/dashboard/`, with its view logic (labels, formatting, the credential ledger) in `packages/cli/src/dashboard-model/` so `node:test` can cover it. `packages/cli/build-dashboard.mjs` bundles it with esbuild into one self-contained file, `packages/cli/dist/dashboard.html`, which `omnodex dashboard` serves; React is bundled into that file and never becomes a runtime dependency. `npm install` builds the page too (the root `prepare` script), so a checkout built with `npm install` and `npx tsc -b` has it. After editing the page, run `npm run build:dashboard -w @omnodex/cli` and reload; `npm run typecheck:dashboard -w @omnodex/cli` typechecks it, and CI runs both.
 
 ## Platforms

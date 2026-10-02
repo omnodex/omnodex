@@ -296,9 +296,7 @@ async function cmdReplay(args: string[] = []): Promise<void> {
   const resolved = await resolveRoots(cliRoots);
   const paths = primaryPathsFor(resolved.primary);
 
-  if (resolved.all.length > 1) {
-    console.log(`[replay] roots: ${resolved.all.join(", ")}`);
-  }
+  console.log(`[replay] roots: ${resolved.all.join(", ")}`);
 
   const logs = await openRootLogs(resolved.all);
   const store = await openStore(paths);
@@ -470,9 +468,7 @@ async function cmdDetect(args: string[]): Promise<void> {
   // Analysis has to cover every root a session could have been written to.
   // Scanning only the primary meant a secondary root accumulated tool calls
   // and never a single risk event.
-  if (resolved.all.length > 1) {
-    console.log(`[detect] roots: ${resolved.all.join(", ")}`);
-  }
+  console.log(`[detect] roots: ${resolved.all.join(", ")}`);
 
   const targetSession = rest.find((a) => !a.startsWith("--"));
 
