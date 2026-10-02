@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, readdir, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -261,4 +261,37 @@ test("SessionEnd starts a detached sync that pushes a blob without delaying the 
   assert.equal(state.last_error ?? null, null, `sync error: ${state.last_error}`);
   assert.equal(state.last_blob_id, "blob_case_shim");
   assert.deepEqual(pushes, [{ method: "PUT", url: "/api/v1/sync/push" }]);
+});
+
+test("shim times a subagent from SubagentStart to SubagentStop and logs the prompt", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-subagent-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const session_id = "sess-subagent-test";
+  const env = { OMNODEX_HOME: home };
+
+  await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "UserPromptSubmit", prompt: "Find the call sites", prompt_id: "p-1" }, env);
+  await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "SubagentStart", agent_id: "agent/../x1", agent_type: "Explore" }, env);
+  await new Promise((r) => setTimeout(r, 20));
+  await runShim({
+    session_id,
+    cwd: "/tmp/repo",
+    hook_event_name: "SubagentStop",
+    agent_id: "agent/../x1",
+    agent_type: "Explore",
+    last_assistant_message: "done",
+    stop_hook_active: false,
+  }, env);
+
+  const events = await readSessionLog(home, session_id);
+  const prompt = events.find((e) => e.event_type === "prompt.submitted");
+  assert.equal(prompt?.prompt, "Find the call sites");
+  const started = events.find((e) => e.event_type === "subagent.started");
+  assert.equal(started?.agent_type, "Explore");
+  const stopped = events.find((e) => e.event_type === "subagent.stopped");
+  assert.ok(stopped, "expected a subagent.stopped event");
+  assert.equal(stopped.agent_id, "agent/../x1");
+  assert.ok(stopped.duration_ms > 0, `duration_ms should be > 0 (got ${stopped.duration_ms})`);
+  assert.equal(stopped.response_bytes, 4);
+  // The id never becomes a path: the timing file stayed inside timing/ and is gone.
+  assert.deepEqual(await readdir(path.join(home, "timing")), []);
 });

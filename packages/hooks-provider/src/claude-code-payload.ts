@@ -22,10 +22,13 @@
 import type {
   FileReadEvent,
   FileWrittenEvent,
+  PromptSubmittedEvent,
   SessionEndedEvent,
   SessionStartedEvent,
   ToolCompletedEvent,
   ToolInvokedEvent,
+  SubagentStartedEvent,
+  SubagentStoppedEvent,
   TraceEvent,
 } from "@omnodex/shared";
 import { SCHEMA_VERSION, splitMcpToolName } from "@omnodex/shared";
@@ -40,9 +43,9 @@ export { splitMcpToolName } from "@omnodex/shared";
  * Core events: SessionStart, SessionEnd, PreToolUse, PostToolUse,
  * PostToolUseFailure.
  *
- * Extended events (added 2026-08): SubagentStart, SubagentStop,
- * UserPromptSubmit. These are captured for future TraceEvent mapping
- * but currently return [] from the mapper.
+ * Extended events: SubagentStart, SubagentStop, UserPromptSubmit, mapped
+ * to subagent.started, subagent.stopped and prompt.submitted. Field names
+ * were read from the Claude Code build that sends them (2.1.287).
  */
 export type ClaudeCodeHookEventName =
   | "SessionStart"
@@ -61,7 +64,12 @@ export interface ClaudeCodeHookBase {
   cwd?: string;
   permission_mode?: string;
   hook_event_name: ClaudeCodeHookEventName;
+  /**
+   * The subagent the hook fired in; absent in the main thread. On
+   * SubagentStart and SubagentStop it is the subagent itself.
+   */
   agent_id?: string;
+  /** The subagent's type, or the --agent the session runs as. */
   agent_type?: string;
   /** Prompt identifier for multi-turn tracking (added in Claude Code 2026-07). */
   prompt_id?: string;
@@ -111,20 +119,22 @@ export interface ClaudeCodePostToolUseFailurePayload extends ClaudeCodeHookBase 
 
 export interface ClaudeCodeSubagentStartPayload extends ClaudeCodeHookBase {
   hook_event_name: "SubagentStart";
-  /** Identifier of the subagent being spawned. */
-  subagent_id: string;
-  /** Type of subagent (e.g. "task", "parallel"). */
-  subagent_type?: string;
-  /** The prompt or task description given to the subagent. */
-  prompt?: string;
+  /** Identifier of the subagent being started. */
+  agent_id: string;
+  /** Subagent type (Explore, Plan, general-purpose, a custom agent). */
+  agent_type?: string;
 }
 
 export interface ClaudeCodeSubagentStopPayload extends ClaudeCodeHookBase {
   hook_event_name: "SubagentStop";
-  /** Identifier of the subagent that stopped. */
-  subagent_id: string;
-  /** How the subagent terminated. */
-  reason?: "completed" | "errored" | "interrupted";
+  agent_id: string;
+  agent_type?: string;
+  /** The subagent's own transcript. */
+  agent_transcript_path?: string;
+  /** The subagent's final response. Only its size is recorded. */
+  last_assistant_message?: string;
+  stop_hook_active?: boolean;
+  /** Not sent by Claude Code; the shim measures it from SubagentStart. */
   duration_ms?: number;
 }
 
@@ -132,6 +142,8 @@ export interface ClaudeCodeUserPromptSubmitPayload extends ClaudeCodeHookBase {
   hook_event_name: "UserPromptSubmit";
   /** The user's prompt text. */
   prompt: string;
+  /** The session's title at the time, when it has one. */
+  session_title?: string;
 }
 
 export type ClaudeCodeHookPayload =
@@ -206,6 +218,8 @@ export function mapClaudeCodePayload(
     occurred_at: now,
     recorded_at: now,
     interceptor: "claude-code-hook" as const,
+    // Work done inside a subagent is attributed to it.
+    ...(payload.agent_id ? { agent_id: payload.agent_id } : {}),
   };
 
   switch (payload.hook_event_name) {
@@ -284,13 +298,45 @@ export function mapClaudeCodePayload(
       return [completed];
     }
 
-    case "SubagentStart":
-    case "SubagentStop":
-    case "UserPromptSubmit":
-      // No TraceEvent types for these yet. Capture the payload so the
-      // shim does not warn, but emit nothing until the shared schema
-      // gains subagent and prompt event types.
-      return [];
+    case "UserPromptSubmit": {
+      if (typeof payload.prompt !== "string") return [];
+      const event: PromptSubmittedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "prompt.submitted",
+        prompt: payload.prompt,
+        ...(payload.prompt_id ? { prompt_id: payload.prompt_id } : {}),
+      };
+      return [event];
+    }
+
+    case "SubagentStart": {
+      if (!payload.agent_id) return [];
+      const event: SubagentStartedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "subagent.started",
+        agent_id: payload.agent_id,
+        ...(payload.agent_type ? { agent_type: payload.agent_type } : {}),
+      };
+      return [event];
+    }
+
+    case "SubagentStop": {
+      if (!payload.agent_id) return [];
+      const event: SubagentStoppedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "subagent.stopped",
+        agent_id: payload.agent_id,
+        ...(payload.agent_type ? { agent_type: payload.agent_type } : {}),
+        ...(payload.duration_ms !== undefined ? { duration_ms: payload.duration_ms } : {}),
+        ...(typeof payload.last_assistant_message === "string"
+          ? { response_bytes: Buffer.byteLength(payload.last_assistant_message, "utf8") }
+          : {}),
+      };
+      return [event];
+    }
   }
 }
 

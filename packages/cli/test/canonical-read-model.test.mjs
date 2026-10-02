@@ -20,6 +20,10 @@ import { resolveRoots } from "../dist/config.js";
 
 const CLI = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
+// These tests check the default root set, which OMNODEX_SINGLE_ROOT changes.
+// A developer may have it set to keep their own runs isolated.
+delete process.env.OMNODEX_SINGLE_ROOT;
+
 async function mkTmp(label) {
   return await fs.mkdtemp(path.join(os.tmpdir(), `omnodex-${label}-`));
 }
