@@ -13,7 +13,8 @@
  *   1. CLI --roots flag (highest priority, ad-hoc use)
  *   2. ~/.omnodex/config.json  dashboard.roots  array
  *   3. $OMNODEX_HOME  (if set and different from $HOME/.omnodex)
- *   4. $HOME/.omnodex  (always included as the default root)
+ *   4. $HOME/.omnodex  (included as the default root, unless
+ *      OMNODEX_SINGLE_ROOT=1 and OMNODEX_HOME points elsewhere)
  *
  * Duplicate roots are deduplicated. Roots that don't exist on disk are
  * kept in the list (they may appear later) but logged as warnings.
@@ -131,8 +132,10 @@ export async function resolveRoots(cliRoots?: string[]): Promise<ResolvedRoots> 
 
   // The default home stays in the list even when it is not primary, because
   // hosts that cannot be told about OMNODEX_HOME (Cowork Desktop) write there
-  // regardless, and their sessions should still be aggregated.
-  if (path.resolve(defaultHome) !== primary) {
+  // regardless, and their sessions should still be aggregated. With
+  // OMNODEX_SINGLE_ROOT=1 it is left out, so a run against a scratch or
+  // copied home reads and writes nothing outside it.
+  if (path.resolve(defaultHome) !== primary && !singleRootRequested()) {
     roots.push(path.resolve(defaultHome));
   }
 
@@ -175,6 +178,16 @@ export async function resolveRoots(cliRoots?: string[]): Promise<ResolvedRoots> 
     primary: unique[0],
     all: unique,
   };
+}
+
+/**
+ * Whether OMNODEX_SINGLE_ROOT asks for OMNODEX_HOME alone, without the
+ * default home. Roots named in that home's config or with --roots are
+ * still added, because they are explicit.
+ */
+export function singleRootRequested(): boolean {
+  const value = process.env.OMNODEX_SINGLE_ROOT?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
 }
 
 /**

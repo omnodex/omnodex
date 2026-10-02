@@ -147,7 +147,7 @@ OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js dashboard
 # open http://localhost:7890
 ```
 
-All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`).
+All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `dashboard` also read and add findings to `~/.omnodex` when `OMNODEX_HOME` points elsewhere; set `OMNODEX_SINGLE_ROOT=1` to keep a run inside `OMNODEX_HOME`.
 
 ---
 
