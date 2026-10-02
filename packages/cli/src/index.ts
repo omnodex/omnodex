@@ -71,6 +71,8 @@ import {
   readAutoSyncState,
   runAutoSync,
   startBackgroundSync,
+  readLiveGate,
+  clearLiveGate,
 } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
 import {
@@ -1376,6 +1378,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
 
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);
+  await printLivePushHealth(paths.home);
   console.log("");
 
   // If --all, show the full registry instead of per-project detection
@@ -1539,6 +1542,53 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
       console.log(`    last attempt: ${formatWhen(state.last_attempt_at)}`);
     }
   }
+}
+
+/**
+ * Report the live push gate. While the relay says no dashboard is watching,
+ * every pusher on the machine holds back for a growing window, so a
+ * dashboard that has just connected waits for the next probe. Silent without
+ * cloud credentials, like the auto sync line.
+ */
+async function printLivePushHealth(omnodexHome: string): Promise<void> {
+  if (!(await readStreamConfig(omnodexHome))) return;
+  console.log(`[status] live push:   ${describeLiveGate(await readLiveGate(omnodexHome))}`);
+}
+
+/** One line for the live push gate's state. */
+function describeLiveGate(state: { paused_until: number; backoff_ms: number } | null, now = Date.now()): string {
+  if (!state || now >= state.paused_until) return "open";
+  const left = Math.ceil((state.paused_until - now) / 1000);
+  return (
+    `paused until ${new Date(state.paused_until).toISOString()} (${left}s left, ` +
+    `back-off ${Math.round(state.backoff_ms / 1000)}s): the last push found no dashboard ` +
+    `watching or failed. \`omnodex live resume\` pushes the next event at once.`
+  );
+}
+
+/**
+ * omnodex live [resume]
+ *
+ * Shows the live push gate, or with `resume` clears it so the next event
+ * pushes at once instead of waiting out the back-off. Each OMNODEX_HOME has
+ * its own gate: on Windows with WSL, run it on the side that records.
+ */
+async function cmdLive(args: string[]): Promise<void> {
+  const home = resolvePaths().home;
+  const sub = args.find((a) => !a.startsWith("--"));
+  if (sub === undefined || sub === "status") {
+    console.log(`[live] ${home}: ${describeLiveGate(await readLiveGate(home))}`);
+    return;
+  }
+  if (sub === "resume") {
+    const cleared = await clearLiveGate(home);
+    console.log(cleared
+      ? `[live] resumed: the next event in ${home} pushes at once`
+      : `[live] already open in ${home}`);
+    return;
+  }
+  console.error(`[live] unknown subcommand: ${sub}. Use \`omnodex live\` or \`omnodex live resume\`.`);
+  process.exitCode = 1;
 }
 
 /** ISO timestamp plus a rough age, e.g. "2026-09-17T18:40:12Z (12m ago)". */
@@ -1967,6 +2017,9 @@ async function main(): Promise<void> {
     case "sync":
       await cmdSync(rest);
       return;
+    case "live":
+      await cmdLive(rest);
+      return;
     case undefined:
     case "help":
     case "--help":
@@ -2016,6 +2069,9 @@ commands:
                      Credentials are resolved from flags, environment
                      variables, or stream-config.json (saved by connect
                      or install). Hosted tier or above.
+  live [resume]      show whether live pushes to the hosted dashboard are
+                     paused (no dashboard was watching), or with resume,
+                     push the next event at once.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       run a simulated session through the full pipeline.

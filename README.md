@@ -182,6 +182,11 @@ omnodex sync                        encrypt the read model and upload it to the 
                                       background when a hooked session ends (at most
                                       once a minute). Turn off with "auto_sync": false
                                       in stream-config.json or OMNODEX_AUTO_SYNC=0.
+omnodex live [resume]               show whether live pushes are paused. When no
+                                      dashboard is watching, pushes pause for up to five
+                                      minutes between probes, and go back to every event
+                                      once a probe finds a dashboard. resume skips the
+                                      wait. `omnodex status` shows the same state.
 
 omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       install   generate proxy config template

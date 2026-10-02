@@ -19,6 +19,8 @@ import {
   liveGateOpen,
   livePushAllowed,
   recordLivePush,
+  readLiveGate,
+  clearLiveGate,
   LIVE_BACKOFF_MIN_MS,
   LIVE_BACKOFF_MAX_MS,
 } from "../dist/live-gate.js";
@@ -111,6 +113,16 @@ describe("shared gate file", () => {
     await assert.rejects(readFile(path.join(home, "live-push-state.json")));
   });
 
+  it("clearLiveGate opens a paused gate and returns what it cleared", async () => {
+    await recordLivePush(home, "unwatched", 0);
+    const paused = await readLiveGate(home);
+    assert.deepEqual(await clearLiveGate(home), paused);
+    assert.equal(await livePushAllowed(home, 1), true);
+    assert.equal(await readLiveGate(home), null);
+    // Already open: nothing to clear, and no error.
+    assert.equal(await clearLiveGate(home), null);
+  });
+
   it("treats a garbled file as open", async () => {
     await writeFile(path.join(home, "live-push-state.json"), "{not json");
     assert.equal(await livePushAllowed(home, 0), true);
@@ -168,7 +180,10 @@ describe("pushEventsToCloud behind the gate", () => {
       mock.timers.tick(spacingMs);
     }
     assert.ok(firstLiveAt !== null && firstLiveAt * spacingMs <= LIVE_BACKOFF_MAX_MS);
+    // Back to fully live: every event after the first watched probe is
+    // pushed on its own, with no back-off interval left over.
     assert.equal(api.pushes, 100 - firstLiveAt);
+    assert.equal(await readLiveGate(home), null);
   });
 
   it("backs off after a failed push too", async () => {

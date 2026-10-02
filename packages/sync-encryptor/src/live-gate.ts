@@ -12,8 +12,9 @@
  * dashboard loads when it opens. So when the relay answers a push with
  * `live: false` (no one watching), clients stop pushing for a back-off
  * window, then send one batch as a probe. The window doubles while no one
- * watches, from LIVE_BACKOFF_MIN_MS up to LIVE_BACKOFF_MAX_MS, and resets
- * as soon as a push reports a viewer. A failed push (network error, non-2xx)
+ * watches, from LIVE_BACKOFF_MIN_MS up to LIVE_BACKOFF_MAX_MS. As soon as a
+ * probe reports a viewer the gate clears completely, and every event pushes
+ * at once again, with no interval, until a push next finds no one watching. A failed push (network error, non-2xx)
  * backs off the same way, so an offline machine or a revoked token does not
  * cost a request per event either.
  *
@@ -21,8 +22,11 @@
  * gateway already knows the room is empty, a Durable Object request, both
  * counted against account-wide daily limits. With the gate, an unwatched
  * machine sends about one push per LIVE_BACKOFF_MAX_MS however many events
- * it records. The price is latency: a dashboard opened mid-session starts
- * receiving live events at the next probe, at most LIVE_BACKOFF_MAX_MS later.
+ * it records. The price is latency: a dashboard opened mid-session, or
+ * brought back after its tab was hidden long enough to disconnect, starts
+ * receiving live events at the next probe, at most LIVE_BACKOFF_MAX_MS later
+ * (plus the gateway's short no-viewer cache). No action is needed; `omnodex
+ * live resume` only skips the wait.
  *
  * Hook shims are one process per event, so the state lives in a small file
  * under OMNODEX_HOME that every pusher on the machine shares
@@ -111,6 +115,20 @@ export async function readLiveGate(home: string): Promise<LiveGateState | null> 
   } catch {
     return null;
   }
+}
+
+/**
+ * Opens the shared gate, so the next event pushes at once. Returns the
+ * state it cleared, or null if the gate was already open.
+ */
+export async function clearLiveGate(home: string): Promise<LiveGateState | null> {
+  const prev = await readLiveGate(home);
+  try {
+    await unlink(join(home, STATE_FILE));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+  return prev;
 }
 
 /** Whether a push may go out now, per the machine's shared gate. */
