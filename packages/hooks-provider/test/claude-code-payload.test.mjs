@@ -303,3 +303,100 @@ test("PostToolUse on Edit with no new_string falls back to response size", () =>
   // response is "patched" => JSON.stringify => '"patched"' => 8 bytes
   assert.ok(events[1].bytes > 0, "fallback should produce non-zero bytes from response");
 });
+
+// Prompts and subagents. Payload fields as Claude Code 2.1.287 sends them.
+
+test("UserPromptSubmit maps to prompt.submitted with the full text and prompt_id", () => {
+  const events = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "UserPromptSubmit",
+      prompt: "Refactor /home/case/repo/src/index.ts",
+      prompt_id: "550e8400-e29b-41d4-a716-446655440000",
+      session_title: "Refactor index",
+    },
+    makeOptions(),
+  );
+  assert.equal(events.length, 1);
+  assert.deepEqual(events[0], {
+    schema_version: 1,
+    session_id: "sess-1",
+    occurred_at: "2026-04-11T00:00:00.000Z",
+    recorded_at: "2026-04-11T00:00:00.000Z",
+    interceptor: "claude-code-hook",
+    event_id: "evt-1",
+    event_type: "prompt.submitted",
+    prompt: "Refactor /home/case/repo/src/index.ts",
+    prompt_id: "550e8400-e29b-41d4-a716-446655440000",
+  });
+});
+
+test("UserPromptSubmit without prompt text emits nothing", () => {
+  assert.deepEqual(mapClaudeCodePayload({ ...BASE, hook_event_name: "UserPromptSubmit" }, makeOptions()), []);
+});
+
+test("SubagentStart maps to subagent.started with agent_id and agent_type", () => {
+  const [event] = mapClaudeCodePayload(
+    { ...BASE, hook_event_name: "SubagentStart", agent_id: "agent-a1", agent_type: "Explore" },
+    makeOptions(),
+  );
+  assert.equal(event.event_type, "subagent.started");
+  assert.equal(event.agent_id, "agent-a1");
+  assert.equal(event.agent_type, "Explore");
+});
+
+test("SubagentStop maps to subagent.stopped with duration and the final message's size only", () => {
+  const message = "Found 3 call sites in /home/case/repo — all safe.";
+  const [event] = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "SubagentStop",
+      agent_id: "agent-a1",
+      agent_type: "Explore",
+      agent_transcript_path: "/home/case/.claude/projects/repo/agent-a1.jsonl",
+      last_assistant_message: message,
+      stop_hook_active: false,
+      duration_ms: 4200,
+    },
+    makeOptions(),
+  );
+  assert.equal(event.event_type, "subagent.stopped");
+  assert.equal(event.agent_id, "agent-a1");
+  assert.equal(event.duration_ms, 4200);
+  assert.equal(event.response_bytes, Buffer.byteLength(message, "utf8"));
+  assert.equal(JSON.stringify(event).includes("call sites"), false, "the message text is not stored");
+});
+
+test("subagent hooks without agent_id emit nothing", () => {
+  for (const hook_event_name of ["SubagentStart", "SubagentStop"]) {
+    assert.deepEqual(mapClaudeCodePayload({ ...BASE, hook_event_name }, makeOptions()), [], hook_event_name);
+  }
+});
+
+test("events fired inside a subagent carry its agent_id; main-thread events do not", () => {
+  const inside = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PreToolUse",
+      agent_id: "agent-a1",
+      agent_type: "Explore",
+      tool_name: "Read",
+      tool_use_id: "toolu_sub",
+      tool_input: { file_path: "/home/case/repo/a.md" },
+    },
+    makeOptions(),
+  );
+  assert.equal(inside[0].agent_id, "agent-a1");
+
+  const main = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_use_id: "toolu_main",
+      tool_input: { file_path: "/home/case/repo/a.md" },
+    },
+    makeOptions(),
+  );
+  assert.equal("agent_id" in main[0], false);
+});

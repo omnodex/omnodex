@@ -96,6 +96,11 @@ async function main(): Promise<number> {
     }
   }
 
+  /** Timing file key for a subagent; ids are opaque, so keep it filename-safe. */
+  function subagentTimingKey(agentId: string): string {
+    return `subagent-${agentId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+  }
+
   const raw = await readStdin();
   if (!raw.trim()) {
     if (debug) console.error("[omnodex-hook] empty stdin, nothing to do");
@@ -138,6 +143,12 @@ async function main(): Promise<number> {
           payload.duration_ms = computed;
         }
       }
+    } else if (payload.hook_event_name === "SubagentStart" && payload.agent_id) {
+      // Subagents are timed the same way, under their own key.
+      await saveInvokeTime(subagentTimingKey(payload.agent_id));
+    } else if (payload.hook_event_name === "SubagentStop" && payload.agent_id) {
+      const computed = await consumeInvokeTime(subagentTimingKey(payload.agent_id));
+      if (computed !== null) payload.duration_ms = computed;
     }
     // ----------------------------
 
