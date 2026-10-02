@@ -100,6 +100,12 @@ interface HookHandler {
 }
 
 const OMNODEX_TAG = "omnodex-managed";
+/**
+ * Matches a command that runs the Omnodex launcher or shim script. Claude
+ * Code drops keys it does not know when it rewrites a settings file, so
+ * the tag above cannot be relied on alone to find our handlers.
+ */
+const OMNODEX_COMMAND = /(?:^|[\s"'/\\])claude-hook-(?:launcher|shim)\.js(?:["']|\s|$)/;
 const EVENT_NAMES = [
   "SessionStart",
   "SessionEnd",
@@ -161,7 +167,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
       const filtered = groups
         .map((g) => ({
           ...g,
-          hooks: (g.hooks ?? []).filter((h) => h[OMNODEX_TAG] !== true),
+          hooks: (g.hooks ?? []).filter((h) => !this.isOmnodexHandler(h)),
         }))
         .filter((g) => g.hooks.length > 0);
       filtered.push(this.makeMatcherGroup());
@@ -182,7 +188,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
       const cleaned = (groups ?? [])
         .map((g) => ({
           ...g,
-          hooks: (g.hooks ?? []).filter((h) => h[OMNODEX_TAG] !== true),
+          hooks: (g.hooks ?? []).filter((h) => !this.isOmnodexHandler(h)),
         }))
         .filter((g) => g.hooks.length > 0);
       if (cleaned.length > 0) {
@@ -208,9 +214,20 @@ export class ClaudeCodeInterceptor implements Interceptor {
     if (!existing.hooks) return false;
     return Object.values(existing.hooks).some((groups) =>
       (groups ?? []).some((g) =>
-        (g.hooks ?? []).some((h) => h[OMNODEX_TAG] === true),
+        (g.hooks ?? []).some((h) => this.isOmnodexHandler(h)),
       ),
     );
+  }
+
+  /**
+   * True for a handler Omnodex wrote: it carries our tag, runs exactly the
+   * command this interceptor would write, or runs the launcher or shim.
+   */
+  private isOmnodexHandler(handler: HookHandler): boolean {
+    if (handler[OMNODEX_TAG] === true) return true;
+    const command = handler.command;
+    if (typeof command !== "string") return false;
+    return command === this.shimCommand() || OMNODEX_COMMAND.test(command);
   }
 
   private makeMatcherGroup(): HookMatcherGroup {
