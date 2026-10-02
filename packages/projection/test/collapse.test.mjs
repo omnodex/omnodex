@@ -170,5 +170,7 @@ test("a snapshot with nothing correlated comes back unchanged", async () => {
 
   // And an empty store reads as an empty snapshot.
   const empty = await readSnapshot(new InMemoryReadModelStore());
-  assert.deepEqual(collapseCorrelated(empty), { sessions: [], tool_calls: {}, file_events: {}, risk_events: {} });
+  assert.deepEqual(collapseCorrelated(empty), {
+    sessions: [], tool_calls: {}, file_events: {}, risk_events: {}, prompts: {}, subagents: {},
+  });
 });

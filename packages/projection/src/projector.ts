@@ -16,10 +16,13 @@
 import type {
   FileReadEvent,
   FileWrittenEvent,
+  PromptSubmittedEvent,
   RiskDetectedEvent,
   SessionEndedEvent,
   SessionRenamedEvent,
   SessionStartedEvent,
+  SubagentStartedEvent,
+  SubagentStoppedEvent,
   ToolCompletedEvent,
   ToolInvokedEvent,
   TraceEvent,
@@ -127,6 +130,16 @@ export class Projector {
       case "risk.detected":
         await this.onRiskDetected(event, root);
         return;
+      case "prompt.submitted":
+        await this.onPromptSubmitted(event, root);
+        return;
+      case "subagent.started":
+        await this.onSubagentStarted(event, root);
+        return;
+      case "subagent.stopped":
+        await this.onSubagentStopped(event, root);
+        return;
+      // permission.* events are not projected yet.
     }
   }
 
@@ -188,6 +201,7 @@ export class Projector {
       // counterpart pairs rows from two sessions with different interceptors.
       interceptor: event.interceptor,
       correlation_id: null,
+      ...(event.agent_id ? { agent_id: event.agent_id } : {}),
     });
     // The store suppressed a row it already had, so this event has been
     // projected before. Bumping the counter anyway is what used to leave
@@ -254,6 +268,42 @@ export class Projector {
       "file_write_count",
       1,
     );
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
+  }
+
+  private async onPromptSubmitted(event: PromptSubmittedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
+    const inserted = await this.store.insertPrompt({
+      event_id: event.event_id,
+      session_id: event.session_id,
+      prompt: event.prompt,
+      ...(event.prompt_id ? { prompt_id: event.prompt_id } : {}),
+      at: event.occurred_at,
+    });
+    if (!inserted) return;
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
+  }
+
+  private async onSubagentStarted(event: SubagentStartedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
+    // Start time and type only: a start that arrives after the stop must not
+    // put a finished subagent back in progress.
+    await this.store.upsertSubagent(event.session_id, event.agent_id, {
+      started_at: event.occurred_at,
+      agent_type: event.agent_type,
+    });
+    await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
+  }
+
+  private async onSubagentStopped(event: SubagentStoppedEvent, root: string | null): Promise<void> {
+    await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
+    await this.store.upsertSubagent(event.session_id, event.agent_id, {
+      agent_type: event.agent_type,
+      ended_at: event.occurred_at,
+      duration_ms: event.duration_ms ?? null,
+      status: event.status ?? "completed",
+      response_bytes: event.response_bytes ?? null,
+    });
     await this.store.patchSession(event.session_id, { last_event_at: event.occurred_at });
   }
 

@@ -23,6 +23,8 @@ import type {
   ToolCallRow,
   FileEventRow,
   RiskEventRow,
+  PromptRow,
+  SubagentRow,
 } from "@omnodex/projection";
 
 /**
@@ -48,6 +50,11 @@ export const SYNC_PAYLOAD_VERSION = 2;
  *
  * sessions.title: the session list names a session by its title when one
  * was recorded, rather than by its project folder.
+ *
+ * tool_calls.agent_id, prompts, subagents: the session view shows what the
+ * session was asked, which subagents it ran, and which calls each made.
+ * Prompt text travels only inside the encrypted payload, as tool parameters
+ * do. Blobs from before these were added have no prompts or subagents.
  */
 export const PAYLOAD_FIELDS = {
   sessions: [
@@ -59,18 +66,25 @@ export const PAYLOAD_FIELDS = {
   tool_calls: [
     "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
     "correlation_id", "parameters_json", "started_at", "ended_at",
-    "duration_ms", "status", "response_bytes", "error_message",
+    "duration_ms", "status", "response_bytes", "error_message", "agent_id",
   ],
   file_events: ["event_id", "session_id", "direction", "path", "bytes", "at"],
   risk_events: [
     "event_id", "session_id", "related_event_id", "severity", "category",
     "description", "rule_id", "detected_at", "correlation_id",
   ],
+  prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
+  subagents: [
+    "session_id", "agent_id", "agent_type", "started_at", "ended_at",
+    "duration_ms", "status", "response_bytes",
+  ],
 } as const satisfies {
   sessions: readonly (keyof SessionRow)[];
   tool_calls: readonly (keyof ToolCallRow)[];
   file_events: readonly (keyof FileEventRow)[];
   risk_events: readonly (keyof RiskEventRow)[];
+  prompts: readonly (keyof PromptRow)[];
+  subagents: readonly (keyof SubagentRow)[];
 };
 
 /** The row with only the listed fields. A field the row lacks stays absent. */
@@ -107,6 +121,8 @@ export interface SyncPayload {
   tool_calls: Record<string, ToolCallRow[]>;
   file_events: Record<string, FileEventRow[]>;
   risk_events: Record<string, RiskEventRow[]>;
+  prompts: Record<string, PromptRow[]>;
+  subagents: Record<string, SubagentRow[]>;
 }
 
 /**
@@ -130,11 +146,18 @@ export async function serializeReadModel(
   const toolCalls: Record<string, ToolCallRow[]> = {};
   const fileEvents: Record<string, FileEventRow[]> = {};
   const riskEvents: Record<string, RiskEventRow[]> = {};
+  const prompts: Record<string, PromptRow[]> = {};
+  const subagents: Record<string, SubagentRow[]> = {};
 
   for (const id of ids) {
     toolCalls[id] = (await store.listToolCalls(id)).map((r) => pick(r, PAYLOAD_FIELDS.tool_calls) as ToolCallRow);
     fileEvents[id] = (await store.listFileEvents(id)).map((r) => pick(r, PAYLOAD_FIELDS.file_events) as FileEventRow);
     riskEvents[id] = (await store.listRiskEvents(id)).map((r) => pick(r, PAYLOAD_FIELDS.risk_events) as RiskEventRow);
+    // Only sessions that have any, to keep blobs from older sessions as they were.
+    const sessionPrompts = await store.listPrompts(id);
+    if (sessionPrompts.length) prompts[id] = sessionPrompts.map((r) => pick(r, PAYLOAD_FIELDS.prompts) as PromptRow);
+    const sessionSubagents = await store.listSubagents(id);
+    if (sessionSubagents.length) subagents[id] = sessionSubagents.map((r) => pick(r, PAYLOAD_FIELDS.subagents) as SubagentRow);
   }
 
   return {
@@ -145,6 +168,8 @@ export async function serializeReadModel(
     tool_calls: toolCalls,
     file_events: fileEvents,
     risk_events: riskEvents,
+    prompts,
+    subagents,
   };
 }
 

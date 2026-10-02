@@ -12,9 +12,11 @@
 import { roundRiskScore } from "@omnodex/shared";
 import type {
   FileEventRow,
+  PromptRow,
   ReadModelStore,
   RiskEventRow,
   SessionRow,
+  SubagentRow,
   ToolCallRow,
 } from "./read-model.js";
 
@@ -33,6 +35,9 @@ export class InMemoryReadModelStore implements ReadModelStore {
   private toolCalls = new Map<string, ToolCallRow>();
   private fileEvents: FileEventRow[] = [];
   private riskEvents: RiskEventRow[] = [];
+  private prompts = new Map<string, PromptRow>();
+  /** Keyed on `${session_id}::${agent_id}`. */
+  private subagents = new Map<string, SubagentRow>();
   /** Stand-ins for the unique indexes the SQLite store gets from the schema. */
   private fileEventIds = new Set<string>();
   private riskFindingKeys = new Set<string>();
@@ -42,6 +47,8 @@ export class InMemoryReadModelStore implements ReadModelStore {
     this.toolCalls.clear();
     this.fileEvents = [];
     this.riskEvents = [];
+    this.prompts.clear();
+    this.subagents.clear();
     this.fileEventIds.clear();
     this.riskFindingKeys.clear();
   }
@@ -131,6 +138,31 @@ export class InMemoryReadModelStore implements ReadModelStore {
     return true;
   }
 
+  async insertPrompt(row: PromptRow): Promise<boolean> {
+    if (this.prompts.has(row.event_id)) return false;
+    this.prompts.set(row.event_id, { ...row });
+    return true;
+  }
+
+  async upsertSubagent(
+    sessionId: string,
+    agentId: string,
+    patch: Partial<Omit<SubagentRow, "session_id" | "agent_id">>,
+  ): Promise<void> {
+    const key = `${sessionId}::${agentId}`;
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    const existing = this.subagents.get(key) ?? {
+      session_id: sessionId,
+      agent_id: agentId,
+      started_at: null,
+      ended_at: null,
+      duration_ms: null,
+      status: "in_progress" as const,
+      response_bytes: null,
+    };
+    this.subagents.set(key, { ...existing, ...defined });
+  }
+
   async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
     const key = riskFindingKey(row);
     if (this.riskFindingKeys.has(key)) return false;
@@ -183,6 +215,20 @@ export class InMemoryReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     return this.riskEvents
       .filter((e) => e.session_id === sessionId)
+      .map((r) => ({ ...r }));
+  }
+
+  async listPrompts(sessionId: string): Promise<PromptRow[]> {
+    return [...this.prompts.values()]
+      .filter((p) => p.session_id === sessionId)
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((r) => ({ ...r }));
+  }
+
+  async listSubagents(sessionId: string): Promise<SubagentRow[]> {
+    return [...this.subagents.values()]
+      .filter((a) => a.session_id === sessionId)
+      .sort((a, b) => (a.started_at ?? "\uffff").localeCompare(b.started_at ?? "\uffff"))
       .map((r) => ({ ...r }));
   }
 
