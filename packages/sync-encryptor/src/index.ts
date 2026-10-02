@@ -63,6 +63,8 @@ export {
   LIVE_BACKOFF_MAX_MS,
   livePushAllowed,
   recordLivePush,
+  readLiveGate,
+  clearLiveGate,
 } from "./live-gate.js";
 export type { LivePushOutcome, LiveGateState } from "./live-gate.js";
 export { readOrFetchLicense } from "./license-cache.js";
