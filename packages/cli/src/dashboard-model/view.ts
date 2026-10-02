@@ -11,7 +11,7 @@
  * so a routed call is one call and one finding everywhere on the page.
  */
 
-import type { FileEventRow, ReadModelSnapshot, RiskEventRow, SessionRow } from "@omnodex/projection";
+import type { FileEventRow, PromptRow, ReadModelSnapshot, RiskEventRow, SessionRow, SubagentRow } from "@omnodex/projection";
 import type { CollapsedToolCallRow } from "@omnodex/projection";
 import { riskScoreFor } from "@omnodex/shared";
 import { totalEvents } from "./labels.js";
@@ -27,6 +27,8 @@ export interface SessionView {
   toolCalls: CollapsedToolCallRow[];
   fileEvents: FileEventRow[];
   riskEvents: RiskEventRow[];
+  prompts: PromptRow[];
+  subagents: SubagentRow[];
 }
 
 /** Sessions worth listing: those with at least one call, read or write. */
@@ -41,7 +43,7 @@ export function listedSessions(snapshot: ReadModelSnapshot): SessionRow[] {
 export function selectView(snapshot: ReadModelSnapshot, selection: string): SessionView {
   if (selection !== ALL_SESSIONS) {
     const session = snapshot.sessions.find((s) => s.session_id === selection) ?? null;
-    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [] };
+    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [], prompts: [], subagents: [] };
     const id = session.session_id;
     return {
       session,
@@ -49,15 +51,19 @@ export function selectView(snapshot: ReadModelSnapshot, selection: string): Sess
       toolCalls: [...(snapshot.tool_calls[id] ?? [])],
       fileEvents: [...(snapshot.file_events[id] ?? [])],
       riskEvents: [...(snapshot.risk_events[id] ?? [])],
+      prompts: [...(snapshot.prompts?.[id] ?? [])],
+      subagents: [...(snapshot.subagents?.[id] ?? [])],
     };
   }
   const sessions = listedSessions(snapshot);
   const toolCalls = sessions.flatMap((s) => snapshot.tool_calls[s.session_id] ?? []);
   const fileEvents = sessions.flatMap((s) => snapshot.file_events[s.session_id] ?? []);
   const riskEvents = sessions.flatMap((s) => snapshot.risk_events[s.session_id] ?? []);
+  const prompts = sessions.flatMap((s) => snapshot.prompts?.[s.session_id] ?? []);
+  const subagents = sessions.flatMap((s) => snapshot.subagents?.[s.session_id] ?? []);
   toolCalls.sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
   riskEvents.sort((a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""));
-  return { session: null, sessions, toolCalls, fileEvents, riskEvents };
+  return { session: null, sessions, toolCalls, fileEvents, riskEvents, prompts, subagents };
 }
 
 export interface ViewTotals {
@@ -101,4 +107,4 @@ export function rowTotals(view: SessionView): ViewTotals {
   };
 }
 
-export type { CollapsedToolCallRow, FileEventRow, ReadModelSnapshot, RiskEventRow, SessionRow };
+export type { CollapsedToolCallRow, FileEventRow, PromptRow, ReadModelSnapshot, RiskEventRow, SessionRow, SubagentRow };

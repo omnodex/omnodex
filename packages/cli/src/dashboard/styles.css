@@ -517,6 +517,28 @@ header {
   margin-top: 4px;
 }
 
+/* Prompts and subagents in the timeline */
+.timeline-prompt-text {
+  font-size: 12px;
+  color: var(--white);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-item.timeline-subagent .timeline-tool {
+  font-size: 12px;
+  color: var(--purple);
+}
+
+.prompt-full {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* --- Event detail drawer --- */
 .detail-drawer {
   background: var(--navy-light);

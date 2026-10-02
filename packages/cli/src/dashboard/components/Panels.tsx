@@ -18,14 +18,24 @@ import {
   sourcesLabel,
   timeAgo,
   parseParameters,
+  promptPreview,
+  subagentKey,
+  subagentLabel,
+  timelineEntries,
   type SourceTone,
+  type TimelineEntry,
   type ViewTotals,
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
 
-/** What the detail panel shows: a tool call, or a finding. */
-export type Detail = { kind: "call"; id: string } | { kind: "risk"; event: RiskEventRow } | null;
+/** What the detail panel shows: a tool call, a finding, a prompt or a subagent. */
+export type Detail =
+  | { kind: "call"; id: string }
+  | { kind: "risk"; event: RiskEventRow }
+  | { kind: "prompt"; id: string }
+  | { kind: "subagent"; key: string }
+  | null;
 
 const BAND_COLOR: Record<string, string> = {
   CRITICAL: "var(--red)", HIGH: "var(--orange)", MEDIUM: "var(--yellow)", LOW: "var(--mint)",
@@ -112,6 +122,8 @@ export function SessionDetails({ view, utc, hidden, onToggleHidden }: {
         </Row>
         <Row label="User">{s.user}</Row>
         {s.project_path && <Row label="Project" mono>{s.project_path}</Row>}
+        {view.prompts.length > 0 && <Row label="Prompts">{view.prompts.length}</Row>}
+        {view.subagents.length > 0 && <Row label="Subagents">{view.subagents.length}</Row>}
       </div>
       <div className="sd-col">
         <Row label="Started">{formatWithTz(s.started_at, utc)}</Row>
@@ -214,38 +226,80 @@ export function Timeline({ view, sessions, utc, detail, newCallIds, onSelect }: 
   useEffect(() => {
     if (detail?.kind === "risk") selectedRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [detail]);
+  const entries = timelineEntries(view, view.session === null);
+  const badge = view.prompts.length > 0
+    ? `${view.toolCalls.length} calls · ${view.prompts.length} prompts`
+    : `${view.toolCalls.length} calls`;
+
+  const ownerBadge = (sessionId: string) => {
+    const owner = view.session ? null : bySession.get(sessionId);
+    return owner ? (
+      <span className="timeline-session-badge" style={toneStyle(interceptorTone(owner.interceptor))}>{sessionName(owner)}</span>
+    ) : null;
+  };
+
+  const renderEntry = (entry: TimelineEntry): React.JSX.Element => {
+    if (entry.kind === "prompt") {
+      const p = entry.prompt;
+      const isSelected = detail?.kind === "prompt" && detail.id === p.event_id;
+      return (
+        <li key={`prompt:${p.event_id}`} className={`timeline-item timeline-prompt${isSelected ? " selected" : ""}`} onClick={() => onSelect({ kind: "prompt", id: p.event_id })}>
+          <div className="timeline-time">{formatTime(p.at, utc)}</div>
+          <div className="timeline-content">
+            {ownerBadge(p.session_id)}
+            <span className="timeline-session-badge" style={toneStyle("cyan")}>Prompt</span>
+            <div className="timeline-prompt-text" title={p.prompt}>{promptPreview(p.prompt)}</div>
+          </div>
+        </li>
+      );
+    }
+    if (entry.kind === "subagent-start" || entry.kind === "subagent-stop") {
+      const a = entry.subagent;
+      const key = subagentKey(a);
+      const isSelected = detail?.kind === "subagent" && detail.key === key;
+      const stop = entry.kind === "subagent-stop";
+      return (
+        <li key={`${entry.kind}:${key}`} className={`timeline-item timeline-subagent${isSelected ? " selected" : ""}`} onClick={() => onSelect({ kind: "subagent", key })}>
+          <div className="timeline-time">{formatTime(entry.at, utc)}</div>
+          <div className="timeline-content">
+            {ownerBadge(a.session_id)}
+            <span className="timeline-session-badge" style={toneStyle("purple")}>{subagentLabel(a)}</span>
+            <span className="timeline-tool">{stop ? "Subagent finished" : "Subagent started"}</span>
+            {stop && a.status !== "completed" && <span className={`timeline-status ${a.status === "errored" ? "error" : "in_progress"}`}>{a.status}</span>}
+            {stop && a.duration_ms != null && <div className="timeline-detail">{a.duration_ms}ms{a.response_bytes != null ? ` / ${a.response_bytes} bytes` : ""}</div>}
+          </div>
+        </li>
+      );
+    }
+    const tc = entry.call;
+    const isFlagged = flagged.has(tc.tool_call_id);
+    const isSelected = selected === tc.tool_call_id;
+    const classes = ["timeline-item", isFlagged && "risk-flagged", isSelected && "selected", newCallIds.has(tc.tool_call_id) && "new-arrival"]
+      .filter(Boolean).join(" ");
+    return (
+      <li key={tc.tool_call_id} ref={isSelected ? selectedRef : undefined} className={classes} onClick={() => onSelect({ kind: "call", id: tc.tool_call_id })}>
+        <div className="timeline-time">{formatTime(tc.started_at, utc)}</div>
+        <div className="timeline-content">
+          {ownerBadge(tc.session_id)}
+          {entry.subagent && (
+            <span className="timeline-session-badge" style={toneStyle("purple")} title="Made by this subagent">{subagentLabel(entry.subagent)}</span>
+          )}
+          <span className="timeline-tool">{tc.tool_name}</span>
+          <span className="timeline-server">{tc.mcp_server}</span>
+          <span className={`timeline-status ${tc.status || "in_progress"}`}>{tc.status}</span>
+          {isFlagged && <span className="risk-flag-icon" title="Risk event flagged">⚠️</span>}
+          {tc.duration_ms != null && <div className="timeline-detail">{tc.duration_ms}ms / {tc.response_bytes || 0} bytes</div>}
+        </div>
+      </li>
+    );
+  };
 
   return (
-    <Panel title="Event Timeline" badge={`${view.toolCalls.length} calls`} badgeTone="mint" scroll>
-      {view.toolCalls.length === 0 ? (
+    <Panel title="Event Timeline" badge={badge} badgeTone="mint" scroll>
+      {entries.length === 0 ? (
         <Empty icon="⏳">No tool calls in this session.</Empty>
       ) : (
-        <ul className="timeline">
-          {view.toolCalls.map((tc) => {
-            const isFlagged = flagged.has(tc.tool_call_id);
-            const isSelected = selected === tc.tool_call_id;
-            const owner = view.session ? null : bySession.get(tc.session_id);
-            const classes = ["timeline-item", isFlagged && "risk-flagged", isSelected && "selected", newCallIds.has(tc.tool_call_id) && "new-arrival"]
-              .filter(Boolean).join(" ");
-            return (
-              <li key={tc.tool_call_id} ref={isSelected ? selectedRef : undefined} className={classes} onClick={() => onSelect({ kind: "call", id: tc.tool_call_id })}>
-                <div className="timeline-time">{formatTime(tc.started_at, utc)}</div>
-                <div className="timeline-content">
-                  {owner && (
-                    <span className="timeline-session-badge" style={toneStyle(interceptorTone(owner.interceptor))}>
-                      {sessionName(owner)}
-                    </span>
-                  )}
-                  <span className="timeline-tool">{tc.tool_name}</span>
-                  <span className="timeline-server">{tc.mcp_server}</span>
-                  <span className={`timeline-status ${tc.status || "in_progress"}`}>{tc.status}</span>
-                  {isFlagged && <span className="risk-flag-icon" title="Risk event flagged">⚠️</span>}
-                  {tc.duration_ms != null && <div className="timeline-detail">{tc.duration_ms}ms / {tc.response_bytes || 0} bytes</div>}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <ul className="timeline">{entries.map(renderEntry)}</ul>
       )}
     </Panel>
   );
@@ -285,8 +339,36 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
   }, [detail]);
   const call = (id: string) => view.toolCalls.find((t) => t.tool_call_id === id);
 
-  let body: React.ReactNode = <Empty icon="🔍">Click any tool call or risk event above to inspect its full context.</Empty>;
-  if (detail?.kind === "call") {
+  let body: React.ReactNode = <Empty icon="🔍">Click any tool call, prompt or risk event above to inspect its full context.</Empty>;
+  if (detail?.kind === "prompt") {
+    const p = view.prompts.find((row) => row.event_id === detail.id);
+    if (p) body = (
+      <>
+        <h4 style={{ ...HEADING, color: "var(--cyan)" }}>Prompt</h4>
+        <DetailRow label="Submitted">{formatWithTz(p.at, utc)}</DetailRow>
+        {p.prompt_id && <DetailRow label="Prompt ID">{p.prompt_id}</DetailRow>}
+        <DetailRow label="Text"><div className="prompt-full">{p.prompt}</div></DetailRow>
+      </>
+    );
+  } else if (detail?.kind === "subagent") {
+    const a = view.subagents.find((row) => subagentKey(row) === detail.key);
+    if (a) {
+      const calls = view.toolCalls.filter((tc) => tc.session_id === a.session_id && tc.agent_id === a.agent_id).length;
+      body = (
+        <>
+          <h4 style={{ ...HEADING, color: "var(--purple)" }}>Subagent</h4>
+          <DetailRow label="Type">{a.agent_type || "n/a"}</DetailRow>
+          <DetailRow label="Agent ID">{a.agent_id}</DetailRow>
+          <DetailRow label="Status">{displayStatus(a.status)}</DetailRow>
+          <DetailRow label="Started">{a.started_at ? formatWithTz(a.started_at, utc) : "n/a"}</DetailRow>
+          <DetailRow label="Finished">{a.ended_at ? formatWithTz(a.ended_at, utc) : "n/a"}</DetailRow>
+          <DetailRow label="Duration">{a.duration_ms != null ? `${a.duration_ms} ms` : "n/a"}</DetailRow>
+          <DetailRow label="Tool calls">{calls}</DetailRow>
+          <DetailRow label="Final message">{a.response_bytes != null ? `${a.response_bytes} bytes (text not recorded)` : "n/a"}</DetailRow>
+        </>
+      );
+    }
+  } else if (detail?.kind === "call") {
     const tc = call(detail.id);
     if (tc) body = <CallDetail tc={tc} utc={utc} />;
   } else if (detail?.kind === "risk") {

@@ -119,7 +119,12 @@ export function narrowView(view: SessionView, f: DashboardFilters, now: number):
     (!g?.runtime || runtimeOf.get(e.session_id) === g.runtime) &&
     (!g?.server || g.server === BUILTIN_SERVER) &&
     !g?.tool);
-  return { ...view, toolCalls, riskEvents, fileEvents };
+  // Prompts and subagents belong to the agent, not to a server or tool, so
+  // only a runtime selection keeps them.
+  const agentLevel = (sessionId: string) => !g || (!g.server && !g.tool && (!g.runtime || runtimeOf.get(sessionId) === g.runtime));
+  const prompts = view.prompts.filter((p) => inRange(p.at) && agentLevel(p.session_id));
+  const subagents = view.subagents.filter((a) => inRange(a.started_at ?? a.ended_at) && agentLevel(a.session_id));
+  return { ...view, toolCalls, riskEvents, fileEvents, prompts, subagents };
 }
 
 /** Distinct values to offer in the filter menus, sorted. */

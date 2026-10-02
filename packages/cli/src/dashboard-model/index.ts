@@ -15,3 +15,4 @@ export * from "./filters.js";
 export * from "./graph.js";
 export * from "./sort.js";
 export * from "./params.js";
+export * from "./timeline.js";
