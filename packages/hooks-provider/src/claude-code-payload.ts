@@ -22,6 +22,8 @@
 import type {
   FileReadEvent,
   FileWrittenEvent,
+  PermissionDeniedEvent,
+  PermissionRequestedEvent,
   PromptSubmittedEvent,
   SessionEndedEvent,
   SessionStartedEvent,
@@ -43,9 +45,11 @@ export { splitMcpToolName } from "@omnodex/shared";
  * Core events: SessionStart, SessionEnd, PreToolUse, PostToolUse,
  * PostToolUseFailure.
  *
- * Extended events: SubagentStart, SubagentStop, UserPromptSubmit, mapped
- * to subagent.started, subagent.stopped and prompt.submitted. Field names
- * were read from the Claude Code build that sends them (2.1.287).
+ * Extended events: SubagentStart, SubagentStop, UserPromptSubmit,
+ * PermissionRequest and PermissionDenied, mapped to subagent.started,
+ * subagent.stopped, prompt.submitted, permission.requested and
+ * permission.denied. Field names were read from the Claude Code build that
+ * sends them (2.1.287).
  */
 export type ClaudeCodeHookEventName =
   | "SessionStart"
@@ -55,7 +59,9 @@ export type ClaudeCodeHookEventName =
   | "PostToolUseFailure"
   | "SubagentStart"
   | "SubagentStop"
-  | "UserPromptSubmit";
+  | "UserPromptSubmit"
+  | "PermissionRequest"
+  | "PermissionDenied";
 
 /** Shared fields Claude Code passes on every hook invocation. */
 export interface ClaudeCodeHookBase {
@@ -146,6 +152,30 @@ export interface ClaudeCodeUserPromptSubmitPayload extends ClaudeCodeHookBase {
   session_title?: string;
 }
 
+/**
+ * Claude Code is about to ask the user to allow a tool call. Not every call
+ * asks: whether one does depends on the session's permission settings.
+ */
+export interface ClaudeCodePermissionRequestPayload extends ClaudeCodeHookBase {
+  hook_event_name: "PermissionRequest";
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  /** Rules the user could add to stop being asked. Not recorded. */
+  permission_suggestions?: unknown;
+  /** The MCP server that owns the tool, when it is an MCP tool. */
+  mcp_server?: string;
+}
+
+/** A tool call was refused, by the user, a rule or the permission classifier. */
+export interface ClaudeCodePermissionDeniedPayload extends ClaudeCodeHookBase {
+  hook_event_name: "PermissionDenied";
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id?: string;
+  reason?: string;
+  mcp_server?: string;
+}
+
 export type ClaudeCodeHookPayload =
   | ClaudeCodeSessionStartPayload
   | ClaudeCodeSessionEndPayload
@@ -154,7 +184,9 @@ export type ClaudeCodeHookPayload =
   | ClaudeCodePostToolUseFailurePayload
   | ClaudeCodeSubagentStartPayload
   | ClaudeCodeSubagentStopPayload
-  | ClaudeCodeUserPromptSubmitPayload;
+  | ClaudeCodeUserPromptSubmitPayload
+  | ClaudeCodePermissionRequestPayload
+  | ClaudeCodePermissionDeniedPayload;
 
 /**
  * Single-file read tools: the tool_input carries a specific file path.
@@ -306,6 +338,34 @@ export function mapClaudeCodePayload(
         event_type: "prompt.submitted",
         prompt: payload.prompt,
         ...(payload.prompt_id ? { prompt_id: payload.prompt_id } : {}),
+      };
+      return [event];
+    }
+
+    case "PermissionRequest": {
+      if (typeof payload.tool_name !== "string" || !payload.tool_name) return [];
+      const event: PermissionRequestedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "permission.requested",
+        tool_name: payload.tool_name,
+        mcp_server: payload.mcp_server || mcpServerFor(payload.tool_name),
+        parameters: payload.tool_input ?? {},
+      };
+      return [event];
+    }
+
+    case "PermissionDenied": {
+      if (typeof payload.tool_name !== "string" || !payload.tool_name) return [];
+      const event: PermissionDeniedEvent = {
+        ...base,
+        event_id: options.newEventId(),
+        event_type: "permission.denied",
+        tool_name: payload.tool_name,
+        mcp_server: payload.mcp_server || mcpServerFor(payload.tool_name),
+        parameters: payload.tool_input ?? {},
+        ...(payload.tool_use_id ? { tool_call_id: payload.tool_use_id } : {}),
+        ...(payload.reason ? { reason: payload.reason } : {}),
       };
       return [event];
     }

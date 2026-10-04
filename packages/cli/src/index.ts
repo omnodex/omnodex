@@ -1416,6 +1416,13 @@ async function cmdStatus(_args: string[]): Promise<void> {
     if (await interceptor.isInstalled()) {
       console.log(`  Claude Code (${settingsFile}): installed`);
       console.log(`    ${interceptor.settingsFilePath()}`);
+      // Hooks an older version installed lack the events added since;
+      // install is idempotent and adds them.
+      const missing = await interceptor.missingEvents();
+      if (missing.length > 0) {
+        console.log(`    missing hooks: ${missing.join(", ")} (installed by an older version)`);
+        console.log(`    run \`omnodex install claude-code${settingsFile === "settings.json" ? " --project-settings" : ""}\` in this project to add them`);
+      }
       anyInstalled = true;
     }
   }

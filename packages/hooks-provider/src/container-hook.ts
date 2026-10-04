@@ -86,6 +86,8 @@ const MAPPED_EVENTS = new Set<ClaudeCodeHookEventName>([
   "SubagentStart",
   "SubagentStop",
   "UserPromptSubmit",
+  "PermissionRequest",
+  "PermissionDenied",
 ]);
 
 // ---------------------------------------------------------------------------
