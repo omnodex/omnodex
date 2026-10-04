@@ -88,6 +88,41 @@ export interface ToolCallRow {
   status: "in_progress" | "success" | "error";
   response_bytes: number | null;
   error_message: string | null;
+  /**
+   * The subagent that made the call, when it ran inside one. Absent for the
+   * main agent and for rows projected before it existed.
+   */
+  agent_id?: string;
+}
+
+/** One prompt the user submitted, from a prompt.submitted event. */
+export interface PromptRow {
+  /** event_id of the prompt.submitted event; the row's natural key. */
+  event_id: string;
+  session_id: string;
+  /** The full prompt text. */
+  prompt: string;
+  /** The runtime's id for the turn, when it sent one. */
+  prompt_id?: string;
+  at: string;
+}
+
+/**
+ * One subagent, from its subagent.started and subagent.stopped events.
+ * Keyed on session plus agent_id. Either event can arrive first or alone:
+ * a dashboard opened mid-session, or a log that starts mid-way.
+ */
+export interface SubagentRow {
+  session_id: string;
+  agent_id: string;
+  agent_type?: string;
+  /** Null when only the stop was seen. */
+  started_at: string | null;
+  ended_at: string | null;
+  duration_ms: number | null;
+  status: "in_progress" | "completed" | "errored" | "interrupted";
+  /** Size of the subagent's final message; the text is not recorded. */
+  response_bytes: number | null;
 }
 
 export interface FileEventRow {
@@ -190,6 +225,18 @@ export interface ReadModelStore {
   ): Promise<void>;
   /** Insert a file event, keyed on event_id. Returns false if already present. */
   insertFileEvent(row: FileEventRow): Promise<boolean>;
+  /** Insert a prompt, keyed on event_id. Returns false if already present. */
+  insertPrompt(row: PromptRow): Promise<boolean>;
+  /**
+   * Create or update a subagent, keyed on session_id + agent_id. A new row
+   * starts from `patch` over an in-progress default; an existing row takes
+   * the defined fields of `patch`, so a late start does not undo a stop.
+   */
+  upsertSubagent(
+    sessionId: string,
+    agentId: string,
+    patch: Partial<Omit<SubagentRow, "session_id" | "agent_id">>,
+  ): Promise<void>;
   /**
    * Insert a risk event, keyed on session_id + rule_id + related_event_id
    * rather than event_id. Two analyzer runs over the same tool call mint
@@ -215,6 +262,10 @@ export interface ReadModelStore {
   listAllToolCalls(): Promise<ToolCallRow[]>;
   listFileEvents(sessionId: string): Promise<FileEventRow[]>;
   listRiskEvents(sessionId: string): Promise<RiskEventRow[]>;
+  /** The session's prompts, oldest first. */
+  listPrompts(sessionId: string): Promise<PromptRow[]>;
+  /** The session's subagents, by start time (rows without one last). */
+  listSubagents(sessionId: string): Promise<SubagentRow[]>;
   /** Best-effort close. Not all stores need it. */
   close(): Promise<void>;
 }

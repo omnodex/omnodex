@@ -69,7 +69,12 @@ export async function broadcastProjection(
   switch (event.event_type) {
     case "session.started":
     case "session.ended":
-    case "session.renamed": {
+    case "session.renamed":
+    // The page reloads its snapshot on any message, which picks up the new
+    // prompt or subagent row; the session row is what changed visibly.
+    case "prompt.submitted":
+    case "subagent.started":
+    case "subagent.stopped": {
       const row = await store.getSession(event.session_id);
       if (row) server.broadcast({ type: "session.upserted", payload: row });
       break;

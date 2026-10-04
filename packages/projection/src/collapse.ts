@@ -25,9 +25,11 @@ import { riskScoreFor, roundRiskScore } from "@omnodex/shared";
 import {
   findingKey,
   type FileEventRow,
+  type PromptRow,
   type ReadModelStore,
   type RiskEventRow,
   type SessionRow,
+  type SubagentRow,
   type ToolCallRow,
 } from "./read-model.js";
 
@@ -45,16 +47,25 @@ export interface ReadModelSnapshot {
   tool_calls: Record<string, CollapsedToolCallRow[]>;
   file_events: Record<string, FileEventRow[]>;
   risk_events: Record<string, RiskEventRow[]>;
+  /** Only sessions that have any; absent from readers that predate them. */
+  prompts?: Record<string, PromptRow[]>;
+  subagents?: Record<string, SubagentRow[]>;
 }
 
 /** Read every session and its rows from a store. */
 export async function readSnapshot(store: ReadModelStore): Promise<ReadModelSnapshot> {
   const sessions = await store.listSessions();
-  const snapshot: ReadModelSnapshot = { sessions, tool_calls: {}, file_events: {}, risk_events: {} };
+  const snapshot: ReadModelSnapshot = {
+    sessions, tool_calls: {}, file_events: {}, risk_events: {}, prompts: {}, subagents: {},
+  };
   for (const { session_id: id } of sessions) {
     snapshot.tool_calls[id] = await store.listToolCalls(id);
     snapshot.file_events[id] = await store.listFileEvents(id);
     snapshot.risk_events[id] = await store.listRiskEvents(id);
+    const prompts = await store.listPrompts(id);
+    if (prompts.length) snapshot.prompts![id] = prompts;
+    const subagents = await store.listSubagents(id);
+    if (subagents.length) snapshot.subagents![id] = subagents;
   }
   return snapshot;
 }

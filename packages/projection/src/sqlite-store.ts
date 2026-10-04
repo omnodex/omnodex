@@ -21,9 +21,11 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type {
   FileEventRow,
+  PromptRow,
   ReadModelStore,
   RiskEventRow,
   SessionRow,
+  SubagentRow,
   ToolCallRow,
 } from "./read-model.js";
 import type { RiskSeverity } from "@omnodex/shared";
@@ -73,7 +75,28 @@ CREATE TABLE IF NOT EXISTS tool_calls (
   response_bytes INTEGER,
   error_message TEXT,
   interceptor TEXT,
-  correlation_id TEXT
+  correlation_id TEXT,
+  agent_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS prompts (
+  event_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id),
+  prompt TEXT NOT NULL,
+  prompt_id TEXT,
+  at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS subagents (
+  session_id TEXT NOT NULL REFERENCES sessions(session_id),
+  agent_id TEXT NOT NULL,
+  agent_type TEXT,
+  started_at TEXT,
+  ended_at TEXT,
+  duration_ms INTEGER,
+  status TEXT NOT NULL,
+  response_bytes INTEGER,
+  PRIMARY KEY (session_id, agent_id)
 );
 
 CREATE TABLE IF NOT EXISTS file_events (
@@ -103,6 +126,7 @@ CREATE TABLE IF NOT EXISTS risk_events (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_file_events_session ON file_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_risk_events_session ON risk_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_last_event ON sessions(last_event_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_interceptor ON sessions(interceptor, last_event_at);
@@ -217,6 +241,10 @@ export class SqliteReadModelStore implements ReadModelStore {
 
     // Migration 8: the session's title (2026-10-01).
     this.addColumnIfMissing("sessions", "title", "TEXT");
+
+    // Migration 9: the subagent a tool call ran in (2026-10-02). The prompts
+    // and subagents tables are new, so SCHEMA_SQL creates them everywhere.
+    this.addColumnIfMissing("tool_calls", "agent_id", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -334,8 +362,8 @@ export class SqliteReadModelStore implements ReadModelStore {
     const db = this.requireDb();
     const stmt = db.prepare(
       `INSERT INTO tool_calls
-        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message, interceptor, correlation_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (tool_call_id, session_id, tool_name, mcp_server, parameters_json, started_at, ended_at, duration_ms, status, response_bytes, error_message, interceptor, correlation_id, agent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tool_call_id) DO NOTHING`,
     );
     const result = stmt.run(
@@ -352,6 +380,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.error_message,
       row.interceptor ?? null,
       row.correlation_id ?? null,
+      row.agent_id ?? null,
     );
     return Number(result.changes) > 0;
   }
@@ -404,6 +433,34 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.at,
     );
     return Number(result.changes) > 0;
+  }
+
+  async insertPrompt(row: PromptRow): Promise<boolean> {
+    const db = this.requireDb();
+    const stmt = db.prepare(
+      `INSERT INTO prompts (event_id, session_id, prompt, prompt_id, at)
+        VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(event_id) DO NOTHING`,
+    );
+    const result = stmt.run(row.event_id, row.session_id, row.prompt, row.prompt_id ?? null, row.at);
+    return Number(result.changes) > 0;
+  }
+
+  async upsertSubagent(
+    sessionId: string,
+    agentId: string,
+    patch: Partial<Omit<SubagentRow, "session_id" | "agent_id">>,
+  ): Promise<void> {
+    const db = this.requireDb();
+    db.prepare(
+      `INSERT INTO subagents (session_id, agent_id, status) VALUES (?, ?, 'in_progress')
+       ON CONFLICT(session_id, agent_id) DO NOTHING`,
+    ).run(sessionId, agentId);
+    const entries = Object.entries(patch).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) return;
+    const sets = entries.map(([k]) => `${k} = ?`).join(", ");
+    db.prepare(`UPDATE subagents SET ${sets} WHERE session_id = ? AND agent_id = ?`)
+      .run(...(entries.map(([, v]) => v) as never[]), sessionId, agentId);
   }
 
   async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
@@ -494,6 +551,23 @@ export class SqliteReadModelStore implements ReadModelStore {
     );
   }
 
+  async listPrompts(sessionId: string): Promise<PromptRow[]> {
+    const db = this.requireDb();
+    const rows = db.prepare(
+      `SELECT event_id, session_id, prompt, prompt_id, at FROM prompts WHERE session_id = ? ORDER BY at`,
+    ).all(sessionId) as unknown as Array<PromptRow & { prompt_id: string | null }>;
+    return rows.map(({ prompt_id, ...r }) => ({ ...r, ...(prompt_id ? { prompt_id } : {}) }));
+  }
+
+  async listSubagents(sessionId: string): Promise<SubagentRow[]> {
+    const db = this.requireDb();
+    const rows = db.prepare(
+      `SELECT session_id, agent_id, agent_type, started_at, ended_at, duration_ms, status, response_bytes
+         FROM subagents WHERE session_id = ? ORDER BY started_at IS NULL, started_at`,
+    ).all(sessionId) as unknown as Array<Omit<SubagentRow, "agent_type"> & { agent_type: string | null }>;
+    return rows.map(({ agent_type, ...r }) => ({ ...r, ...(agent_type ? { agent_type } : {}) }));
+  }
+
   async close(): Promise<void> {
     if (this.db) {
       this.db.close();
@@ -545,6 +619,7 @@ interface ToolCallRowRaw {
   error_message: string | null;
   interceptor: string | null;
   correlation_id: string | null;
+  agent_id: string | null;
 }
 
 interface RiskEventRowRaw {
@@ -602,5 +677,6 @@ function toToolCallRow(raw: ToolCallRowRaw): ToolCallRow {
     error_message: raw.error_message,
     interceptor: raw.interceptor ?? undefined,
     correlation_id: raw.correlation_id ?? null,
+    ...(raw.agent_id ? { agent_id: raw.agent_id } : {}),
   };
 }

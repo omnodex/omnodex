@@ -97,12 +97,17 @@ test("the payload allowlist is exactly these fields", () => {
     tool_calls: [
       "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
       "correlation_id", "parameters_json", "started_at", "ended_at",
-      "duration_ms", "status", "response_bytes", "error_message",
+      "duration_ms", "status", "response_bytes", "error_message", "agent_id",
     ],
     file_events: ["event_id", "session_id", "direction", "path", "bytes", "at"],
     risk_events: [
       "event_id", "session_id", "related_event_id", "severity", "category",
       "description", "rule_id", "detected_at", "correlation_id",
+    ],
+    prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
+    subagents: [
+      "session_id", "agent_id", "agent_type", "started_at", "ended_at",
+      "duration_ms", "status", "response_bytes",
     ],
   });
 });
@@ -218,4 +223,28 @@ test("a database from before the platform column migrates and reads null", async
   assert.equal((await store.getSession("sess_old")).platform, null);
   const payload = await serializeReadModel(store);
   assert.equal(payload.sessions[0].platform, null);
+});
+
+test("prompts, subagents and a subagent's tool calls reach the payload; other sessions get no empty entries", async (t) => {
+  const store = await sqliteStore(t);
+  await project(store, [
+    START,
+    event({ event_id: "e_prompt", event_type: "prompt.submitted", prompt: "Summarise /home/case/repo", prompt_id: "p-1" }),
+    event({ event_id: "e_sub_start", event_type: "subagent.started", agent_id: "agent-1", agent_type: "Explore" }),
+    event({ ...INVOKED, agent_id: "agent-1" }),
+    event({ event_id: "e_sub_stop", event_type: "subagent.stopped", agent_id: "agent-1", agent_type: "Explore", duration_ms: 900, status: "completed", response_bytes: 40 }),
+    event({ event_id: "e_other", event_type: "session.started", session_id: "sess_plain", user: "case", project_path: "/home/case/other", mcp_servers: [] }),
+  ]);
+  const payload = await serializeReadModel(store);
+  assert.deepEqual(payload.prompts.sess_fields, [
+    { event_id: "e_prompt", session_id: "sess_fields", prompt: "Summarise /home/case/repo", prompt_id: "p-1", at: AT },
+  ]);
+  assert.deepEqual(payload.subagents.sess_fields, [{
+    session_id: "sess_fields", agent_id: "agent-1", agent_type: "Explore", started_at: AT, ended_at: AT,
+    duration_ms: 900, status: "completed", response_bytes: 40,
+  }]);
+  assert.equal(payload.tool_calls.sess_fields[0].agent_id, "agent-1");
+  assert.equal("sess_plain" in payload.prompts, false);
+  assert.equal("sess_plain" in payload.subagents, false);
+  assert.equal("agent_id" in payload.tool_calls.sess_plain.concat([{}])[0], false);
 });
