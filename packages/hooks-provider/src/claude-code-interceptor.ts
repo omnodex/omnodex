@@ -22,6 +22,11 @@
  *   SubagentStart
  *   SubagentStop
  *   UserPromptSubmit
+ *   PermissionRequest   (matcher "*")
+ *   PermissionDenied    (matcher "*")
+ *
+ * An install made before an event was added lacks it until install runs
+ * again; missingEvents() names what is missing, for `omnodex status`.
  *
  * All handlers are registered with `async: true` so the agent's
  * execution path is never blocked.
@@ -115,6 +120,8 @@ const EVENT_NAMES = [
   "SubagentStart",
   "SubagentStop",
   "UserPromptSubmit",
+  "PermissionRequest",
+  "PermissionDenied",
 ] as const;
 
 export class ClaudeCodeInterceptor implements Interceptor {
@@ -223,6 +230,20 @@ export class ClaudeCodeInterceptor implements Interceptor {
    * True for a handler Omnodex wrote: it carries our tag, runs exactly the
    * command this interceptor would write, or runs the launcher or shim.
    */
+  /**
+   * The events this version subscribes to that the installed hooks lack:
+   * empty when up to date, or when nothing is installed. Re-running install
+   * adds them and leaves other handlers alone.
+   */
+  async missingEvents(): Promise<string[]> {
+    const existing = await this.readSettings(this.settingsFilePath());
+    const hooks = existing.hooks ?? {};
+    const has = (eventName: string) =>
+      (hooks[eventName] ?? []).some((g) => (g.hooks ?? []).some((h) => this.isOmnodexHandler(h)));
+    if (!EVENT_NAMES.some(has)) return [];
+    return EVENT_NAMES.filter((eventName) => !has(eventName));
+  }
+
   private isOmnodexHandler(handler: HookHandler): boolean {
     if (handler[OMNODEX_TAG] === true) return true;
     const command = handler.command;

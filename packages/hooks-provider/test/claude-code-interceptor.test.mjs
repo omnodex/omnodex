@@ -276,3 +276,33 @@ test("uninstall removes untagged Omnodex handlers and keeps foreign ones", async
   assert.equal(after.hooks.PostToolUse[0].hooks[0].command, "echo user hook");
   assert.equal(await interceptor.isInstalled(), false);
 });
+
+test("install subscribes to the permission hooks", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = makeInterceptor(projectPath);
+  await interceptor.install();
+  const settings = JSON.parse(await readFile(interceptor.settingsFilePath(), "utf8"));
+  assert.ok(settings.hooks.PermissionRequest, "PermissionRequest");
+  assert.ok(settings.hooks.PermissionDenied, "PermissionDenied");
+  assert.deepEqual(await interceptor.missingEvents(), []);
+});
+
+test("missingEvents names the hooks an older install lacks, and install adds them", async (t) => {
+  const projectPath = await fresh(t);
+  const older = ["SessionStart", "SessionEnd", "PreToolUse", "PostToolUse", "PostToolUseFailure", "SubagentStart", "SubagentStop", "UserPromptSubmit"];
+  const handler = { type: "command", command: 'node "$HOME/.omnodex/bin/claude-hook-launcher.js"', timeout: 30, async: true };
+  const settingsPath = await writeHandlers(projectPath, older.map((name) => [name, handler]));
+  const interceptor = makeInterceptor(projectPath);
+  assert.deepEqual(await interceptor.missingEvents(), ["PermissionRequest", "PermissionDenied"]);
+
+  await interceptor.install();
+  assert.deepEqual(await interceptor.missingEvents(), []);
+  const after = JSON.parse(await readFile(settingsPath, "utf8"));
+  assert.equal(after.hooks.PreToolUse.length, 1, "the older handler is replaced, not duplicated");
+});
+
+test("missingEvents is empty when nothing is installed", async (t) => {
+  const projectPath = await fresh(t);
+  await writeHandlers(projectPath, [["PreToolUse", { type: "command", command: "echo user hook" }]]);
+  assert.deepEqual(await makeInterceptor(projectPath).missingEvents(), []);
+});

@@ -400,3 +400,61 @@ test("events fired inside a subagent carry its agent_id; main-thread events do n
   );
   assert.equal("agent_id" in main[0], false);
 });
+
+// Permission hooks. Payload fields as Claude Code 2.1.287 sends them.
+
+test("MUST_FIRE: PermissionRequest maps to permission.requested for a builtin tool", () => {
+  const [event] = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PermissionRequest",
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+      permission_suggestions: [{ type: "addRules", rules: [{ toolName: "Bash" }] }],
+    },
+    makeOptions(),
+  );
+  assert.equal(event.event_type, "permission.requested");
+  assert.equal(event.tool_name, "Bash");
+  assert.equal(event.mcp_server, "builtin");
+  assert.deepEqual(event.parameters, { command: "npm test" });
+  assert.equal("tool_call_id" in event, false);
+  assert.equal(JSON.stringify(event).includes("addRules"), false, "suggestions are not recorded");
+});
+
+test("MUST_FIRE: PermissionRequest derives the MCP server from the tool name, or takes the one sent", () => {
+  const [derived] = mapClaudeCodePayload(
+    { ...BASE, hook_event_name: "PermissionRequest", tool_name: "mcp__github__create_issue", tool_input: {} },
+    makeOptions(),
+  );
+  assert.equal(derived.mcp_server, "github");
+  const [sent] = mapClaudeCodePayload(
+    { ...BASE, hook_event_name: "PermissionRequest", tool_name: "mcp__gh__create_issue", tool_input: {}, mcp_server: "github-enterprise" },
+    makeOptions(),
+  );
+  assert.equal(sent.mcp_server, "github-enterprise");
+});
+
+test("MUST_FIRE: PermissionDenied maps to permission.denied with the call id and reason", () => {
+  const [event] = mapClaudeCodePayload(
+    {
+      ...BASE,
+      hook_event_name: "PermissionDenied",
+      tool_name: "Bash",
+      tool_input: { command: "rm -rf /home/case/repo" },
+      tool_use_id: "toolu_denied",
+      reason: "no_verdict",
+    },
+    makeOptions(),
+  );
+  assert.equal(event.event_type, "permission.denied");
+  assert.equal(event.tool_call_id, "toolu_denied");
+  assert.equal(event.reason, "no_verdict");
+  assert.equal(event.mcp_server, "builtin");
+});
+
+test("MUST_NOT_FIRE: permission hooks without a tool name emit nothing", () => {
+  for (const hook_event_name of ["PermissionRequest", "PermissionDenied"]) {
+    assert.deepEqual(mapClaudeCodePayload({ ...BASE, hook_event_name, tool_input: {} }, makeOptions()), [], hook_event_name);
+  }
+});

@@ -295,3 +295,15 @@ test("shim times a subagent from SubagentStart to SubagentStop and logs the prom
   // The id never becomes a path: the timing file stayed inside timing/ and is gone.
   assert.deepEqual(await readdir(path.join(home, "timing")), []);
 });
+
+test("shim logs permission requests and denials", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-permission-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const session_id = "sess-permission-test";
+  const env = { OMNODEX_HOME: home };
+  await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command: "npm test" }, permission_suggestions: [] }, env);
+  await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "PermissionDenied", tool_name: "Bash", tool_input: { command: "rm -rf /tmp/repo" }, tool_use_id: "toolu_x", reason: "user" }, env);
+  const events = await readSessionLog(home, session_id);
+  assert.deepEqual(events.map((e) => e.event_type), ["permission.requested", "permission.denied"]);
+  assert.equal(events[1].reason, "user");
+});
