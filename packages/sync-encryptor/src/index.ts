@@ -81,7 +81,11 @@ export {
   DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS,
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
-export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions } from "./auto-sync.js";
+export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions, DetectResult } from "./auto-sync.js";
+
+// Advanced (Pro) rule usage: counted in the background pass, submitted in batches
+export { readAdvancedUsage, ADVANCED_USAGE_FILE, MAX_AGE_DAYS as ADVANCED_USAGE_MAX_AGE_DAYS } from "./advanced-usage.js";
+export type { AdvancedUsageState } from "./advanced-usage.js";
 
 // Advanced rule bundle refresh (background pass, Pro and Enterprise)
 export { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_ENV } from "./rules-refresh.js";

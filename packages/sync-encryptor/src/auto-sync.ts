@@ -57,6 +57,7 @@ import * as path from "node:path";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense } from "@omnodex/license-client";
 import { licenseCacheStale, readOrFetchLicense } from "./license-cache.js";
+import { addAdvancedUsage, submitAdvancedUsage, type DayCounts } from "./advanced-usage.js";
 import { pushEventsToCloud } from "./shim-push.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
@@ -155,13 +156,20 @@ export interface StartBackgroundSyncOptions {
   detect?: boolean;
 }
 
+/**
+ * What a detection pass returns: the findings it appended to the log, and,
+ * from callers that count it, the pass's advanced rule usage.
+ */
+export type DetectResult =
+  | TraceEvent[]
+  | { findings: TraceEvent[]; advanced?: DayCounts };
+
 export interface RunAutoSyncOptions {
   /**
-   * Detection pass run under the lock before the sync. Returns the findings
-   * it appended to the log. Callers load the analyzer inside it, so the
-   * per-event hook path never imports it.
+   * Detection pass run under the lock before the sync. Callers load the
+   * analyzer inside it, so the per-event hook path never imports it.
    */
-  detect?: () => Promise<TraceEvent[]>;
+  detect?: () => Promise<DetectResult>;
   /** Live push override for tests. */
   pushFn?: (events: TraceEvent[], home: string) => Promise<boolean>;
   /**
@@ -171,6 +179,8 @@ export interface RunAutoSyncOptions {
   refreshRules?: (home: string) => Promise<unknown>;
   /** Stale license re-validation, run first. Defaults to refreshStaleLicense. */
   refreshLicense?: (home: string) => Promise<unknown>;
+  /** Advanced usage submission, after detection. Defaults to submitUsage. */
+  submitUsage?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +291,9 @@ export async function runAutoSync(
       await (opts.refreshRules ?? refreshRuleBundle)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
+    // Sends counted advanced usage, at most every 15 minutes; a no-op
+    // without counts or credentials.
+    await (opts.submitUsage ?? submitUsage)(home).catch(() => undefined);
 
     if (process.env.OMNODEX_AUTO_SYNC === "0") return "disabled";
     const settings = await readSyncSettings(home);
@@ -315,6 +328,15 @@ export async function runAutoSync(
   } finally {
     await releaseLock(home);
   }
+}
+
+/** Submit counted advanced rule usage with this home's credentials. */
+export async function submitUsage(home: string, fetchFn?: typeof fetch): Promise<string> {
+  const config = await readJson(path.join(home, "stream-config.json"));
+  const apiToken = typeof config?.api_token === "string" ? config.api_token : "";
+  if (!apiToken) return "no-credentials";
+  const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
+  return submitAdvancedUsage(home, { apiUrl, apiToken, fetchFn });
 }
 
 export type LicenseRefreshOutcome = "no-credentials" | "fresh" | "waiting" | "refreshed" | "failed";
@@ -393,11 +415,14 @@ function detectionEnabled(): boolean {
  */
 async function runDetection(
   home: string,
-  detect: () => Promise<TraceEvent[]>,
+  detect: () => Promise<DetectResult>,
   push: (events: TraceEvent[], home: string) => Promise<boolean>,
 ): Promise<void> {
   try {
-    const findings = await detect();
+    const result = await detect();
+    const findings = Array.isArray(result) ? result : result.findings;
+    // Advanced (Pro) rule usage, counted here and submitted after the pass.
+    if (!Array.isArray(result) && result.advanced) await addAdvancedUsage(home, result.advanced);
     // pushEventsToCloud is a no-op without credentials or live_streaming.
     if (findings.length > 0) await push(findings, home).catch(() => false);
     await updateAutoSyncState(home, {

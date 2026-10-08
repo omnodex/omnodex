@@ -61,5 +61,12 @@ export function detectRisks(
     }
   }
 
-  return { sessionId, newEvents, skipped: evaluator.stats().skipped };
+  const stats = evaluator.stats();
+  return {
+    sessionId,
+    newEvents,
+    skipped: stats.skipped,
+    evaluated: stats.evaluated,
+    advancedActive: evaluator.rules.some((r) => r.tier === "advanced"),
+  };
 }

@@ -457,4 +457,8 @@ export interface DetectionResult {
   newEvents: import("@omnodex/shared").RiskDetectedEvent[];
   /** Existing detections that were skipped due to deduplication. */
   skipped: number;
+  /** tool.invoked events judged in this call (all of the session's, each run). */
+  evaluated: number;
+  /** Whether advanced rules were among the rules that judged them. */
+  advancedActive: boolean;
 }
