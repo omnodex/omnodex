@@ -37,6 +37,7 @@ export {
   decodeEnvelope,
   ENVELOPE_MAGIC,
   ENVELOPE_VERSION,
+  ENVELOPE_VERSION_GZIP,
   SALT_LEN,
   IV_LEN,
   HEADER_LEN,

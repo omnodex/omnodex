@@ -10,6 +10,7 @@ import {
   decodeEnvelope,
   ENVELOPE_MAGIC,
   ENVELOPE_VERSION,
+  ENVELOPE_VERSION_GZIP,
   HEADER_LEN,
   SALT_LEN,
   IV_LEN,
@@ -57,6 +58,18 @@ test("encrypt -> envelope -> decode -> decrypt recovers plaintext (browser-style
   assert.equal(new TextDecoder().decode(recovered), original);
 });
 
+test("a version 2 envelope keeps the same header and round-trips its version", () => {
+  const salt = new Uint8Array(SALT_LEN).fill(1);
+  const iv = new Uint8Array(IV_LEN).fill(2);
+  const env = encodeEnvelope(salt, iv, new Uint8Array([9, 9]), ENVELOPE_VERSION_GZIP);
+  assert.equal(env[4], 2);
+  const dec = decodeEnvelope(env);
+  assert.equal(dec.version, ENVELOPE_VERSION_GZIP);
+  assert.deepEqual(dec.salt, salt);
+  assert.deepEqual(dec.iv, iv);
+  assert.throws(() => encodeEnvelope(salt, iv, new Uint8Array(1), 3), /unsupported version/);
+});
+
 test("decodeEnvelope rejects a too-short buffer", () => {
   assert.throws(() => decodeEnvelope(new Uint8Array(10)), /too short/);
 });
@@ -69,7 +82,7 @@ test("decodeEnvelope rejects bad magic", () => {
 
 test("decodeEnvelope rejects an unsupported version", () => {
   const env = encodeEnvelope(new Uint8Array(SALT_LEN), new Uint8Array(IV_LEN), new Uint8Array([1, 2, 3]));
-  env[4] = 0x02; // bump to an unknown version
+  env[4] = 0x03; // an unknown version
   assert.throws(() => decodeEnvelope(env), /unsupported version/);
 });
 

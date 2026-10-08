@@ -22,11 +22,21 @@
  *
  * There are no multi-byte integer fields, so byte order is irrelevant.
  * The version byte lets us evolve KDF params (e.g. a low-end 32 MB profile)
- * without breaking previously-synced blobs.
+ * or the payload's encoding without breaking previously-synced blobs:
+ *
+ *   1  the encrypted payload is JSON
+ *   2  the encrypted payload is gzipped JSON (what sync writes)
+ *
+ * The header is the same in both, so the cloud, which never decrypts, only
+ * checks the version is one it knows.
  */
 
 export const ENVELOPE_MAGIC = Uint8Array.of(0x4f, 0x4d, 0x44, 0x58); // "OMDX"
+/** The encrypted payload is JSON. */
 export const ENVELOPE_VERSION = 0x01;
+/** The encrypted payload is gzipped JSON. */
+export const ENVELOPE_VERSION_GZIP = 0x02;
+const ENVELOPE_VERSIONS: readonly number[] = [ENVELOPE_VERSION, ENVELOPE_VERSION_GZIP];
 
 export const SALT_LEN = 16;
 export const IV_LEN = 12;
@@ -42,14 +52,18 @@ export interface DecodedEnvelope {
 }
 
 /**
- * Pack salt + IV + ciphertext into a v1 envelope buffer.
- * @throws if salt or IV are the wrong length.
+ * Pack salt + IV + ciphertext into an envelope buffer of the given version.
+ * @throws if salt or IV are the wrong length, or the version is unknown.
  */
 export function encodeEnvelope(
   salt: Uint8Array,
   iv: Uint8Array,
   ciphertext: Uint8Array,
+  version: number = ENVELOPE_VERSION,
 ): Uint8Array {
+  if (!ENVELOPE_VERSIONS.includes(version)) {
+    throw new Error(`envelope: unsupported version ${version}`);
+  }
   if (salt.length !== SALT_LEN) {
     throw new Error(`envelope: salt must be ${SALT_LEN} bytes, got ${salt.length}`);
   }
@@ -58,7 +72,7 @@ export function encodeEnvelope(
   }
   const out = new Uint8Array(HEADER_LEN + ciphertext.length);
   out.set(ENVELOPE_MAGIC, 0);
-  out[MAGIC_LEN] = ENVELOPE_VERSION;
+  out[MAGIC_LEN] = version;
   out.set(salt, MAGIC_LEN + 1);
   out.set(iv, MAGIC_LEN + 1 + SALT_LEN);
   out.set(ciphertext, HEADER_LEN);
@@ -66,7 +80,7 @@ export function encodeEnvelope(
 }
 
 /**
- * Parse a v1 envelope back into its parts.
+ * Parse an envelope back into its parts.
  * @throws if the buffer is too short, the magic is wrong, or the version
  *         is unsupported.
  */
@@ -80,7 +94,7 @@ export function decodeEnvelope(bytes: Uint8Array): DecodedEnvelope {
     }
   }
   const version = bytes[MAGIC_LEN]!;
-  if (version !== ENVELOPE_VERSION) {
+  if (!ENVELOPE_VERSIONS.includes(version)) {
     throw new Error(`envelope: unsupported version ${version}`);
   }
   const salt = bytes.slice(MAGIC_LEN + 1, MAGIC_LEN + 1 + SALT_LEN);

@@ -56,6 +56,8 @@ export interface SyncPushRequest {
   machine_id: string;
   /** Optional human-readable machine label. */
   machine_label?: string;
+  /** Envelope version for the upload: 2 when encrypted_payload is gzipped JSON. Default 1. */
+  envelope_version?: number;
 }
 
 export interface SyncPushResponse {
@@ -101,7 +103,7 @@ export class HttpSyncTransport implements SyncTransport {
     // Pack salt + IV + ciphertext into a self-describing v1 envelope.
     // customer_id is derived server-side from the bearer token; payload_bytes
     // is recomputed server-side from the stored body.
-    const envelope = encodeEnvelope(req.kdf_salt, req.iv, req.encrypted_payload);
+    const envelope = encodeEnvelope(req.kdf_salt, req.iv, req.encrypted_payload, req.envelope_version);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);

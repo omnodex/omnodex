@@ -14,6 +14,8 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { argon2id } from "hash-wasm";
+import { gunzipSync } from "node:zlib";
+import { SyncEncryptor, decodeEnvelope, ENVELOPE_VERSION_GZIP } from "../dist/index.js";
 
 // ---------------------------------------------------------------------------
 // Inline crypto helpers (mirror the production API for test-side decrypt)
@@ -70,6 +72,8 @@ class MockReadModelStore {
   async listToolCalls(id) { return this._toolCalls[id] ?? []; }
   async listFileEvents(id) { return this._fileEvents[id] ?? []; }
   async listRiskEvents(id) { return this._riskEvents[id] ?? []; }
+  async listPrompts() { return []; }
+  async listSubagents() { return []; }
   async close() {}
 }
 
@@ -367,6 +371,34 @@ describe("SyncEncryptor end-to-end", () => {
     const b64 = Buffer.from(pushed.encrypted_payload).toString("base64");
     const roundtrip = new Uint8Array(Buffer.from(b64, "base64"));
     assert.deepEqual(roundtrip, pushed.encrypted_payload);
+  });
+});
+
+describe("SyncEncryptor compression", () => {
+  it("gzips the payload before encrypting and marks the upload as envelope version 2", async () => {
+    const store = new MockReadModelStore();
+    for (let i = 0; i < 20; i++) {
+      await store.upsertSession(makeSession(`sess_${i}`));
+      for (let j = 0; j < 10; j++) await store.insertToolCall(makeToolCall(`sess_${i}`, `tc_${i}_${j}`));
+    }
+    const transport = new MockSyncTransport();
+    const encryptor = new SyncEncryptor({
+      passphrase: "case-passphrase", customerId: "cust_case", transport, store, eventLog: new MockEventLog(), machineId: "m_case",
+    });
+    const result = await encryptor.sync();
+
+    const pushed = transport.pushes[0];
+    assert.equal(pushed.envelope_version, ENVELOPE_VERSION_GZIP);
+    // What is uploaded is a fraction of the JSON it carries.
+    assert.ok(pushed.encrypted_payload.length < result.payloadBytes / 3, `${pushed.encrypted_payload.length} vs ${result.payloadBytes}`);
+
+    const key = await deriveKeyForTest("case-passphrase", result.kdfSalt);
+    const pt = new Uint8Array(await subtle.decrypt({ name: "AES-GCM", iv: pushed.iv }, key, pushed.encrypted_payload));
+    const payload = JSON.parse(gunzipSync(pt).toString("utf8"));
+    assert.equal(payload.sessions.length, 20);
+    assert.equal(payload.tool_calls.sess_3.length, 10);
+    // The size the cloud's cap applies to: the 33-byte header plus the ciphertext.
+    assert.equal(result.blobBytes, 33 + pushed.encrypted_payload.length);
   });
 });
 
