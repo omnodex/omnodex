@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   // Checked before anything touches stdio: this process has no MCP peer.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
     await runAutoSync(home, {
-      detect: async () => (await import("@omnodex/analyzer")).runBackgroundDetect(home),
+      detect: async () => (await import("@omnodex/analyzer")).runBackgroundDetection(home),
     });
     return;
   }

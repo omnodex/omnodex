@@ -19,6 +19,12 @@
  * while a run is in progress, including the run's own findings, only cause
  * one extra rescan next time, never a missed event.
  *
+ * The same state counts, per session, the tool calls already judged by
+ * advanced rules. A session is re-read whole whenever it grows, so the count
+ * of advanced evaluations a run reports is the session's calls beyond that
+ * mark: each call is counted once, however often its session is rescanned.
+ * That count is the Pro usage meter (PAID_RULE_DELIVERY.md section 5).
+ *
  * runBackgroundDetect() is the entry point for the detached background
  * child that hook shims and the MCP proxy start (see startBackgroundSync in
  * @omnodex/sync-encryptor).
@@ -71,6 +77,13 @@ export interface DetectLogResult {
   newEvents: RiskDetectedEvent[];
   /** Findings that were already in the log. */
   skipped: number;
+  /**
+   * Tool calls judged by advanced rules for the first time in this run
+   * (counted once per call with a state file; every call without one).
+   */
+  advancedEvaluated: number;
+  /** New findings from advanced rules in this run. */
+  advancedFindings: number;
 }
 
 interface DetectState {
@@ -78,12 +91,16 @@ interface DetectState {
   last_run_at?: string;
   /** Per root, per session: file size in bytes when last evaluated. */
   sessions: Record<string, Record<string, number>>;
+  /** Per root, per session: tool calls already counted for the usage meter. */
+  counted?: Record<string, Record<string, number>>;
 }
 
 export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLogResult> {
   const newEventId = opts.newEventId ?? defaultNewEventId;
   const state = opts.statePath ? await readState(opts.statePath) : null;
-  const result: DetectLogResult = { scanned: 0, unchanged: 0, newEvents: [], skipped: 0 };
+  const result: DetectLogResult = {
+    scanned: 0, unchanged: 0, newEvents: [], skipped: 0, advancedEvaluated: 0, advancedFindings: 0,
+  };
 
   for (const root of opts.roots) {
     // A root with no index has no sessions. Skip it rather than init() it,
@@ -92,6 +109,7 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
     const log = new EventLog({ root });
     await log.init();
     const seen = state ? (state.sessions[root] ??= {}) : null;
+    const counted = state ? ((state.counted ??= {})[root] ??= {}) : null;
     try {
       const all = await log.listSessions();
       const sessionIds = opts.sessionId ? all.filter((id) => id === opts.sessionId) : all;
@@ -110,6 +128,16 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
             machineState: opts.machineState,
           });
           result.skipped += detection.skipped;
+          // Calls beyond the session's mark are new. A session evaluated
+          // before the mark existed starts at its current count, so history
+          // from before an upgrade is never counted.
+          const calls = detection.evaluated;
+          const prior = counted?.[sessionId] ?? (seen?.[sessionId] !== undefined ? calls : 0);
+          if (detection.advancedActive) {
+            result.advancedEvaluated += Math.max(0, calls - prior);
+            result.advancedFindings += detection.newEvents.filter((e) => e.rule_tier === "advanced").length;
+          }
+          if (counted) counted[sessionId] = Math.max(prior, calls);
           if (detection.newEvents.length > 0) {
             await log.appendMany(detection.newEvents);
             result.newEvents.push(...detection.newEvents);
@@ -144,6 +172,21 @@ export async function runBackgroundDetect(
   home: string,
   opts: { newEventId?: () => string; registry?: RuleRegistry } = {},
 ): Promise<RiskDetectedEvent[]> {
+  return (await runBackgroundDetection(home, opts)).findings;
+}
+
+/** What one background pass found, and the advanced usage it counted. */
+export interface BackgroundDetection {
+  findings: RiskDetectedEvent[];
+  /** Counts for the Pro usage meter (PAID_RULE_DELIVERY.md section 5). */
+  advanced: { evaluated: number; findings: number };
+}
+
+/** runBackgroundDetect, also reporting the pass's advanced rule usage. */
+export async function runBackgroundDetection(
+  home: string,
+  opts: { newEventId?: () => string; registry?: RuleRegistry } = {},
+): Promise<BackgroundDetection> {
   const roots = [path.join(home, "event-log")];
   const result = await detectEventLogs({
     roots,
@@ -154,7 +197,10 @@ export async function runBackgroundDetect(
     // installation has a bundle it can open.
     registry: opts.registry ?? registryForHost("batch", home),
   });
-  return result.newEvents;
+  return {
+    findings: result.newEvents,
+    advanced: { evaluated: result.advancedEvaluated, findings: result.advancedFindings },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +219,8 @@ async function readState(file: string): Promise<DetectState> {
   try {
     const parsed = JSON.parse(await fs.readFile(file, "utf8")) as Partial<DetectState>;
     if (parsed && parsed.version === 1 && parsed.sessions && typeof parsed.sessions === "object") {
-      return { version: 1, last_run_at: parsed.last_run_at, sessions: parsed.sessions };
+      const counted = parsed.counted && typeof parsed.counted === "object" ? parsed.counted : undefined;
+      return { version: 1, last_run_at: parsed.last_run_at, sessions: parsed.sessions, counted };
     }
   } catch {
     // Missing or unreadable: start over, which costs one full scan.

@@ -29,9 +29,11 @@ export { detectRisks } from "./detect.js";
 export {
   detectEventLogs,
   runBackgroundDetect,
+  runBackgroundDetection,
   DETECT_STATE_FILE,
 } from "./detect-log.js";
 export type {
+  BackgroundDetection,
   DetectLogOptions,
   DetectLogResult,
   SessionDetectReport,

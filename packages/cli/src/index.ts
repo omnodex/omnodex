@@ -59,7 +59,7 @@ import {
   loadAdvancedRules,
   openMachineState,
   registryForHost,
-  runBackgroundDetect,
+  runBackgroundDetection,
 } from "@omnodex/analyzer";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
@@ -73,7 +73,10 @@ import {
   startBackgroundSync,
   readLiveGate,
   clearLiveGate,
+  readAdvancedUsage,
+  ADVANCED_USAGE_MAX_AGE_DAYS,
 } from "@omnodex/sync-encryptor";
+import type { AdvancedUsageState } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
 import {
   generatePassphrase,
@@ -1375,6 +1378,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);
   await printLivePushHealth(paths.home);
+  await printAdvancedUsage(paths.home);
   console.log("");
 
   // If --all, show the full registry instead of per-project detection
@@ -1556,6 +1560,33 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
 async function printLivePushHealth(omnodexHome: string): Promise<void> {
   if (!(await readStreamConfig(omnodexHome))) return;
   console.log(`[status] live push:   ${describeLiveGate(await readLiveGate(omnodexHome))}`);
+}
+
+/** Advanced (Pro) rule usage waiting to be submitted, and any dropped. */
+async function printAdvancedUsage(omnodexHome: string): Promise<void> {
+  const line = describeAdvancedUsage(await readAdvancedUsage(omnodexHome));
+  if (line) console.log(`[status] pro usage:   ${line}`);
+}
+
+/** One line for the advanced usage counter, or null when it has never counted. */
+export function describeAdvancedUsage(state: AdvancedUsageState): string | null {
+  const days = { ...(state.in_flight?.days ?? {}) };
+  for (const [day, c] of Object.entries(state.pending)) {
+    const d = days[day];
+    days[day] = d ? { evaluated: d.evaluated + c.evaluated, findings: d.findings + c.findings } : c;
+  }
+  const waiting = Object.values(days).reduce((n, d) => n + d.evaluated, 0);
+  if (!state.last_submitted_at && waiting === 0 && !state.dropped) return null;
+  const parts = [`${waiting} advanced rule checks waiting to send`];
+  if (state.last_submitted_at) parts.push(`last sent ${state.last_submitted_at}`);
+  if (state.last_error) parts.push(`last error: ${state.last_error}`);
+  if (state.dropped) {
+    parts.push(
+      `${state.dropped.evaluated} checks over ${state.dropped.days} day(s) dropped (older than ` +
+        `${ADVANCED_USAGE_MAX_AGE_DAYS} days or refused), not billed`,
+    );
+  }
+  return parts.join("; ");
 }
 
 /** One line for the live push gate's state. */
@@ -1951,7 +1982,7 @@ async function main(): Promise<void> {
   // to a stdout nobody is reading.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
     const { home } = resolvePaths();
-    await runAutoSync(home, { detect: () => runBackgroundDetect(home) });
+    await runAutoSync(home, { detect: () => runBackgroundDetection(home) });
     return;
   }
 
