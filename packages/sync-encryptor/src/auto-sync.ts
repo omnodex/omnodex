@@ -39,6 +39,11 @@
  *   - auto_sync_min_interval_seconds: <n>   minimum gap between syncs (default 60)
  *   - auto_sync_interval_seconds: <n>       proxy timer period, and how stale a
  *                                           pass may get mid-session (default 900)
+ * The child also keeps the licence cache current: once license-cache.json is
+ * past its TTL (a day), it re-validates before anything reads the tier, so a
+ * plan change reaches the install without a CLI command. Hooks
+ * only ever read the cache.
+ *
  * OMNODEX_AUTO_SYNC=0 in the environment also turns sync off.
  * OMNODEX_AUTO_DETECT=0 turns background detection off.
  *
@@ -50,7 +55,8 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { TraceEvent } from "@omnodex/shared";
-import { readOrFetchLicense } from "./license-cache.js";
+import { validateLicense } from "@omnodex/license-client";
+import { licenseCacheStale, readOrFetchLicense } from "./license-cache.js";
 import { pushEventsToCloud } from "./shim-push.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
@@ -71,8 +77,15 @@ const MIN_AUTO_SYNC_INTERVAL_SECONDS = 30;
 /** A lock older than this is assumed to belong to a crashed sync. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
-/** Bound on the one-time license fetch for a home that has no cache yet. */
+/** Bound on a licence fetch: a home with no cache yet, or a stale one. */
 const LICENSE_FETCH_TIMEOUT_MS = 3000;
+
+/**
+ * After a failed licence re-validation (offline, server error, revoked
+ * token), the background pass waits this long before trying again, so an
+ * install that cannot reach the API makes at most one request an hour.
+ */
+export const LICENSE_RETRY_MS = 60 * 60 * 1000;
 
 const STATE_FILE = "auto-sync-state.json";
 const LOCK_FILE = "auto-sync.lock";
@@ -91,6 +104,8 @@ export interface AutoSyncState {
    * past the minimum interval starts it (backgroundPassDue).
    */
   pass_pending?: boolean;
+  /** Last background licence re-validation attempt (refreshStaleLicense). */
+  license_checked_at?: string;
 }
 
 export type AutoSyncDecision =
@@ -154,6 +169,8 @@ export interface RunAutoSyncOptions {
    * with the current bundle. Defaults to refreshRuleBundle; tests replace it.
    */
   refreshRules?: (home: string) => Promise<unknown>;
+  /** Stale licence re-validation, run first. Defaults to refreshStaleLicense. */
+  refreshLicense?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +272,10 @@ export async function runAutoSync(
 ): Promise<AutoSyncOutcome> {
   if (!(await acquireLock(home))) return "in-progress";
   try {
+    // Before anything reads the tier, so an upgrade starts the rule refresh
+    // and a downgrade or cancellation stops sync in this same pass.
+    await (opts.refreshLicense ?? refreshStaleLicense)(home).catch(() => undefined);
+
     if (opts.detect && detectionEnabled()) {
       // Pro and Enterprise only; anyone else returns before any request.
       await (opts.refreshRules ?? refreshRuleBundle)(home).catch(() => undefined);
@@ -294,6 +315,38 @@ export async function runAutoSync(
   } finally {
     await releaseLock(home);
   }
+}
+
+export type LicenseRefreshOutcome = "no-credentials" | "fresh" | "waiting" | "refreshed" | "failed";
+
+/**
+ * Re-validate the licence when this home's cache is past its TTL, so a plan
+ * change (upgrade, downgrade, cancellation) reaches the install within about
+ * a day without anyone running a CLI command. Background child only: at most
+ * one request per TTL when the API answers, one an hour while it does not.
+ */
+export async function refreshStaleLicense(
+  home: string,
+  now = Date.now(),
+): Promise<LicenseRefreshOutcome> {
+  const config = await readJson(path.join(home, "stream-config.json"));
+  const apiToken = typeof config?.api_token === "string" ? config.api_token : "";
+  if (!apiToken) return "no-credentials";
+  if (!(await licenseCacheStale(home, now))) return "fresh";
+
+  const state = await readAutoSyncState(home);
+  const lastCheck = state.license_checked_at ? Date.parse(state.license_checked_at) : NaN;
+  if (!Number.isNaN(lastCheck) && now - lastCheck < LICENSE_RETRY_MS) return "waiting";
+  await updateAutoSyncState(home, { license_checked_at: new Date(now).toISOString() });
+
+  const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
+  const result = await validateLicense({
+    apiBaseUrl: apiUrl,
+    apiToken,
+    cacheDir: home,
+    timeoutMs: LICENSE_FETCH_TIMEOUT_MS,
+  });
+  return result.source === "network" ? "refreshed" : "failed";
 }
 
 /** Read auto-sync-state.json, or an empty state if it is missing. */

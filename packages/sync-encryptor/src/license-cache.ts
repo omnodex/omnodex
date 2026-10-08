@@ -15,7 +15,8 @@
  *
  * An existing cache is used as-is, expired or not, so the per-event cost
  * stays a file read. A failed fetch writes nothing and returns null; the
- * next event tries again.
+ * next event tries again. Keeping the cache current once it expires is the
+ * background pass's job (refreshStaleLicense in auto-sync.ts), never a hook's.
  */
 
 import { readFile } from "node:fs/promises";
@@ -55,6 +56,25 @@ export async function readOrFetchLicense(
   });
   // Anything but a network answer is the free-tier fallback, not a license.
   return result.source === "network" ? result.license : null;
+}
+
+/** Default licence cache lifetime when the response does not state one. */
+const DEFAULT_TTL_SECONDS = 86400;
+
+/**
+ * Whether this home's licence cache is missing, unreadable or past its TTL
+ * (the response's ttl_seconds, a day by default). One small file read.
+ */
+export async function licenseCacheStale(home: string, now = Date.now()): Promise<boolean> {
+  try {
+    const raw = await readFile(join(home, "license-cache.json"), "utf-8");
+    const entry = JSON.parse(raw) as { response?: { ttl_seconds?: unknown }; fetched_at?: unknown };
+    if (typeof entry.fetched_at !== "number") return true;
+    const ttl = typeof entry.response?.ttl_seconds === "number" ? entry.response.ttl_seconds : DEFAULT_TTL_SECONDS;
+    return now - entry.fetched_at >= ttl * 1000;
+  } catch {
+    return true;
+  }
 }
 
 async function readCachedLicense(home: string): Promise<CachedLicense | null> {
