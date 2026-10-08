@@ -58,11 +58,11 @@ export async function readOrFetchLicense(
   return result.source === "network" ? result.license : null;
 }
 
-/** Default licence cache lifetime when the response does not state one. */
+/** Default license cache lifetime when the response does not state one. */
 const DEFAULT_TTL_SECONDS = 86400;
 
 /**
- * Whether this home's licence cache is missing, unreadable or past its TTL
+ * Whether this home's license cache is missing, unreadable or past its TTL
  * (the response's ttl_seconds, a day by default). One small file read.
  */
 export async function licenseCacheStale(home: string, now = Date.now()): Promise<boolean> {

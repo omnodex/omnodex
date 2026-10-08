@@ -39,7 +39,7 @@
  *   - auto_sync_min_interval_seconds: <n>   minimum gap between syncs (default 60)
  *   - auto_sync_interval_seconds: <n>       proxy timer period, and how stale a
  *                                           pass may get mid-session (default 900)
- * The child also keeps the licence cache current: once license-cache.json is
+ * The child also keeps the license cache current: once license-cache.json is
  * past its TTL (a day), it re-validates before anything reads the tier, so a
  * plan change reaches the install without a CLI command. Hooks
  * only ever read the cache.
@@ -77,11 +77,11 @@ const MIN_AUTO_SYNC_INTERVAL_SECONDS = 30;
 /** A lock older than this is assumed to belong to a crashed sync. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
-/** Bound on a licence fetch: a home with no cache yet, or a stale one. */
+/** Bound on a license fetch: a home with no cache yet, or a stale one. */
 const LICENSE_FETCH_TIMEOUT_MS = 3000;
 
 /**
- * After a failed licence re-validation (offline, server error, revoked
+ * After a failed license re-validation (offline, server error, revoked
  * token), the background pass waits this long before trying again, so an
  * install that cannot reach the API makes at most one request an hour.
  */
@@ -104,7 +104,7 @@ export interface AutoSyncState {
    * past the minimum interval starts it (backgroundPassDue).
    */
   pass_pending?: boolean;
-  /** Last background licence re-validation attempt (refreshStaleLicense). */
+  /** Last background license re-validation attempt (refreshStaleLicense). */
   license_checked_at?: string;
 }
 
@@ -169,7 +169,7 @@ export interface RunAutoSyncOptions {
    * with the current bundle. Defaults to refreshRuleBundle; tests replace it.
    */
   refreshRules?: (home: string) => Promise<unknown>;
-  /** Stale licence re-validation, run first. Defaults to refreshStaleLicense. */
+  /** Stale license re-validation, run first. Defaults to refreshStaleLicense. */
   refreshLicense?: (home: string) => Promise<unknown>;
 }
 
@@ -320,7 +320,7 @@ export async function runAutoSync(
 export type LicenseRefreshOutcome = "no-credentials" | "fresh" | "waiting" | "refreshed" | "failed";
 
 /**
- * Re-validate the licence when this home's cache is past its TTL, so a plan
+ * Re-validate the license when this home's cache is past its TTL, so a plan
  * change (upgrade, downgrade, cancellation) reaches the install within about
  * a day without anyone running a CLI command. Background child only: at most
  * one request per TTL when the API answers, one an hour while it does not.
