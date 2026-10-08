@@ -21,7 +21,8 @@
 import { randomSalt, deriveKey, encrypt, sha256Hex } from "./crypto.js";
 import { serializeReadModel, encodePayload } from "./serializer.js";
 import type { SyncTransport } from "./transport.js";
-import { HEADER_LEN } from "./envelope.js";
+import { HEADER_LEN, ENVELOPE_VERSION_GZIP } from "./envelope.js";
+import { gzipSync } from "node:zlib";
 import type { ReadModelStore } from "@omnodex/projection";
 import type { EventLog } from "@omnodex/event-log";
 import type { SyncPushedEvent, InterceptorKind } from "@omnodex/shared";
@@ -105,9 +106,13 @@ export class SyncEncryptor {
     const payload = await serializeReadModel(this.store, sessionIds);
     const plaintext = encodePayload(payload);
 
-    // 2. Derive key and encrypt
+    // 2. Compress, derive key and encrypt. The JSON compresses about 4.5x
+    // (repeated keys, ids and similar commands), and the cloud's size cap
+    // applies to what is uploaded. Compressing before encrypting is the
+    // only order that works: ciphertext does not compress.
+    const compressed = gzipSync(plaintext);
     const key = await deriveKey(this.passphrase, this.kdfSalt);
-    const { ciphertext, iv } = await encrypt(key, plaintext);
+    const { ciphertext, iv } = await encrypt(key, compressed);
 
     // 3. Compute ciphertext hash for audit
     const ciphertextHash = await sha256Hex(ciphertext);
@@ -122,6 +127,7 @@ export class SyncEncryptor {
       sessions_included: payload.session_ids,
       machine_id: this.machineId,
       machine_label: this.machineLabel,
+      envelope_version: ENVELOPE_VERSION_GZIP,
     });
 
     // 5. Emit audit event
