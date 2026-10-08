@@ -59,6 +59,7 @@ import { validateLicense } from "@omnodex/license-client";
 import { licenseCacheStale, readOrFetchLicense } from "./license-cache.js";
 import { addAdvancedUsage, submitAdvancedUsage, type DayCounts } from "./advanced-usage.js";
 import { pushEventsToCloud } from "./shim-push.js";
+import { SyncBlobTooLargeError } from "./transport.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
 export const AUTO_SYNC_CHILD_ENV = "OMNODEX_AUTO_SYNC_CHILD";
@@ -95,6 +96,10 @@ export interface AutoSyncState {
   last_attempt_at?: string;
   last_success_at?: string;
   last_blob_id?: string;
+  /** Size of the last blob the cloud accepted, in bytes (what its 50 MB limit applies to). */
+  last_blob_bytes?: number;
+  /** Size of a blob the cloud refused as too large; cleared by the next successful sync. */
+  blob_too_large_bytes?: number | null;
   last_error?: string | null;
   last_detect_at?: string;
   last_detect_findings?: number;
@@ -311,16 +316,10 @@ export async function runAutoSync(
         passphrase: settings.passphrase,
         customerId: settings.customerId,
       });
-      await updateAutoSyncState(home, {
-        last_success_at: new Date().toISOString(),
-        last_blob_id: result.blobId,
-        last_error: null,
-      });
+      await recordSyncOutcome(home, result);
       return "synced";
     } catch (err) {
-      await updateAutoSyncState(home, {
-        last_error: (err as Error)?.message ?? String(err),
-      });
+      await recordSyncOutcome(home, err);
       return "failed";
     }
   } catch {
@@ -328,6 +327,32 @@ export async function runAutoSync(
   } finally {
     await releaseLock(home);
   }
+}
+
+/**
+ * Record a sync's result in auto-sync-state.json, from the background pass
+ * or `omnodex sync`, so `omnodex status` shows the blob's size against the
+ * cloud's limit and a push refused for size.
+ */
+export async function recordSyncOutcome(
+  home: string,
+  outcome: { blobId: string; blobBytes: number } | unknown,
+): Promise<void> {
+  const ok = outcome as { blobId?: unknown; blobBytes?: unknown };
+  if (ok && typeof ok === "object" && typeof ok.blobId === "string" && typeof ok.blobBytes === "number") {
+    await updateAutoSyncState(home, {
+      last_success_at: new Date().toISOString(),
+      last_blob_id: ok.blobId,
+      last_blob_bytes: ok.blobBytes,
+      blob_too_large_bytes: null,
+      last_error: null,
+    });
+    return;
+  }
+  await updateAutoSyncState(home, {
+    last_error: (outcome as Error)?.message ?? String(outcome),
+    ...(outcome instanceof SyncBlobTooLargeError ? { blob_too_large_bytes: outcome.bytes } : {}),
+  });
 }
 
 /** Submit counted advanced rule usage with this home's credentials. */
