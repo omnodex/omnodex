@@ -1,4 +1,4 @@
-// Validation: the background pass keeps the licence cache current
+// Validation: the background pass keeps the license cache current
 //
 // A plan change used to reach an install only when someone ran a CLI
 // command: hooks and the background pass read license-cache.json as-is,
@@ -27,7 +27,7 @@ const DAY_MS = 86_400_000;
 const HOSTED = { customer_id: "cust_case", tier: "hosted", features: ["encrypted_sync", "live_streaming"], ttl_seconds: 86400 };
 const PRO = { ...HOSTED, tier: "pro", features: [...HOSTED.features, "advanced_rules"] };
 
-/** Local stand-in for the licence endpoint; every other path answers 200 {}. */
+/** Local stand-in for the license endpoint; every other path answers 200 {}. */
 async function startApi({ status = 200, license = PRO } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
@@ -55,13 +55,13 @@ async function writeJson(home, name, value) {
   await writeFile(path.join(home, name), JSON.stringify(value));
 }
 
-/** A connected home whose cached licence is `license`, fetched `ageMs` ago. */
+/** A connected home whose cached license is `license`, fetched `ageMs` ago. */
 async function writeHome(home, api, { license = HOSTED, ageMs = 2 * DAY_MS } = {}) {
   await writeJson(home, "stream-config.json", {
     api_token: "omx_test_case",
     passphrase: "case-passphrase",
     api_url: api.url,
-    auto_sync: false, // keep the pass to the licence; sync is covered elsewhere
+    auto_sync: false, // keep the pass to the license; sync is covered elsewhere
   });
   await writeJson(home, "license-cache.json", { response: license, fetched_at: Date.now() - ageMs });
 }
@@ -70,7 +70,7 @@ async function cachedTier(home) {
   return JSON.parse(await readFile(path.join(home, "license-cache.json"), "utf8")).response.tier;
 }
 
-describe("background licence re-validation", () => {
+describe("background license re-validation", () => {
   let home;
   let api;
   let saved;
