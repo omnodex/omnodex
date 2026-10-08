@@ -1826,15 +1826,27 @@ async function cmdMcpProxyStatus(_args: string[]): Promise<void> {
 
 async function cmdLicense(args: string[]): Promise<void> {
   const [sub] = args;
+  const paths = resolvePaths();
 
   if (sub === "clear") {
-    await clearLicenseCache();
+    await clearLicenseCache(paths.home);
     console.log("[license] cache cleared");
     return;
   }
 
+  // The same token and API as sync and connect: --token, then
+  // OMNODEX_API_TOKEN, then the one `omnodex connect` saved; the cache is
+  // the one in this home, which background sync and live push read.
+  const creds = await resolveCredentials(paths.home, {
+    flagToken: readFlagValue(args, "--token"),
+    flagApiUrl: readFlagValue(args, "--api"),
+  });
   console.log("[license] validating...");
-  const result = await validateLicense();
+  const result = await validateLicense({
+    apiBaseUrl: creds?.apiUrl,
+    apiToken: creds?.apiToken ?? "",
+    cacheDir: paths.home,
+  });
   console.log(`[license] source: ${result.source}`);
   console.log(`[license] tier:   ${result.license.tier}`);
   console.log(`[license] features:`);
@@ -1852,7 +1864,7 @@ async function cmdLicense(args: string[]): Promise<void> {
 
   if (result.source === "defaults") {
     console.log("");
-    console.log("  No API token configured. Set OMNODEX_API_TOKEN or pass --token.");
+    console.log("  No API token configured. Run `omnodex connect`, set OMNODEX_API_TOKEN, or pass --token.");
     console.log("  Free tier features are active by default.");
   } else if (result.source === "cache_stale") {
     console.log("");
@@ -2058,8 +2070,10 @@ commands:
   status [project]   show which Omnodex hooks are installed in a project.
                      Flags:
                        --all                 show all registered installations
-  license            show current license tier and features.
+  license            show current license tier and features, using the
+                     token \`omnodex connect\` saved (or OMNODEX_API_TOKEN).
                      Subcommands: clear (remove cached license).
+                     Flags: --token <omx_...>  --api <url>
   connect            connect this machine to the cloud dashboard. If no
                      API token exists, starts a device code flow (RFC 8628):
                      open a URL in your browser, enter the displayed code,
