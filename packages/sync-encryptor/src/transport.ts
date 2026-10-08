@@ -20,6 +20,25 @@
 
 import { encodeEnvelope } from "./envelope.js";
 
+/** The largest sync blob the cloud accepts, in bytes; a bigger push gets HTTP 413. */
+export const SYNC_BLOB_MAX_BYTES = 50 * 1024 * 1024;
+
+/** Thrown by a push the cloud refused for size (HTTP 413). */
+export class SyncBlobTooLargeError extends Error {
+  readonly bytes: number;
+  readonly maxBytes: number;
+
+  constructor(bytes: number, maxBytes = SYNC_BLOB_MAX_BYTES) {
+    super(
+      `sync push refused: the blob is ${(bytes / 1048576).toFixed(1)} MB, over the ` +
+        `${Math.round(maxBytes / 1048576)} MB limit`,
+    );
+    this.name = "SyncBlobTooLargeError";
+    this.bytes = bytes;
+    this.maxBytes = maxBytes;
+  }
+}
+
 export interface SyncPushRequest {
   /** Opaque customer identifier. */
   customer_id: string;
@@ -44,6 +63,8 @@ export interface SyncPushResponse {
   blob_id: string;
   /** R2 object key (opaque to the client). */
   r2_key: string;
+  /** Bytes uploaded (the whole envelope), which is what the cloud's size limit applies to. */
+  bytes?: number;
 }
 
 /** Transport interface for sync blob uploads. */
@@ -102,6 +123,9 @@ export class HttpSyncTransport implements SyncTransport {
         signal: controller.signal,
       });
 
+      if (res.status === 413) {
+        throw new SyncBlobTooLargeError(envelope.byteLength);
+      }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         throw new Error(
@@ -110,7 +134,7 @@ export class HttpSyncTransport implements SyncTransport {
       }
 
       const data = (await res.json()) as SyncPushResponse;
-      return data;
+      return { ...data, bytes: envelope.byteLength };
     } finally {
       clearTimeout(timer);
     }

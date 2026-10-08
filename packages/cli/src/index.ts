@@ -69,6 +69,9 @@ import {
   computeKeyId,
   AUTO_SYNC_CHILD_ENV,
   readAutoSyncState,
+  recordSyncOutcome,
+  SyncBlobTooLargeError,
+  SYNC_BLOB_MAX_BYTES,
   runAutoSync,
   startBackgroundSync,
   readLiveGate,
@@ -1549,6 +1552,40 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
       console.log(`    last attempt: ${formatWhen(state.last_attempt_at)}`);
     }
   }
+
+  const blob = describeSyncBlob(state, omnodexHome);
+  if (blob) console.log(`[status] sync blob:   ${blob}`);
+}
+
+/** At this share of the cloud's limit, status warns that the blob is close to it. */
+export const SYNC_BLOB_WARN_FRACTION = 0.8;
+
+const mb = (bytes: number) => (bytes / 1048576).toFixed(1) + " MB";
+
+/**
+ * The last sync blob's size against the cloud's limit, with what to do when
+ * it is close to it or over it; null before any sync. Until sync trims old
+ * sessions itself, the only way to shrink the blob is to move session files
+ * out of the local event log: the next sync rebuilds from what is left.
+ */
+export function describeSyncBlob(
+  state: { last_blob_bytes?: number; blob_too_large_bytes?: number | null },
+  omnodexHome: string,
+): string | null {
+  const limit = `${Math.round(SYNC_BLOB_MAX_BYTES / 1048576)} MB`;
+  const remedy =
+    `To make room, move older session files out of ${path.join(omnodexHome, "event-log", "sessions")} ` +
+    `(keep a copy elsewhere); the next sync leaves them out of the blob.`;
+  if (state.blob_too_large_bytes) {
+    return `${mb(state.blob_too_large_bytes)}, over the ${limit} limit: sync is failing and the dashboard is not updating. ${remedy}`;
+  }
+  if (state.last_blob_bytes === undefined) return null;
+  const pct = Math.round((state.last_blob_bytes / SYNC_BLOB_MAX_BYTES) * 100);
+  const line = `${mb(state.last_blob_bytes)} of ${limit} (${pct}%)`;
+  if (state.last_blob_bytes >= SYNC_BLOB_MAX_BYTES * SYNC_BLOB_WARN_FRACTION) {
+    return `${line}, close to the limit; sync stops at ${limit}. ${remedy}`;
+  }
+  return line;
 }
 
 /**
@@ -1961,17 +1998,33 @@ async function cmdSync(args: string[]): Promise<void> {
     : undefined;
 
   console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
-  const result = await syncReadModel({
-    home: paths.home,
-    apiUrl,
-    apiToken,
-    passphrase,
-    customerId: customer_id,
-    sessionIds,
-  });
+  let result: Awaited<ReturnType<typeof syncReadModel>>;
+  try {
+    result = await syncReadModel({
+      home: paths.home,
+      apiUrl,
+      apiToken,
+      passphrase,
+      customerId: customer_id,
+      sessionIds,
+    });
+  } catch (err) {
+    // Recorded like a background sync, so `omnodex status` shows it too.
+    await recordSyncOutcome(paths.home, err);
+    if (err instanceof SyncBlobTooLargeError) {
+      console.error(`[sync] ${describeSyncBlob({ blob_too_large_bytes: err.bytes }, paths.home)}`);
+      process.exitCode = 1;
+      return;
+    }
+    throw err;
+  }
+  // Even a partial sync (--sessions) replaces this machine's one blob in the cloud.
+  await recordSyncOutcome(paths.home, result);
   console.log(
-    `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.payloadBytes}`,
+    `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.blobBytes}`,
   );
+  const size = describeSyncBlob({ last_blob_bytes: result.blobBytes }, paths.home);
+  if (size) console.log(`[sync] ${size}`);
 }
 
 async function main(): Promise<void> {

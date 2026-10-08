@@ -21,6 +21,7 @@
 import { randomSalt, deriveKey, encrypt, sha256Hex } from "./crypto.js";
 import { serializeReadModel, encodePayload } from "./serializer.js";
 import type { SyncTransport } from "./transport.js";
+import { HEADER_LEN } from "./envelope.js";
 import type { ReadModelStore } from "@omnodex/projection";
 import type { EventLog } from "@omnodex/event-log";
 import type { SyncPushedEvent, InterceptorKind } from "@omnodex/shared";
@@ -62,6 +63,8 @@ export interface SyncResult {
   sessionsIncluded: string[];
   /** Byte count of the plaintext before encryption. */
   payloadBytes: number;
+  /** Bytes uploaded (the encrypted envelope), which the cloud's size limit applies to. */
+  blobBytes: number;
   /** The KDF salt used. Persist this for subsequent syncs. */
   kdfSalt: Uint8Array;
   /** Machine identifier included in this sync. */
@@ -145,6 +148,9 @@ export class SyncEncryptor {
       ciphertextHash,
       sessionsIncluded: payload.session_ids,
       payloadBytes: plaintext.length,
+      // A transport that does not report it (a test double) uploaded the
+      // standard envelope: the 33-byte header plus the ciphertext.
+      blobBytes: response.bytes ?? HEADER_LEN + ciphertext.length,
       kdfSalt: this.kdfSalt,
       machineId: this.machineId,
     };

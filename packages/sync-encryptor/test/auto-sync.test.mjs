@@ -306,6 +306,8 @@ describe("runAutoSync", () => {
 
     const state = await readAutoSyncState(home);
     assert.equal(state.last_blob_id, "blob_case_1");
+    // The size the cloud's limit applies to: every byte uploaded.
+    assert.equal(state.last_blob_bytes, push.bytes);
     assert.equal(state.last_error, null);
     assert.ok(state.last_success_at);
     await assert.rejects(stat(path.join(home, "auto-sync.lock")));
@@ -324,6 +326,26 @@ describe("runAutoSync", () => {
     assert.match(state.last_error, /HTTP 500/);
     assert.equal(state.last_success_at, undefined);
     await assert.rejects(stat(path.join(home, "auto-sync.lock")));
+  });
+
+  it("records a push refused for size, and clears it once a sync succeeds", async () => {
+    server = await startSyncServer(413);
+    await writeCredentials(home, { api_url: server.url });
+    await writeSession(home, "sess-case-3");
+
+    assert.equal(await runAutoSync(home), "failed");
+    let state = await readAutoSyncState(home);
+    assert.equal(state.blob_too_large_bytes, server.requests[0].bytes);
+    assert.match(state.last_error, /over the 50 MB limit/);
+
+    await server.close();
+    server = await startSyncServer();
+    await writeCredentials(home, { api_url: server.url });
+    assert.equal(await runAutoSync(home), "synced");
+    state = await readAutoSyncState(home);
+    assert.equal(state.blob_too_large_bytes, null);
+    assert.equal(state.last_error, null);
+    assert.ok(state.last_blob_bytes > 0);
   });
 
   it("does not run while another sync holds the lock", async () => {

@@ -43,7 +43,7 @@ export {
 } from "./envelope.js";
 export type { DecodedEnvelope } from "./envelope.js";
 
-export { HttpSyncTransport } from "./transport.js";
+export { HttpSyncTransport, SyncBlobTooLargeError, SYNC_BLOB_MAX_BYTES } from "./transport.js";
 export type {
   SyncTransport,
   SyncPushRequest,
@@ -75,6 +75,7 @@ export {
   runAutoSync,
   backgroundPassDue,
   readAutoSyncState,
+  recordSyncOutcome,
   readAutoSyncIntervalMs,
   includesSessionEnd,
   AUTO_SYNC_CHILD_ENV,
