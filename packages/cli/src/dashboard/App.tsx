@@ -140,7 +140,8 @@ export function App(): React.JSX.Element {
 
   // Recomputed each render: the time range is relative to now.
   const now = Date.now();
-  const options = useMemo(() => filterOptions(snapshot.sessions), [snapshot]);
+  // Only sessions with activity: a runtime whose sessions are all empty is not a choice.
+  const options = useMemo(() => filterOptions(listedSessions(snapshot)), [snapshot]);
   const filtered = useMemo(() => ({ ...snapshot, sessions: filterSessions(snapshot.sessions, filters, now) }), [snapshot, filters, now]);
   const listed = useMemo(() => listedSessions(filtered), [filtered]);
   const hiddenCount = useMemo(() => snapshot.sessions.filter((s) => filters.hidden.includes(s.session_id)).length, [snapshot, filters.hidden]);

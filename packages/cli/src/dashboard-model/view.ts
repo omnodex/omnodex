@@ -31,9 +31,22 @@ export interface SessionView {
   subagents: SubagentRow[];
 }
 
-/** Sessions worth listing: those with at least one call, read or write. */
+/**
+ * True when a session holds any activity: a call, a file read or write, a
+ * prompt, a finding or a subagent. The hosted dashboard uses the same rule.
+ * A session without any is mostly an MCP proxy that a client started,
+ * listed tools from and closed, which some desktop apps do several times an
+ * hour; it is not listed, counted or offered in the filter menus.
+ */
+export function hasActivity(snapshot: ReadModelSnapshot, s: SessionRow): boolean {
+  const id = s.session_id;
+  return totalEvents(s) > 0 || !!snapshot.tool_calls[id]?.length || !!snapshot.file_events[id]?.length
+    || !!snapshot.risk_events[id]?.length || !!snapshot.prompts?.[id]?.length || !!snapshot.subagents?.[id]?.length;
+}
+
+/** Sessions worth listing: those with any activity. */
 export function listedSessions(snapshot: ReadModelSnapshot): SessionRow[] {
-  return snapshot.sessions.filter((s) => totalEvents(s) > 0);
+  return snapshot.sessions.filter((s) => hasActivity(snapshot, s));
 }
 
 /**
