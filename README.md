@@ -122,6 +122,8 @@ omnodex dashboard            # http://localhost:7890
 
 The local dashboard shows a connection graph, credential ledger, risk events, and an event timeline, updated in real time. It listens on loopback only and answers only requests addressed to `localhost`, `127.0.0.1` or `[::1]` from its own page, so other machines on the network and other websites open in your browser cannot read it. From WSL, a Windows browser reaches it at the same `http://localhost:7890`. To include another host's data (for example the Windows home from WSL), add it with `--roots /mnt/c/Users/<you>/.omnodex` or `dashboard.roots` in `~/.omnodex/config.json`.
 
+In a risk event detail, **Risk Library** opens the explanation for its rule at `https://docs.omnodex.com/` in a new tab. Opening it requires network access to the documentation site.
+
 To use the hosted dashboard at `dashboard.omnodex.com`, run `omnodex connect` on each host. It starts a device code flow and stores an API token and a generated sync passphrase; events are encrypted end-to-end (AES-256-GCM) before they leave the machine. Each host appears as its own machine; set `machine.label` in `config.json` for a readable name.
 
 ---
