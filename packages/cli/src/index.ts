@@ -1554,7 +1554,7 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
   }
 
   const blob = describeSyncBlob(state, omnodexHome);
-  if (blob) console.log(`[status] sync blob:   ${blob}`);
+  if (blob) console.log(`[status] ${state.last_sync_segments ? "synced data:" : "sync blob:  "} ${blob}`);
 }
 
 /** At this share of the cloud's limit, status warns that the blob is close to it. */
@@ -1563,13 +1563,20 @@ export const SYNC_BLOB_WARN_FRACTION = 0.8;
 const mb = (bytes: number) => (bytes / 1048576).toFixed(1) + " MB";
 
 /**
- * The last sync blob's size against the cloud's limit, with what to do when
- * it is close to it or over it; null before any sync. Until sync trims old
- * sessions itself, the only way to shrink the blob is to move session files
- * out of the local event log: the next sync rebuilds from what is left.
+ * The last sync's size against the cloud's limit, with what to do when it is
+ * close to it or over it; null before any sync. A segmented sync reports its
+ * total and its largest segment, which is what the limit applies to; only a
+ * single very large session brings a segment near it. For a single blob, the
+ * way to shrink it is to move session files out of the local event log: the
+ * next sync rebuilds from what is left.
  */
 export function describeSyncBlob(
-  state: { last_blob_bytes?: number; blob_too_large_bytes?: number | null },
+  state: {
+    last_blob_bytes?: number;
+    blob_too_large_bytes?: number | null;
+    last_sync_segments?: number | null;
+    last_sync_total_bytes?: number | null;
+  },
   omnodexHome: string,
 ): string | null {
   const limit = `${Math.round(SYNC_BLOB_MAX_BYTES / 1048576)} MB`;
@@ -1581,6 +1588,14 @@ export function describeSyncBlob(
   }
   if (state.last_blob_bytes === undefined) return null;
   const pct = Math.round((state.last_blob_bytes / SYNC_BLOB_MAX_BYTES) * 100);
+  if (state.last_sync_segments && typeof state.last_sync_total_bytes === "number") {
+    const n = state.last_sync_segments;
+    const line = `${mb(state.last_sync_total_bytes)} in ${n} segment${n === 1 ? "" : "s"}, largest ${mb(state.last_blob_bytes)} of ${limit} (${pct}%)`;
+    if (state.last_blob_bytes >= SYNC_BLOB_MAX_BYTES * SYNC_BLOB_WARN_FRACTION) {
+      return `${line}: one session is close to the limit; sync stops at ${limit}. ${remedy}`;
+    }
+    return line;
+  }
   const line = `${mb(state.last_blob_bytes)} of ${limit} (${pct}%)`;
   if (state.last_blob_bytes >= SYNC_BLOB_MAX_BYTES * SYNC_BLOB_WARN_FRACTION) {
     return `${line}, close to the limit; sync stops at ${limit}. ${remedy}`;
@@ -2018,12 +2033,23 @@ async function cmdSync(args: string[]): Promise<void> {
     }
     throw err;
   }
-  // Even a partial sync (--sessions) replaces this machine's one blob in the cloud.
+  // A partial sync (--sessions) pushes a single blob of those sessions.
   await recordSyncOutcome(paths.home, result);
-  console.log(
-    `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.blobBytes}`,
-  );
-  const size = describeSyncBlob({ last_blob_bytes: result.blobBytes }, paths.home);
+  if (result.segments) {
+    console.log(
+      `[sync] done. commit=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} ` +
+        `segments=${result.segments.count} uploaded=${result.segments.uploaded}`,
+    );
+  } else {
+    console.log(
+      `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.blobBytes}`,
+    );
+  }
+  const size = describeSyncBlob({
+    last_blob_bytes: result.blobBytes,
+    last_sync_segments: result.segments?.count ?? null,
+    last_sync_total_bytes: result.segments?.totalBytes ?? null,
+  }, paths.home);
   if (size) console.log(`[sync] ${size}`);
 }
 

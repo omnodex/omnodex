@@ -206,15 +206,15 @@ test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta whe
   }
 });
 
-test("SessionEnd starts a detached sync that pushes a blob without delaying the hook", async (t) => {
+test("SessionEnd starts a detached sync that uploads the session without delaying the hook", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-sync-"));
   const pushes = [];
   const server = createServer((req, res) => {
     req.resume();
     req.on("end", () => {
-      pushes.push({ method: req.method, url: req.url });
-      res.writeHead(201, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ blob_id: "blob_case_shim", received_at: new Date().toISOString(), payload_bytes: 1 }));
+      pushes.push({ method: req.method, url: req.url.replace(/segments\/.+$/, "segments/:id") });
+      res.writeHead(req.url === "/api/v1/sync/manifest" ? 200 : 201, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(req.url === "/api/v1/sync/manifest" ? { commit_id: "commit_case_shim" } : { segment_id: "x" }));
     });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -259,8 +259,12 @@ test("SessionEnd starts a detached sync that pushes a blob without delaying the 
   }
 
   assert.equal(state.last_error ?? null, null, `sync error: ${state.last_error}`);
-  assert.equal(state.last_blob_id, "blob_case_shim");
-  assert.deepEqual(pushes, [{ method: "PUT", url: "/api/v1/sync/push" }]);
+  assert.equal(state.last_blob_id, "commit_case_shim");
+  // One segment holding the session, then the commit that makes it visible.
+  assert.deepEqual(pushes, [
+    { method: "PUT", url: "/api/v1/sync/segments/:id" },
+    { method: "PUT", url: "/api/v1/sync/manifest" },
+  ]);
 });
 
 test("shim times a subagent from SubagentStart to SubagentStop and logs the prompt", async (t) => {
