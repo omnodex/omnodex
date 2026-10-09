@@ -87,20 +87,17 @@ You can also set `redact_parameters: true` at the top level to redact all server
 
 ## Installation
 
-Install Omnodex from source (the current npm release does not include the proxy entry point):
-
 ```bash
-git clone https://github.com/omnodex/omnodex.git
-cd omnodex
-npm install
-npx tsc -b
+npm install -g omnodex
 ```
 
-The proxy entry point is `packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js`. Run it with Node.js, or through the CLI as `omnodex mcp-proxy start`.
+This installs the `omnodex-mcp-proxy` command. Run it directly, or through the CLI as `omnodex mcp-proxy start`.
+
+From a source build (`npm install && npx tsc -b` in a clone), the proxy entry point is `packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js`.
 
 ### For Cowork or Codex
 
-The Omnodex plugins start the proxy for you. Point them at your build with `proxy_bin` in `omnodex-proxy.json`:
+The Omnodex plugins start the proxy for you, and look for an npm-installed `omnodex-mcp-proxy` in the usual global npm locations. For a source build, or an install they do not find, point them at it with `proxy_bin` in `omnodex-proxy.json`:
 
 ```json
 {

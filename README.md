@@ -12,7 +12,17 @@ Full documentation: [docs.omnodex.com](https://docs.omnodex.com/)
 
 ## Install
 
-Omnodex runs on the host where your agent runs. Install from source; the current npm release (0.2.0) does not include the hook handlers or MCP proxy that the integrations load at runtime.
+Omnodex runs on the host where your agent runs.
+
+```bash
+npm install -g omnodex
+```
+
+Requires Node.js 24 or newer. On Windows, run this in PowerShell for agents that run natively on Windows (Cowork, ChatGPT Desktop), and in WSL for agents you run inside WSL. Native Windows and WSL are separate hosts with separate Omnodex data.
+
+The package includes the CLI, the hook handlers and the MCP proxy. Hooks installed by `omnodex install` find the handlers on their own, and keep working across `npm update`.
+
+### From source
 
 ```bash
 git clone https://github.com/omnodex/omnodex.git
@@ -22,19 +32,7 @@ npx tsc -b
 npm install -g ./packages/cli     # links the omnodex command to this build
 ```
 
-Requires Node.js 24 or newer. On Windows, run these in PowerShell for agents that run natively on Windows (Cowork, ChatGPT Desktop), and in WSL for agents you run inside WSL. Native Windows and WSL are separate hosts with separate Omnodex data.
-
-Hooks find their handlers through `omnodex-config.json` in the Omnodex home (`~/.omnodex`, or `C:\Users\<you>\.omnodex` on Windows):
-
-```json
-{
-  "shim_paths": {
-    "claude-code": "/path/to/omnodex/packages/hooks-provider/dist/bin/claude-hook-shim.js",
-    "codex": "/path/to/omnodex/packages/codex-provider/dist/bin/codex-hook-shim.js",
-    "antigravity": "/path/to/omnodex/packages/antigravity-provider/dist/bin/antigravity-hook-shim.js"
-  }
-}
-```
+When hooks cannot find this build on their own, `omnodex install` records its handler in `shim_paths` in `omnodex-config.json` in the Omnodex home (`~/.omnodex`, or `C:\Users\<you>\.omnodex` on Windows).
 
 Full setup guides: [docs.omnodex.com](https://docs.omnodex.com/getting-started/installation/)
 
@@ -46,7 +44,7 @@ Full setup guides: [docs.omnodex.com](https://docs.omnodex.com/getting-started/i
 | --- | --- | --- |
 | Claude Code (CLI and IDE extensions) | Hooks | `omnodex install claude-code` in the project |
 | OpenAI Codex (ChatGPT Desktop, CLI, IDE) | Hooks, plus the Omnodex MCP server | `omnodex install codex` in the project, and register the MCP server in Codex |
-| Cowork | MCP proxy via the Omnodex plugin | Plugin plus `omnodex-proxy.json` with `proxy_bin` |
+| Cowork | MCP proxy via the Omnodex plugin | Plugin plus `omnodex-proxy.json` |
 | Google Antigravity (CLI, Desktop, IDE) | Hooks, optionally the MCP proxy | `omnodex install antigravity [--mcp]` in the project |
 | Any other MCP client | MCP proxy | Point the client at the proxy |
 
@@ -88,7 +86,7 @@ Hosted tools such as web search run on OpenAI's side and are not visible to loca
 
 ### Cowork
 
-Install the `omnodex-cowork` plugin, then create `~/.omnodex/omnodex-proxy.json` (on Windows, `C:\Users\<you>\.omnodex\omnodex-proxy.json`) with `proxy_bin` pointing at `packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js` in your build and at least one upstream MCP server. Fully quit and reopen Cowork.
+Install the `omnodex-cowork` plugin, then create `~/.omnodex/omnodex-proxy.json` (on Windows, `C:\Users\<you>\.omnodex\omnodex-proxy.json`) with at least one upstream MCP server. Fully quit and reopen Cowork. The plugin looks for the proxy in the usual global npm locations; if `launcher.log` in the Omnodex home says it was not found (for example with a Node version manager, or a source build), set `proxy_bin` to the full path of `omnodex-mcp-proxy.js`.
 
 The proxy records calls to the MCP servers routed through it. Cowork's built-in tools are not recorded: Cowork does not currently run plugin hooks.
 
@@ -258,7 +256,6 @@ One pre-existing timing flake in the CLI streaming suite (`tailSession`) that on
 
 ## Known limitations
 
-- **npm release** - The published npm package (0.2.0) does not include the hook handlers or the MCP proxy entry point, so hooks installed from it record nothing and the Cowork and Codex plugins cannot start the proxy. Install from source.
 - **Codex hook outcomes** - Hosted tools such as web search are not visible to local hooks. Codex currently provides no failure hook. Some failed calls emit only `PreToolUse`, and nonzero Bash responses omit the exit code, so Omnodex records only statuses that the hook payload proves instead of inferring an error.
 - **Cowork built-in tools** - Cowork does not run plugin-contributed hooks ([#27398](https://github.com/anthropics/claude-code/issues/27398), [#40495](https://github.com/anthropics/claude-code/issues/40495)), so only MCP tool calls routed through the proxy are recorded.
 - **One host's hooks per project folder** - Hook commands contain the installing host's paths. Installing from native Windows and from WSL in the same project folder replaces the other host's hooks.
