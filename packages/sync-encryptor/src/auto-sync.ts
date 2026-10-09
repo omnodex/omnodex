@@ -96,8 +96,14 @@ export interface AutoSyncState {
   last_attempt_at?: string;
   last_success_at?: string;
   last_blob_id?: string;
-  /** Size of the last blob the cloud accepted, in bytes (what its 50 MB limit applies to). */
+  /**
+   * Size of the last blob the cloud accepted, in bytes (what its 50 MB limit
+   * applies to). For a segmented sync, the largest segment.
+   */
   last_blob_bytes?: number;
+  /** For a segmented sync: how many segments the cloud holds, and their total bytes. Null after a blob sync. */
+  last_sync_segments?: number | null;
+  last_sync_total_bytes?: number | null;
   /** Size of a blob the cloud refused as too large; cleared by the next successful sync. */
   blob_too_large_bytes?: number | null;
   last_error?: string | null;
@@ -336,14 +342,17 @@ export async function runAutoSync(
  */
 export async function recordSyncOutcome(
   home: string,
-  outcome: { blobId: string; blobBytes: number } | unknown,
+  outcome: { blobId: string; blobBytes: number; segments?: { count: number; totalBytes: number } } | unknown,
 ): Promise<void> {
-  const ok = outcome as { blobId?: unknown; blobBytes?: unknown };
+  const ok = outcome as { blobId?: unknown; blobBytes?: unknown; segments?: { count?: unknown; totalBytes?: unknown } };
   if (ok && typeof ok === "object" && typeof ok.blobId === "string" && typeof ok.blobBytes === "number") {
+    const segmented = typeof ok.segments?.count === "number" && typeof ok.segments?.totalBytes === "number";
     await updateAutoSyncState(home, {
       last_success_at: new Date().toISOString(),
       last_blob_id: ok.blobId,
       last_blob_bytes: ok.blobBytes,
+      last_sync_segments: segmented ? (ok.segments!.count as number) : null,
+      last_sync_total_bytes: segmented ? (ok.segments!.totalBytes as number) : null,
       blob_too_large_bytes: null,
       last_error: null,
     });

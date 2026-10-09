@@ -178,10 +178,13 @@ omnodex connect [--token <token>]   connect this host to your dashboard account.
                                       Generates a sync passphrase on first run; the
                                       passphrase is transferred end-to-end encrypted.
 omnodex sync                        encrypt the read model and upload it to the cloud.
-                                      Connected hosts also sync automatically in the
-                                      background when a hooked session ends (at most
-                                      once a minute). Turn off with "auto_sync": false
-                                      in stream-config.json or OMNODEX_AUTO_SYNC=0.
+                                      Sessions active in the last 120 days are uploaded
+                                      in segments, and a sync sends only the segments
+                                      that changed. Connected hosts also sync
+                                      automatically in the background when a hooked
+                                      session ends (at most once a minute). Turn off with
+                                      "auto_sync": false in stream-config.json or
+                                      OMNODEX_AUTO_SYNC=0.
 omnodex live [resume]               show whether live pushes are paused. When no
                                       dashboard is watching, pushes pause for up to five
                                       minutes between probes, and go back to every event

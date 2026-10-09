@@ -85,13 +85,22 @@ function recordingSpawn() {
   return { calls, fn };
 }
 
-/** Local stand-in for PUT /api/v1/sync/push. */
-async function startSyncServer(status = 201) {
+/**
+ * Local stand-in for PUT /api/v1/sync/push. Without `segments` it has no
+ * segment routes, like an older API, so a sync falls back to the blob.
+ */
+async function startSyncServer(status = 201, { segments = false } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
+      const segmentRoute = req.url.startsWith("/api/v1/sync/segments/") || req.url === "/api/v1/sync/manifest";
+      if (segmentRoute && !segments) {
+        res.writeHead(404);
+        res.end("404 Not Found");
+        return;
+      }
       requests.push({
         method: req.method,
         url: req.url,
@@ -100,9 +109,11 @@ async function startSyncServer(status = 201) {
       });
       res.writeHead(status, { "Content-Type": "application/json" });
       res.end(
-        status < 300
-          ? JSON.stringify({ blob_id: "blob_case_1", received_at: new Date().toISOString(), payload_bytes: 1 })
-          : JSON.stringify({ error: "server_error" }),
+        status >= 300
+          ? JSON.stringify({ error: "server_error" })
+          : req.url === "/api/v1/sync/manifest"
+            ? JSON.stringify({ commit_id: "commit_case_1" })
+            : JSON.stringify({ blob_id: "blob_case_1", received_at: new Date().toISOString(), payload_bytes: 1 }),
       );
     });
   });
@@ -312,6 +323,23 @@ describe("runAutoSync", () => {
     assert.ok(state.last_success_at);
     await assert.rejects(stat(path.join(home, "auto-sync.lock")));
     assert.ok((await readFile(path.join(home, "sync-salt.bin"))).length > 0);
+  });
+
+  it("syncs as segments where the API has them, and records the segment count and total", async () => {
+    server = await startSyncServer(201, { segments: true });
+    await writeCredentials(home, { api_url: server.url });
+    await writeSession(home, "sess-case-seg");
+
+    assert.equal(await runAutoSync(home), "synced");
+    assert.deepEqual(server.requests.map((r) => r.url.replace(/segments\/.*/, "segments/:id")), [
+      "/api/v1/sync/segments/:id",
+      "/api/v1/sync/manifest",
+    ]);
+    const state = await readAutoSyncState(home);
+    assert.equal(state.last_blob_id, "commit_case_1");
+    assert.equal(state.last_sync_segments, 1);
+    assert.equal(state.last_sync_total_bytes, server.requests[0].bytes);
+    assert.equal(state.last_blob_bytes, server.requests[0].bytes);
   });
 
   it("records the error and releases the lock when the push fails", async () => {

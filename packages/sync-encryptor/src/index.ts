@@ -45,6 +45,10 @@ export {
 export type { DecodedEnvelope } from "./envelope.js";
 
 export { HttpSyncTransport, SyncBlobTooLargeError, SYNC_BLOB_MAX_BYTES } from "./transport.js";
+export { syncSegments, SEGMENT_SEAL_BYTES, SEGMENT_WINDOW_DAYS, SEGMENT_MANIFEST_FILE } from "./segment-sync.js";
+export type { SegmentSyncOptions, SegmentSyncResult, SegmentManifest } from "./segment-sync.js";
+export { HttpSegmentTransport, SegmentsUnsupportedError, MissingSegmentsError } from "./segment-transport.js";
+export type { SegmentTransport, SegmentMeta, HttpSegmentTransportOptions } from "./segment-transport.js";
 export type {
   SyncTransport,
   SyncPushRequest,
