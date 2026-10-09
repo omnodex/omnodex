@@ -11,6 +11,7 @@ import {
   filterOptions,
   filterSessions,
   groupedLedger,
+  listedSessions,
   narrowView,
   parseParameters,
   selectView,
@@ -77,6 +78,28 @@ test("filter menus offer the values the sessions hold", () => {
   assert.deepEqual(o.runtimes, ["Claude Code", "Codex", "Cowork via MCP Proxy"]);
   assert.deepEqual(o.statuses, ["completed", "in_progress"]);
   assert.equal(o.roots.length, 2);
+});
+
+test("empty sessions are not listed or offered; a prompt or a finding alone is activity", () => {
+  const empty = session("e", { interceptor: "mcp-proxy", platform: "codex", tool_call_count: 0, status: "in_progress" });
+  const chat = session("p", { tool_call_count: 0 });
+  const flagged = session("f", { tool_call_count: 0 });
+  const snap = {
+    ...snapshot,
+    sessions: [...snapshot.sessions, empty, chat, flagged],
+    prompts: { p: [{ event_id: "pp", session_id: "p", prompt: "What does this do?", at: hoursAgo(1) }] },
+    risk_events: { ...snapshot.risk_events, f: [{ event_id: "rf", session_id: "f", related_event_id: "x", severity: "LOW", category: "c", description: "d", rule_id: "R", detected_at: hoursAgo(1) }] },
+  };
+  assert.deepEqual(listedSessions(snap).map((s) => s.session_id), ["a", "b", "c", "p", "f"]);
+  assert.ok(!filterOptions(listedSessions(snap)).runtimes.includes("Codex via MCP Proxy"));
+  assert.deepEqual(selectView(snap, ALL_SESSIONS).sessions.map((s) => s.session_id), ["a", "b", "c", "p", "f"]);
+});
+
+test("a session that never ended drops out of a time range once its last event is older", () => {
+  const stale = session("s", { status: "in_progress", started_at: hoursAgo(24 * 23), last_event_at: hoursAgo(24 * 23 - 0.1) });
+  const ids = filterSessions([stale], { ...NO_FILTERS, time: "24h" }, NOW).map((s) => s.session_id);
+  assert.deepEqual(ids, []);
+  assert.deepEqual(filterSessions([stale], { ...NO_FILTERS, time: "30d" }, NOW).map((s) => s.session_id), ["s"]);
 });
 
 test("the time range and a graph selection narrow rows, and findings follow their calls", () => {
