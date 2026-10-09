@@ -76,6 +76,8 @@ export { readOrFetchLicense } from "./license-cache.js";
 export type { CachedLicense, LicenseCredentials } from "./license-cache.js";
 
 export {
+  acquireSyncLock,
+  SYNC_LOCK_WAIT_MS,
   startBackgroundSync,
   runAutoSync,
   backgroundPassDue,
@@ -87,7 +89,7 @@ export {
   DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS,
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
-export type { AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions, DetectResult } from "./auto-sync.js";
+export type { AcquireSyncLockOptions, AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions, DetectResult } from "./auto-sync.js";
 
 // Advanced (Pro) rule usage: counted in the background pass, submitted in batches
 export { readAdvancedUsage, ADVANCED_USAGE_FILE, MAX_AGE_DAYS as ADVANCED_USAGE_MAX_AGE_DAYS } from "./advanced-usage.js";
