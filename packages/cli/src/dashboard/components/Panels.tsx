@@ -27,6 +27,7 @@ import {
   type ViewTotals,
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
+import { riskLibraryUrl } from "../../dashboard-model/docs.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
 
 /** What the detail panel shows: a tool call, a finding, a prompt or a subagent. */
@@ -373,6 +374,8 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
     if (tc) body = <CallDetail tc={tc} utc={utc} />;
   } else if (detail?.kind === "risk") {
     const r = detail.event;
+    const docsHost = typeof document === "undefined" ? undefined
+      : document.querySelector<HTMLMetaElement>('meta[name="omnodex-docs-host"]')?.content;
     const related = call(r.related_event_id);
     body = (
       <>
@@ -392,6 +395,20 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
             })}
           </DetailRow>
         )}
+        <DetailRow label="Risk Library">
+          <a
+            href={riskLibraryUrl(r.rule_id, docsHost)}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Learn more about this risk type (opens in a new tab)"
+            style={{ color: "var(--cyan)", display: "inline-flex", alignItems: "center", gap: 6 }}
+          >
+            Learn more about this risk type
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" focusable="false">
+              <path d="M15 3h6v6M21 3l-9 9M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-4" />
+            </svg>
+          </a>
+        </DetailRow>
         {related && (
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--navy-border)" }}>
             <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>Related Tool Call</h4>

@@ -25,6 +25,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
+import { DEFAULT_DOCS_HOST, normalizeDocsHost } from "./dashboard-model/docs.js";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -39,6 +40,8 @@ export interface DashboardServerOptions {
   port: number;
   /** Directory containing dashboard.html */
   assetsDir: string;
+  /** Documentation base URL. Defaults to OMNODEX_DOCS_HOST or the public docs site. */
+  docsHost?: string;
 }
 
 /**
@@ -198,6 +201,7 @@ export type SseMessage =
 export class DashboardServer {
   private readonly store: ReadModelStore;
   private readonly assetsDir: string;
+  private readonly docsHost: string;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -212,6 +216,7 @@ export class DashboardServer {
   constructor(options: DashboardServerOptions) {
     this.store = options.store;
     this.assetsDir = options.assetsDir;
+    this.docsHost = normalizeDocsHost(options.docsHost ?? process.env.OMNODEX_DOCS_HOST);
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -383,6 +388,12 @@ export class DashboardServer {
         html = fs.readFileSync(htmlPath, "utf-8");
       } catch {
         html = NOT_BUILT_PAGE;
+      }
+      // Pass only public deployment configuration to the page. Leave the
+      // default build unchanged; a custom host requires no dashboard rebuild.
+      if (this.docsHost !== DEFAULT_DOCS_HOST) {
+        const host = this.docsHost.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+        html = html.replace(/<\/head>/i, '<meta name="omnodex-docs-host" content="' + host + '">\n</head>');
       }
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(html);
