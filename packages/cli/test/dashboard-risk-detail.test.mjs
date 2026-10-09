@@ -57,16 +57,6 @@ test("a risk without a related call still links to its rule", () => {
   assert.ok(html.includes('/risk-library/rule/RULE_ADV_CREDENTIAL_READ_THEN_OUTBOUND'));
   assert.ok(!html.includes('Related Tool Call'));
 });
-test("runtime docs host metadata redirects the link to the selected deployment", () => {
-  const previous = Object.getOwnPropertyDescriptor(globalThis, "document");
-  Object.defineProperty(globalThis, "document", {configurable: true, value: {querySelector: () => ({content: "http://localhost:4321/beta/"})}});
-  try {
-    assert.ok(render().includes('href="http://localhost:4321/beta/risk-library/rule/' + risk.rule_id + '"'));
-  } finally {
-    if (previous) Object.defineProperty(globalThis, "document", previous);
-    else delete globalThis.document;
-  }
-});
 test("ordinary call details have no Risk Library row", () => {
   const html = renderToStaticMarkup(React.createElement(DetailPanel, {view: {...view, toolCalls: [call]}, utc: true, detail: {kind: "call", id: call.tool_call_id}}));
   assert.ok(!html.includes('Risk Library'));

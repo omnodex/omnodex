@@ -374,8 +374,6 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
     if (tc) body = <CallDetail tc={tc} utc={utc} />;
   } else if (detail?.kind === "risk") {
     const r = detail.event;
-    const docsHost = typeof document === "undefined" ? undefined
-      : document.querySelector<HTMLMetaElement>('meta[name="omnodex-docs-host"]')?.content;
     const related = call(r.related_event_id);
     body = (
       <>
@@ -397,7 +395,7 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
         )}
         <DetailRow label="Risk Library">
           <a
-            href={riskLibraryUrl(r.rule_id, docsHost)}
+            href={riskLibraryUrl(r.rule_id)}
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Learn more about this risk type (opens in a new tab)"
