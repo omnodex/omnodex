@@ -79,6 +79,9 @@ const MIN_AUTO_SYNC_INTERVAL_SECONDS = 30;
 /** A lock older than this is assumed to belong to a crashed sync. */
 const LOCK_STALE_MS = 10 * 60 * 1000;
 
+/** How long `omnodex sync` waits for a running background pass by default. */
+export const SYNC_LOCK_WAIT_MS = 3 * 60 * 1000;
+
 /** Bound on a license fetch: a home with no cache yet, or a stale one. */
 const LICENSE_FETCH_TIMEOUT_MS = 3000;
 
@@ -576,6 +579,40 @@ async function acquireLock(home: string): Promise<boolean> {
     }
   }
   return false;
+}
+
+export interface AcquireSyncLockOptions {
+  /** How long to wait for a running pass. Default SYNC_LOCK_WAIT_MS. */
+  waitMs?: number;
+  /** How often to check. Default 2 seconds. */
+  pollMs?: number;
+  /** Called once, when the lock is held and the wait begins. */
+  onWait?: () => void;
+}
+
+/**
+ * Take the lock a background pass holds while it runs, for a sync started
+ * by hand. Two syncs on one home would both open traces.db, and the second
+ * fails with "database is locked". Waits up to `waitMs` for a running pass
+ * to finish; a lock older than ten minutes belongs to a crashed sync and is
+ * taken over. Resolves to the function that releases the lock, or null when
+ * a pass still holds it after the wait.
+ */
+export async function acquireSyncLock(
+  home: string,
+  opts: AcquireSyncLockOptions = {},
+): Promise<(() => Promise<void>) | null> {
+  const deadline = Date.now() + (opts.waitMs ?? SYNC_LOCK_WAIT_MS);
+  let told = false;
+  for (;;) {
+    if (await acquireLock(home)) return () => releaseLock(home);
+    if (Date.now() >= deadline) return null;
+    if (!told) {
+      told = true;
+      opts.onWait?.();
+    }
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? 2000));
+  }
 }
 
 async function releaseLock(home: string): Promise<void> {

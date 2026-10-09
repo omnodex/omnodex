@@ -70,6 +70,7 @@ import {
   AUTO_SYNC_CHILD_ENV,
   readAutoSyncState,
   recordSyncOutcome,
+  acquireSyncLock,
   SyncBlobTooLargeError,
   SYNC_BLOB_MAX_BYTES,
   runAutoSync,
@@ -1538,7 +1539,8 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
   if (!hasHistory && !(await readStreamConfig(omnodexHome))) return;
 
   if (state.last_success_at) {
-    const blob = state.last_blob_id ? `  blob ${state.last_blob_id}` : "";
+    const label = typeof state.last_sync_segments === "number" ? "commit" : "blob";
+    const blob = state.last_blob_id ? `  ${label} ${state.last_blob_id}` : "";
     console.log(
       `[status] auto sync:   last success ${formatWhen(state.last_success_at)}${blob}`,
     );
@@ -1554,7 +1556,7 @@ async function printAutoSyncHealth(omnodexHome: string): Promise<void> {
   }
 
   const blob = describeSyncBlob(state, omnodexHome);
-  if (blob) console.log(`[status] ${state.last_sync_segments ? "synced data:" : "sync blob:  "} ${blob}`);
+  if (blob) console.log(`[status] ${typeof state.last_sync_segments === "number" ? "synced data:" : "sync blob:  "} ${blob}`);
 }
 
 /** At this share of the cloud's limit, status warns that the blob is close to it. */
@@ -1588,7 +1590,7 @@ export function describeSyncBlob(
   }
   if (state.last_blob_bytes === undefined) return null;
   const pct = Math.round((state.last_blob_bytes / SYNC_BLOB_MAX_BYTES) * 100);
-  if (state.last_sync_segments && typeof state.last_sync_total_bytes === "number") {
+  if (typeof state.last_sync_segments === "number" && typeof state.last_sync_total_bytes === "number") {
     const n = state.last_sync_segments;
     const line = `${mb(state.last_sync_total_bytes)} in ${n} segment${n === 1 ? "" : "s"}, largest ${mb(state.last_blob_bytes)} of ${limit} (${pct}%)`;
     if (state.last_blob_bytes >= SYNC_BLOB_MAX_BYTES * SYNC_BLOB_WARN_FRACTION) {
@@ -2012,45 +2014,62 @@ async function cmdSync(args: string[]): Promise<void> {
     ? sessionsFlag.split(",").map((s) => s.trim()).filter(Boolean)
     : undefined;
 
-  console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
-  let result: Awaited<ReturnType<typeof syncReadModel>>;
+  // A background pass may be syncing this home right now; both would open
+  // traces.db, and the second would fail with "database is locked".
+  const waitEnv = Number(process.env.OMNODEX_SYNC_LOCK_WAIT_MS);
+  const release = await acquireSyncLock(paths.home, {
+    waitMs: Number.isFinite(waitEnv) && waitEnv >= 0 ? waitEnv : undefined,
+    onWait: () => console.log("[sync] a background sync is running on this machine; waiting for it to finish ..."),
+  });
+  if (!release) {
+    console.error("[sync] a background sync is still running. Try again in a few minutes; `omnodex status` shows its last result.");
+    process.exitCode = 1;
+    return;
+  }
+
   try {
-    result = await syncReadModel({
-      home: paths.home,
-      apiUrl,
-      apiToken,
-      passphrase,
-      customerId: customer_id,
-      sessionIds,
-    });
-  } catch (err) {
-    // Recorded like a background sync, so `omnodex status` shows it too.
-    await recordSyncOutcome(paths.home, err);
-    if (err instanceof SyncBlobTooLargeError) {
-      console.error(`[sync] ${describeSyncBlob({ blob_too_large_bytes: err.bytes }, paths.home)}`);
-      process.exitCode = 1;
-      return;
+    console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
+    let result: Awaited<ReturnType<typeof syncReadModel>>;
+    try {
+      result = await syncReadModel({
+        home: paths.home,
+        apiUrl,
+        apiToken,
+        passphrase,
+        customerId: customer_id,
+        sessionIds,
+      });
+    } catch (err) {
+      // Recorded like a background sync, so `omnodex status` shows it too.
+      await recordSyncOutcome(paths.home, err);
+      if (err instanceof SyncBlobTooLargeError) {
+        console.error(`[sync] ${describeSyncBlob({ blob_too_large_bytes: err.bytes }, paths.home)}`);
+        process.exitCode = 1;
+        return;
+      }
+      throw err;
     }
-    throw err;
+    // A partial sync (--sessions) pushes a single blob of those sessions.
+    await recordSyncOutcome(paths.home, result);
+    if (result.segments) {
+      console.log(
+        `[sync] done. commit=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} ` +
+          `segments=${result.segments.count} uploaded=${result.segments.uploaded}`,
+      );
+    } else {
+      console.log(
+        `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.blobBytes}`,
+      );
+    }
+    const size = describeSyncBlob({
+      last_blob_bytes: result.blobBytes,
+      last_sync_segments: result.segments?.count ?? null,
+      last_sync_total_bytes: result.segments?.totalBytes ?? null,
+    }, paths.home);
+    if (size) console.log(`[sync] ${size}`);
+  } finally {
+    await release();
   }
-  // A partial sync (--sessions) pushes a single blob of those sessions.
-  await recordSyncOutcome(paths.home, result);
-  if (result.segments) {
-    console.log(
-      `[sync] done. commit=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} ` +
-        `segments=${result.segments.count} uploaded=${result.segments.uploaded}`,
-    );
-  } else {
-    console.log(
-      `[sync] done. blob=${result.blobId} machine=${result.machineId} sessions=${result.sessionsIncluded.length} bytes=${result.blobBytes}`,
-    );
-  }
-  const size = describeSyncBlob({
-    last_blob_bytes: result.blobBytes,
-    last_sync_segments: result.segments?.count ?? null,
-    last_sync_total_bytes: result.segments?.totalBytes ?? null,
-  }, paths.home);
-  if (size) console.log(`[sync] ${size}`);
 }
 
 async function main(): Promise<void> {

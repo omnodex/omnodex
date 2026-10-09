@@ -60,3 +60,17 @@ test("says nothing before the first sync", async (t) => {
   const env = await scratch(t, {});
   assert.equal(status(env), "");
 });
+
+test("calls a segmented sync's id a commit, not a blob", async (t) => {
+  const env = await scratch(t, { last_blob_bytes: 2 * MB, last_sync_segments: 2, last_sync_total_bytes: 3 * MB, last_blob_id: "commit_case_1" });
+  const res = spawnSync(process.execPath, [CLI, "status"], {
+    cwd: env.home,
+    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  const auto = res.stdout.split("\n").find((l) => l.includes("auto sync:")) ?? "";
+  assert.match(auto, /commit commit_case_1$/);
+  const size = res.stdout.split("\n").find((l) => l.includes("synced data:")) ?? "";
+  assert.match(size, /3\.0 MB in 2 segments, largest 2\.0 MB of 50 MB \(4%\)$/);
+});
