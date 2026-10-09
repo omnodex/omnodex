@@ -333,11 +333,32 @@ describe("sync runner", () => {
         "/api/v1/sync/segments/:id", "/api/v1/sync/manifest",
       ]);
 
-      // The replay and the sync's own audit event change no session.
+      // The replay and the sync's own audit event change no session, so the
+      // next sync sends nothing and writes no audit event.
+      const syncEvents = async () => {
+        const log = new EventLog({ root: path.join(home, "event-log") });
+        await log.init();
+        let count = 0;
+        for await (const e of log.readAll()) if (e.event_type === "sync.pushed") count++;
+        await log.close();
+        return count;
+      };
+      assert.equal(await syncEvents(), 1);
       api.seen.length = 0;
       const second = await syncReadModel(opts);
       assert.deepEqual(api.seen, []);
       assert.equal(second.segments.uploaded, 0);
+      assert.equal(await syncEvents(), 1);
+
+      // A new event: the next sync uploads one segment and commits.
+      const log = new EventLog({ root: path.join(home, "event-log") });
+      await log.init();
+      await log.append(ev("r1", Date.now(), { event_type: "tool.invoked", tool_call_id: "r1-c1", tool_name: "Bash", mcp_server: "", parameters: { command: "pwd" } }));
+      await log.close();
+      const third = await syncReadModel(opts);
+      assert.equal(third.segments.uploaded, 1);
+      assert.equal(api.seen.length, 2);
+      assert.equal(await syncEvents(), 2);
     } finally {
       await api.close();
     }
