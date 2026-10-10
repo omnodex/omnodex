@@ -157,6 +157,12 @@ export interface BaseEvent {
    * that subagent's subagent.started and subagent.stopped events.
    */
   agent_id?: string;
+  /**
+   * Recorded while uploads were paused on this machine. The event stays in
+   * the local log and local dashboard, and never leaves the machine: live
+   * push and sync skip it. Absent means the event may be uploaded.
+   */
+  local_only?: boolean;
 }
 
 export interface SessionStartedEvent extends BaseEvent {
@@ -476,6 +482,46 @@ export interface RuleUpdatedEvent extends BaseEvent {
   source: "cloud" | "local";
 }
 
+// ---------------------------------------------------------------------------
+// Capture pause markers (written when a person pauses or resumes capture)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a pause stops. `record`: nothing is captured. `sync`: events are
+ * captured locally but never uploaded. `enforce`: rules stop blocking.
+ */
+export type CapturePauseKind = "record" | "sync" | "enforce";
+
+/** Session id that carries pause markers, which belong to no agent session. */
+export const CAPTURE_CONTROL_SESSION_ID = "omnodex-capture-control";
+
+/**
+ * A pause started. Markers carry no captured content, so they are written
+ * and uploaded under every pause, and a pause shows as a gap rather than as
+ * missing data.
+ */
+export interface CapturePausedEvent extends BaseEvent {
+  event_type: "capture.paused";
+  /** Same id on the matching capture.resumed. */
+  pause_id: string;
+  kind: CapturePauseKind;
+  /** When the pause ends by itself, ISO 8601; null when only a resume ends it. */
+  until: string | null;
+  /** Host name of the machine that paused. */
+  machine_label?: string;
+}
+
+/** A pause ended: resumed by a person, or its time ran out. */
+export interface CaptureResumedEvent extends BaseEvent {
+  event_type: "capture.resumed";
+  pause_id: string;
+  kind: CapturePauseKind;
+  /** When the pause started, ISO 8601. */
+  paused_at: string;
+  reason: "command" | "expired" | "replaced";
+  machine_label?: string;
+}
+
 /** Discriminated union of every event type accepted by the event log. */
 export type TraceEvent =
   | SessionStartedEvent
@@ -493,7 +539,9 @@ export type TraceEvent =
   | PermissionDeniedEvent
   | SyncPushedEvent
   | FeatureExtractedEvent
-  | RuleUpdatedEvent;
+  | RuleUpdatedEvent
+  | CapturePausedEvent
+  | CaptureResumedEvent;
 
 export type EventType = TraceEvent["event_type"];
 
