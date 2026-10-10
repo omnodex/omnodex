@@ -507,7 +507,9 @@ async function readSyncSettings(
 ): Promise<SyncSettings | "no-credentials" | "not-entitled"> {
   const config = await readJson(path.join(home, "stream-config.json"));
   const apiToken = typeof config?.api_token === "string" ? config.api_token : "";
-  const passphrase = typeof config?.passphrase === "string" ? config.passphrase : "";
+  // `stream_secret` is the current name; `passphrase` the older one.
+  const secret = config?.stream_secret ?? config?.passphrase;
+  const passphrase = typeof secret === "string" ? secret : "";
   if (!config || !apiToken || !passphrase) return "no-credentials";
 
   const apiUrl = typeof config.api_url === "string" && config.api_url

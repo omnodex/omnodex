@@ -15,6 +15,10 @@ import type { FileEventRow, PromptRow, ReadModelSnapshot, RiskEventRow, SessionR
 import type { CollapsedToolCallRow } from "@omnodex/projection";
 import { riskScoreFor } from "@omnodex/shared";
 import { totalEvents } from "./labels.js";
+import { pauseOverlaps, type PauseRow } from "./pauses.js";
+
+/** The local dashboard's snapshot: the read model plus capture pauses. */
+export type LocalSnapshot = ReadModelSnapshot & { pauses?: PauseRow[] };
 
 /** The selection value for every session with activity. */
 export const ALL_SESSIONS = "__all_active__";
@@ -29,6 +33,8 @@ export interface SessionView {
   riskEvents: RiskEventRow[];
   prompts: PromptRow[];
   subagents: SubagentRow[];
+  /** Capture pauses that overlap the view. */
+  pauses: PauseRow[];
 }
 
 /**
@@ -53,10 +59,10 @@ export function listedSessions(snapshot: ReadModelSnapshot): SessionRow[] {
  * The rows for a selection. All sessions lists calls and findings newest
  * first; one session keeps the order the snapshot holds.
  */
-export function selectView(snapshot: ReadModelSnapshot, selection: string): SessionView {
+export function selectView(snapshot: LocalSnapshot, selection: string): SessionView {
   if (selection !== ALL_SESSIONS) {
     const session = snapshot.sessions.find((s) => s.session_id === selection) ?? null;
-    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [], prompts: [], subagents: [] };
+    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [], prompts: [], subagents: [], pauses: [] };
     const id = session.session_id;
     return {
       session,
@@ -66,6 +72,8 @@ export function selectView(snapshot: ReadModelSnapshot, selection: string): Sess
       riskEvents: [...(snapshot.risk_events[id] ?? [])],
       prompts: [...(snapshot.prompts?.[id] ?? [])],
       subagents: [...(snapshot.subagents?.[id] ?? [])],
+      pauses: (snapshot.pauses ?? []).filter((p) =>
+        pauseOverlaps(p, session.started_at, session.ended_at ?? session.last_event_at ?? null)),
     };
   }
   const sessions = listedSessions(snapshot);
@@ -76,7 +84,7 @@ export function selectView(snapshot: ReadModelSnapshot, selection: string): Sess
   const subagents = sessions.flatMap((s) => snapshot.subagents?.[s.session_id] ?? []);
   toolCalls.sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
   riskEvents.sort((a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""));
-  return { session: null, sessions, toolCalls, fileEvents, riskEvents, prompts, subagents };
+  return { session: null, sessions, toolCalls, fileEvents, riskEvents, prompts, subagents, pauses: [...(snapshot.pauses ?? [])] };
 }
 
 export interface ViewTotals {

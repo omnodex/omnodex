@@ -24,7 +24,7 @@ import { ProxyConfigSchema } from "../dist/config.js";
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const MOCK_SERVER = path.join(__dirname, "helpers", "mock-mcp-server.mjs");
-const BUILT_INS = ["omnodex_status", "omnodex_connect", "omnodex_connection_status"];
+const BUILT_INS = ["omnodex_status", "omnodex_connect", "omnodex_connection_status", "omnodex_resume"];
 
 function makeConfig() {
   return ProxyConfigSchema.parse({

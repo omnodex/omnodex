@@ -25,6 +25,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
+import type { PauseRow } from "./dashboard-model/pauses.js";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -39,6 +40,8 @@ export interface DashboardServerOptions {
   port: number;
   /** Directory containing dashboard.html */
   assetsDir: string;
+  /** Capture pauses to show on the timeline, read from the event logs. */
+  pauses?: () => Promise<PauseRow[]>;
 }
 
 /**
@@ -198,6 +201,7 @@ export type SseMessage =
 export class DashboardServer {
   private readonly store: ReadModelStore;
   private readonly assetsDir: string;
+  private readonly pauses: (() => Promise<PauseRow[]>) | null;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -212,6 +216,7 @@ export class DashboardServer {
   constructor(options: DashboardServerOptions) {
     this.store = options.store;
     this.assetsDir = options.assetsDir;
+    this.pauses = options.pauses ?? null;
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -336,7 +341,9 @@ export class DashboardServer {
     // Every session with its rows, correlated hook and proxy observations
     // collapsed into one call and one finding: what the page renders.
     if (pathname === "/api/snapshot") {
-      return sendJson(res, collapseCorrelated(await readSnapshot(this.store)));
+      const snapshot = collapseCorrelated(await readSnapshot(this.store));
+      const pauses = this.pauses ? await this.pauses().catch(() => []) : [];
+      return sendJson(res, { ...snapshot, pauses });
     }
 
     if (pathname === "/api/sessions") {

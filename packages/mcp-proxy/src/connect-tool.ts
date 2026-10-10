@@ -57,7 +57,10 @@ async function readStreamConfig(home: string): Promise<StreamConfig | null> {
   try {
     const raw = await fs.readFile(path.join(home, "stream-config.json"), "utf-8");
     const parsed = JSON.parse(raw);
-    if (!parsed.api_token || !parsed.passphrase) return null;
+    // `stream_secret` is the current name; `passphrase` the older one.
+    const secret = (parsed as { stream_secret?: string }).stream_secret || parsed.passphrase;
+    if (!parsed.api_token || !secret) return null;
+    parsed.passphrase = secret;
     return parsed as StreamConfig;
   } catch {
     return null;
@@ -67,7 +70,11 @@ async function readStreamConfig(home: string): Promise<StreamConfig | null> {
 async function writeStreamConfig(home: string, config: StreamConfig): Promise<void> {
   const filePath = path.join(home, "stream-config.json");
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+  // Both names: `stream_secret` is current, `passphrase` is what older
+  // versions on this machine read.
+  const { passphrase, ...rest } = config;
+  const body = { ...rest, stream_secret: passphrase, passphrase };
+  await fs.writeFile(filePath, JSON.stringify(body, null, 2) + "\n", { mode: 0o600 });
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +138,7 @@ export async function handleConnect(params: {
 
   // Resolve credentials: env > stream-config.json
   let apiToken = process.env.OMNODEX_API_TOKEN ?? "";
-  let passphrase = process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
+  let passphrase = process.env.OMNODEX_STREAM_SECRET || process.env.OMNODEX_SYNC_PASSPHRASE || "";
   let apiUrl = process.env.OMNODEX_API_URL ?? "";
 
   const config = await readStreamConfig(home);
@@ -379,7 +386,7 @@ export async function checkConnectionStatus(): Promise<ConnectionStatus> {
   const config = await readStreamConfig(home);
 
   const envToken = process.env.OMNODEX_API_TOKEN ?? "";
-  const envPassphrase = process.env.OMNODEX_SYNC_PASSPHRASE ?? "";
+  const envPassphrase = process.env.OMNODEX_STREAM_SECRET || process.env.OMNODEX_SYNC_PASSPHRASE || "";
 
   const hasToken = !!(envToken || config?.api_token);
   const hasPassphrase = !!(envPassphrase || config?.passphrase);

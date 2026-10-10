@@ -27,7 +27,9 @@ import * as os from "node:os";
 import * as readline from "node:readline/promises";
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
-import { EventLog, newEventId } from "@omnodex/event-log";
+import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
+import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
+import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
   SqliteReadModelStore,
@@ -61,6 +63,7 @@ import {
   registryForHost,
   runBackgroundDetection,
 } from "@omnodex/analyzer";
+import { CAPTURE_CONTROL_SESSION_ID } from "@omnodex/shared";
 import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense, clearCache as clearLicenseCache } from "@omnodex/license-client";
 import {
@@ -77,6 +80,7 @@ import {
   startBackgroundSync,
   readLiveGate,
   clearLiveGate,
+  pushEventsToCloud,
   readAdvancedUsage,
   ADVANCED_USAGE_MAX_AGE_DAYS,
 } from "@omnodex/sync-encryptor";
@@ -578,7 +582,10 @@ async function cmdDashboard(args: string[]): Promise<void> {
 
   // --- Start server ---
   const assetsDir = resolveDashboardAssetsDir(import.meta.url);
-  const server = new DashboardServer({ store, port, assetsDir });
+  // Capture pauses live in their own session file in each root's log.
+  const pauses = async () =>
+    pauseRows((await Promise.all(logs.map(({ log }) => log.readSession(CAPTURE_CONTROL_SESSION_ID)))).flat());
+  const server = new DashboardServer({ store, port, assetsDir, pauses });
   try {
     await server.ready;
   } catch (err) {
@@ -615,6 +622,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
           apiToken: streamApiToken,
           keyId,
           streamingKey: streamKey,
+          home: resolved.primary,
         });
         console.log(`[dashboard] cloud streaming enabled (key_id=${keyId})`);
       } catch (err) {
@@ -624,7 +632,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
       console.log("[dashboard] cloud streaming not available on current tier");
     }
   } else {
-    console.log("[dashboard] cloud streaming disabled (no API token/passphrase)");
+    console.log("[dashboard] cloud streaming disabled (no API token/stream secret)");
   }
 
   console.log(`[dashboard] open http://localhost:${server.port} in your browser`);
@@ -763,7 +771,7 @@ async function connectAfterInstall(
     created_at: new Date().toISOString(),
   });
   creds.passphrase = newPassphrase;
-  console.log("[install] generated new sync passphrase (saved to stream-config.json)");
+  console.log("[install] generated a new stream secret (saved to stream-config.json)");
 
   await offerConnectionLink(omnodexHome, {
     apiToken: creds.apiToken,
@@ -834,7 +842,7 @@ async function cmdConnect(args: string[]): Promise<void> {
   const paths = resolvePaths();
 
   const flagToken = readFlagValue(args, "--token");
-  const flagPassphrase = readFlagValue(args, "--passphrase");
+  const flagPassphrase = readFlagValue(args, "--secret") ?? readFlagValue(args, "--passphrase");
   const flagApiUrl = readFlagValue(args, "--api");
   const flagPlatform = readFlagValue(args, "--platform");
 
@@ -894,7 +902,7 @@ async function cmdConnect(args: string[]): Promise<void> {
       api_url: creds.apiUrl,
       created_at: new Date().toISOString(),
     });
-    console.log("[connect] generated new sync passphrase (saved to stream-config.json)");
+    console.log("[connect] generated a new stream secret (saved to stream-config.json)");
     creds = (await resolveCredentials(paths.home, {
       flagToken,
       flagPassphrase,
@@ -1379,6 +1387,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     `[status] rules:        ${describeRules(loadAdvancedRules(paths.home), COMMUNITY_RULES.length)}`,
   );
 
+  await printCaptureHealth(paths.home);
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);
   await printLivePushHealth(paths.home);
@@ -1605,6 +1614,13 @@ export function describeSyncBlob(
   return line;
 }
 
+/** Whether recording and uploads are paused on this machine. */
+async function printCaptureHealth(omnodexHome: string): Promise<void> {
+  const { lines, markers } = await captureStatusLines(omnodexHome);
+  await appendMarkers(omnodexHome, markers, pushEventsToCloud);
+  for (const line of lines) console.log(line);
+}
+
 /**
  * Report the live push gate. While the relay says no dashboard is watching,
  * every pusher on the machine holds back for a growing window, so a
@@ -1644,7 +1660,13 @@ export function describeAdvancedUsage(state: AdvancedUsageState): string | null 
 }
 
 /** One line for the live push gate's state. */
-function describeLiveGate(state: { paused_until: number; backoff_ms: number } | null, now = Date.now()): string {
+function describeLiveGate(
+  state: { paused_until: number; backoff_ms: number; receiving_paused?: boolean } | null,
+  now = Date.now(),
+): string {
+  if (state?.receiving_paused) {
+    return "receiving paused by the stream's owner in the dashboard: uploads from this machine are refused until they resume it";
+  }
   if (!state || now >= state.paused_until) return "open";
   const left = Math.ceil((state.paused_until - now) / 1000);
   return (
@@ -1756,7 +1778,9 @@ async function cmdMcpProxyStart(args: string[]): Promise<void> {
     home: paths.home,
     autoSyncScriptPath: scriptPath,
   });
-  const emit = log.append.bind(log);
+  const emit = async (event: TraceEvent): Promise<void> => {
+    for (const e of await applyCapturePause([event], paths.home)) await log.append(e);
+  };
   const stop = await proxy.start(emit);
 
   async function shutdown(): Promise<void> {
@@ -1799,7 +1823,9 @@ async function cmdMcpProxyServe(args: string[]): Promise<void> {
       ...(authToken ? { authToken } : {}),
     },
   });
-  const stop = await proxy.start(log.append.bind(log));
+  const stop = await proxy.start(async (event: TraceEvent) => {
+    for (const e of await applyCapturePause([event], paths.home)) await log.append(e);
+  });
   console.error(`[mcp-proxy] serving MCP over HTTP at ${proxy.httpUrl()} (Ctrl-C to stop)`);
 
   let shuttingDown: Promise<void> | undefined;
@@ -1979,7 +2005,7 @@ async function cmdSync(args: string[]): Promise<void> {
   // Resolve credentials: flag > env > stream-config.json
   const creds = await resolveCredentials(paths.home, {
     flagToken: readFlagValue(args, "--token"),
-    flagPassphrase: readFlagValue(args, "--passphrase"),
+    flagPassphrase: readFlagValue(args, "--secret") ?? readFlagValue(args, "--passphrase"),
     flagApiUrl: readFlagValue(args, "--api"),
   });
 
@@ -1994,7 +2020,7 @@ async function cmdSync(args: string[]): Promise<void> {
     return;
   }
   if (!passphrase) {
-    console.error("[sync] no passphrase. Set OMNODEX_SYNC_PASSPHRASE, pass --passphrase <phrase>,");
+    console.error("[sync] no stream secret. Set OMNODEX_STREAM_SECRET, pass --secret <secret>,");
     console.error("       or run `omnodex connect` to auto-generate one.");
     process.exitCode = 1;
     return;
@@ -2159,7 +2185,18 @@ async function main(): Promise<void> {
       await cmdConnect(rest);
       return;
     case "sync":
+      if (["pause", "resume", "status"].includes(rest.find((a) => !a.startsWith("--")) ?? "")) {
+        process.exitCode = await runCaptureControl("sync", rest, {
+          home: resolvePaths().home, io: processIo(), push: pushEventsToCloud,
+        });
+        return;
+      }
       await cmdSync(rest);
+      return;
+    case "record":
+      process.exitCode = await runCaptureControl("record", rest, {
+        home: resolvePaths().home, io: processIo(), push: pushEventsToCloud,
+      });
       return;
     case "live":
       await cmdLive(rest);
@@ -2210,11 +2247,21 @@ commands:
                      already exists, generates a one-click connection link.
                      Flags: --token <omx_...>  bypass device code flow and
                                                store the given token directly
-                            --passphrase, --api, --platform
+                            --secret (stream secret), --api, --platform
   sync               encrypt the local read model and push it to the cloud.
                      Credentials are resolved from flags, environment
                      variables, or stream-config.json (saved by connect
                      or install). Hosted tier or above.
+  sync pause [duration] | resume | status
+                     pause uploads from this machine: events are still
+                     recorded and shown in the local dashboard, but stay
+                     on this machine for good. Duration like 30m, 1h, 2d;
+                     without one, until resumed. Pausing asks you to
+                     confirm at a terminal.
+  record pause [duration] | resume | status
+                     pause recording on this machine: nothing is captured
+                     or uploaded until it resumes. Pausing asks you to
+                     confirm at a terminal.
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.

@@ -42,6 +42,7 @@ import {
 import { callToolWithEvents } from "./event-emitter.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
+import { RESUME_TOOL, captureHome, captureStatus, handleResume } from "./capture-tool.js";
 import {
   asPlatform,
   buildSessionEndedEvent,
@@ -102,7 +103,8 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     name: "omnodex_status",
     description:
       "Returns the status of the Omnodex MCP proxy: version, session ID, " +
-      "uptime, and the connection state of each upstream server. Pass " +
+      "uptime, whether recording and uploads are paused, and the connection " +
+      "state of each upstream server. Pass " +
       "retry_failed: true to retry upstream servers that failed to connect.",
     inputSchema: {
       type: "object" as const,
@@ -121,7 +123,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     description:
       "Generates a one-click connection link to pair this machine's Omnodex " +
       "stream with the cloud dashboard. Returns a URL the user can open in " +
-      "their browser to connect. Auto-generates a sync passphrase if needed.",
+      "their browser to connect. Auto-generates a stream secret if needed.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -141,7 +143,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   const CONNECTION_STATUS_TOOL = {
     name: "omnodex_connection_status",
     description:
-      "Checks whether Omnodex cloud credentials (API token + passphrase) " +
+      "Checks whether Omnodex cloud credentials (API token + stream secret) " +
       "are configured on this machine. Use this to determine if the stream " +
       "is ready to connect to the dashboard.",
     inputSchema: { type: "object" as const, properties: {} },
@@ -222,7 +224,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     await discovery;
     const tools = pool.getListedTools().map((t) => t.definition);
-    return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, ...tools] };
+    return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, RESUME_TOOL, ...tools] };
   });
 
   // ── tools/call ────────────────────────────────────────────────────────────
@@ -246,6 +248,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         upstream_servers: upstreams,
         tool_count: pool.getTools().length,
         redact_parameters: config.redact_parameters,
+        capture: await captureStatus(captureHome(), emit).catch(() => undefined),
         ...(retried ? { retried } : {}),
         ...(warnings.length > 0 ? { warnings } : {}),
       };
@@ -263,6 +266,15 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         isError: result.status !== "ok",
+      };
+    }
+
+    // Handle built-in omnodex_resume tool (there is no pause tool)
+    if (prefixedName === RESUME_TOOL.name) {
+      const result = await handleResume(args, captureHome(), emit);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: result.status === "invalid",
       };
     }
 
