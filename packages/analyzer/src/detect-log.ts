@@ -33,7 +33,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { EventLog, newEventId as defaultNewEventId } from "@omnodex/event-log";
-import type { RiskDetectedEvent } from "@omnodex/shared";
+import type { RiskDetectedEvent, TraceEvent } from "@omnodex/shared";
 import { detectRisks } from "./detect.js";
 import type { RuleRegistry } from "./registry.js";
 import { registryForHost } from "./evaluator.js";
@@ -95,6 +95,18 @@ interface DetectState {
   counted?: Record<string, Record<string, number>>;
 }
 
+/** Flag findings whose triggering call was recorded local-only. */
+export function markLocalOnlyFindings(findings: RiskDetectedEvent[], source: readonly TraceEvent[]): void {
+  const localCalls = new Set<string>();
+  for (const e of source) {
+    if (e.local_only && (e.event_type === "tool.invoked" || e.event_type === "tool.completed")) localCalls.add(e.tool_call_id);
+  }
+  if (localCalls.size === 0) return;
+  for (const f of findings) {
+    if (localCalls.has(f.related_event_id) || f.related_event_ids?.some((id) => localCalls.has(id))) f.local_only = true;
+  }
+}
+
 export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLogResult> {
   const newEventId = opts.newEventId ?? defaultNewEventId;
   const state = opts.statePath ? await readState(opts.statePath) : null;
@@ -139,6 +151,9 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
           }
           if (counted) counted[sessionId] = Math.max(prior, calls);
           if (detection.newEvents.length > 0) {
+            // A finding about a call recorded while uploads were paused
+            // stays on this machine with it.
+            markLocalOnlyFindings(detection.newEvents, events);
             await log.appendMany(detection.newEvents);
             result.newEvents.push(...detection.newEvents);
           }

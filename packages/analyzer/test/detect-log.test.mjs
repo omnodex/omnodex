@@ -276,3 +276,22 @@ describe("runBackgroundDetect", () => {
     await assert.rejects(readFile(path.join(home, "event-log", "index.jsonl")));
   });
 });
+
+describe("local-only findings", () => {
+  it("findings about a call recorded local-only are flagged local-only too", async () => {
+  const { markLocalOnlyFindings } = await import("../dist/detect-log.js");
+  const call = (id, local) => ({
+    schema_version: 1, event_id: `e-${id}`, session_id: "s", occurred_at: "2026-06-02T00:00:00.000Z",
+    recorded_at: "2026-06-02T00:00:00.000Z", interceptor: "claude-code-hook", event_type: "tool.invoked",
+    tool_call_id: id, tool_name: "Bash", mcp_server: "builtin", parameters: {}, ...(local ? { local_only: true } : {}),
+  });
+  const finding = (rel, rels) => ({
+    schema_version: 1, event_id: `f-${rel}`, session_id: "s", occurred_at: "2026-06-02T00:00:00.000Z",
+    recorded_at: "2026-06-02T00:00:00.000Z", interceptor: "analyzer", event_type: "risk.detected", severity: "HIGH",
+    category: "c", description: "d", related_event_id: rel, rule_id: "r", ...(rels ? { related_event_ids: rels } : {}),
+  });
+  const findings = [finding("hidden"), finding("seen"), finding("seen", ["hidden", "seen"])];
+  markLocalOnlyFindings(findings, [call("hidden", true), call("seen", false)]);
+  assert.deepEqual(findings.map((f) => f.local_only === true), [true, false, true]);
+});
+});

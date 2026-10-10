@@ -44,7 +44,7 @@ export {
 } from "./envelope.js";
 export type { DecodedEnvelope } from "./envelope.js";
 
-export { HttpSyncTransport, SyncBlobTooLargeError, SYNC_BLOB_MAX_BYTES } from "./transport.js";
+export { HttpSyncTransport, ReceivingPausedError, SyncBlobTooLargeError, SYNC_BLOB_MAX_BYTES } from "./transport.js";
 export { syncSegments, SEGMENT_SEAL_BYTES, SEGMENT_WINDOW_DAYS, SEGMENT_MANIFEST_FILE } from "./segment-sync.js";
 export type { SegmentSyncOptions, SegmentSyncResult, SegmentManifest } from "./segment-sync.js";
 export { HttpSegmentTransport, SegmentsUnsupportedError, MissingSegmentsError } from "./segment-transport.js";
@@ -70,6 +70,8 @@ export {
   recordLivePush,
   readLiveGate,
   clearLiveGate,
+  isReceivingPaused,
+  RECEIVING_PAUSED_ERROR,
 } from "./live-gate.js";
 export type { LivePushOutcome, LiveGateState } from "./live-gate.js";
 export { readOrFetchLicense } from "./license-cache.js";

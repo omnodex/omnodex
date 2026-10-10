@@ -46,14 +46,23 @@ export const LIVE_BACKOFF_MAX_MS = 300_000;
 
 const STATE_FILE = "live-push-state.json";
 
-/** How a live push went, as far as the gate cares. */
-export type LivePushOutcome = "watched" | "unwatched" | "failed";
+/**
+ * How a live push went, as far as the gate cares. `receiving_paused`: the
+ * stream's owner paused receiving in the dashboard, so the server refuses
+ * every push until they resume it.
+ */
+export type LivePushOutcome = "watched" | "unwatched" | "failed" | "receiving_paused";
+
+/** The error code the server sends while a stream's receiving is paused. */
+export const RECEIVING_PAUSED_ERROR = "receiving_paused";
 
 export interface LiveGateState {
   /** Unix ms; no live pushes before this. */
   paused_until: number;
   /** The window that produced paused_until; the next one doubles it. */
   backoff_ms: number;
+  /** Set while the last refusal was the owner pausing receiving. */
+  receiving_paused?: boolean;
 }
 
 /** Whether a push may go out now. */
@@ -71,6 +80,11 @@ export function nextLiveGate(
   now: number,
 ): LiveGateState | null {
   if (outcome === "watched") return null;
+  // A paused stream stays paused until a person resumes it: wait the
+  // longest window straight away.
+  if (outcome === "receiving_paused") {
+    return { paused_until: now + LIVE_BACKOFF_MAX_MS, backoff_ms: LIVE_BACKOFF_MAX_MS, receiving_paused: true };
+  }
   const backoff = state
     ? Math.min(state.backoff_ms * 2, LIVE_BACKOFF_MAX_MS)
     : LIVE_BACKOFF_MIN_MS;
@@ -83,11 +97,21 @@ export function nextLiveGate(
  */
 export async function livePushOutcome(res: Response): Promise<LivePushOutcome> {
   if (!res.ok) {
-    await res.text().catch(() => "");
-    return "failed";
+    const text = await res.text().catch(() => "");
+    return isReceivingPaused(res.status, text) ? "receiving_paused" : "failed";
   }
   const body = (await res.json().catch(() => null)) as { live?: unknown } | null;
   return body?.live === false ? "unwatched" : "watched";
+}
+
+/** Whether a refused upload was the stream's owner pausing receiving. */
+export function isReceivingPaused(status: number, body: string): boolean {
+  if (status !== 403) return false;
+  try {
+    return (JSON.parse(body) as { error?: unknown }).error === RECEIVING_PAUSED_ERROR;
+  } catch {
+    return false;
+  }
 }
 
 /** A gate held in memory, for a long-lived process that pushes on its own. */
@@ -111,7 +135,11 @@ export async function readLiveGate(home: string): Promise<LiveGateState | null> 
   try {
     const parsed = JSON.parse(await readFile(join(home, STATE_FILE), "utf-8")) as LiveGateState;
     if (typeof parsed.paused_until !== "number" || typeof parsed.backoff_ms !== "number") return null;
-    return parsed;
+    return {
+      paused_until: parsed.paused_until,
+      backoff_ms: parsed.backoff_ms,
+      ...(parsed.receiving_paused === true ? { receiving_paused: true } : {}),
+    };
   } catch {
     return null;
   }

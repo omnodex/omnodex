@@ -34,6 +34,7 @@
  *   - The IV is prepended to the ciphertext in the wire payload.
  */
 
+import { outboundEvents } from "@omnodex/event-log";
 import type { TraceEvent } from "@omnodex/shared";
 import type { AesGcmKey } from "./crypto.js";
 import { encrypt } from "./crypto.js";
@@ -58,6 +59,12 @@ export interface StreamingTransportOptions {
   maxBatchSize?: number;
   /** Request timeout in ms. Default: 10000. */
   timeoutMs?: number;
+  /**
+   * OMNODEX_HOME whose capture pauses apply. Events recorded local-only are
+   * never pushed either way; with a home, nothing but pause markers is
+   * pushed while a record or sync pause is in force.
+   */
+  home?: string;
 }
 
 interface EncryptedEventWire {
@@ -92,6 +99,7 @@ export class StreamingTransport {
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
   private readonly timeoutMs: number;
+  private readonly home: string | null;
 
   private buffer: EncryptedEventWire[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -107,6 +115,7 @@ export class StreamingTransport {
     this.flushIntervalMs = opts.flushIntervalMs ?? 1000;
     this.maxBatchSize = opts.maxBatchSize ?? 50;
     this.timeoutMs = opts.timeoutMs ?? 10_000;
+    this.home = opts.home ?? null;
   }
 
   /**
@@ -117,6 +126,7 @@ export class StreamingTransport {
     if (this.stopped) return;
 
     try {
+      if ((await outboundEvents([event], this.home)).length === 0) return;
       const plaintext = new TextEncoder().encode(JSON.stringify(event));
       const { ciphertext, iv } = await encrypt(this.streamingKey, plaintext);
 
@@ -210,10 +220,13 @@ export class StreamingTransport {
           signal: controller.signal,
         });
 
-        if (!res.ok) {
+        const outcome = await livePushOutcome(res);
+        if (outcome === "receiving_paused") {
+          console.warn("[stream] the stream's owner paused receiving in the dashboard; live pushes back off");
+        } else if (!res.ok) {
           console.warn("[stream] push failed: HTTP " + res.status);
         }
-        this.gate.record(await livePushOutcome(res));
+        this.gate.record(outcome);
       } finally {
         clearTimeout(timer);
       }

@@ -38,7 +38,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
-import { EventLog, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
 import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import type { CodexHookPayload } from "../codex-payload.js";
 import { mapCodexPayload } from "../codex-payload.js";
@@ -145,21 +145,25 @@ async function main(): Promise<number> {
 
     const log = new EventLog({ root: eventLogRoot });
     await log.init();
-    for (const event of events) {
+    // A capture pause drops the events (record) or keeps them on this
+    // machine only (sync); pause markers are always written.
+    const written = await applyCapturePause(events, home);
+    for (const event of written) {
       await log.append(event);
     }
     // Judge the call against the per-event rules here, so its findings are
     // written and pushed with it. Capped in time; on a timeout or error
     // the background pass judges it instead.
     const findings = captureDetectEnabled()
-      ? await judgeCaptured(events, {
+      ? await judgeCaptured(written.filter((e) => !isPauseMarker(e)), {
           newEventId,
           onError: (err) => {
             if (debug) console.error(`[omnodex-codex] rule evaluation skipped: ${(err as Error).message}`);
           },
         })
       : [];
-    for (const finding of findings) {
+    const keptFindings = await applyCapturePause(findings, home);
+    for (const finding of keptFindings) {
       await log.append(finding);
     }
     await log.close();
@@ -172,7 +176,7 @@ async function main(): Promise<number> {
 
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
     // Codex hooks are synchronous so keep the timeout short.
-    await pushEventsToCloud([...events, ...findings], home, 2000);
+    await pushEventsToCloud([...written, ...keptFindings], home, 2000);
 
     // Refresh the hosted dashboard's sync blob in the background. The sync
     // runs detached, so Codex's short SessionEnd timeout does not cut it off.
