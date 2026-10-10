@@ -24,8 +24,8 @@
 
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { EventLog, localOnlySeen, markLocalOnlySeen } from "@omnodex/event-log";
-import type { TraceEvent } from "@omnodex/shared";
+import { EventLog, capturePauseRows, localOnlySeen, markLocalOnlySeen } from "@omnodex/event-log";
+import { CAPTURE_CONTROL_SESSION_ID, type TraceEvent } from "@omnodex/shared";
 import { Projector, SqliteReadModelStore, runCorrelation } from "@omnodex/projection";
 import { SyncEncryptor } from "./sync-encryptor.js";
 import type { SyncResult } from "./sync-encryptor.js";
@@ -133,6 +133,9 @@ export async function syncReadModel(opts: SyncReadModelOptions): Promise<SyncRun
 
     const machineId = computeMachineId();
     const machineLabel = await readMachineLabel(opts.home);
+    // Pauses go up with every sync, so the dashboard shows them later even
+    // if it was not open (live push is its only other source).
+    const pauses = capturePauseRows(await log.readSession(CAPTURE_CONTROL_SESSION_ID));
     const encryptor = new SyncEncryptor({
       passphrase: opts.passphrase,
       customerId: opts.customerId,
@@ -142,6 +145,7 @@ export async function syncReadModel(opts: SyncReadModelOptions): Promise<SyncRun
       kdfSalt,
       machineId,
       machineLabel,
+      pauses,
     });
     // The salt is persisted before any upload, so every segment and blob
     // this machine writes shares it and the dashboard derives one key.
@@ -161,6 +165,7 @@ export async function syncReadModel(opts: SyncReadModelOptions): Promise<SyncRun
           machineLabel,
           home: opts.home,
           eventLog: log,
+          pauses,
         });
         return {
           blobId: r.commitId,

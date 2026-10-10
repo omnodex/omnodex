@@ -283,17 +283,61 @@ describe("segmented sync", () => {
   });
 });
 
+describe("segmented sync: capture pauses", () => {
+  const pause = (over = {}) => ({
+    pause_id: "p1", kind: "sync", paused_at: iso(NOW - 2 * DAY), resumed_at: null, until: null,
+    reason: null, machine_label: "case laptop", ...over,
+  });
+
+  it("a pause goes up on its own slice, without counting as a session", async () => {
+    await addSession(projector, "s1", NOW - 3 * DAY);
+    await sync();
+    const before = cloud.uploads.length;
+
+    const r = await sync({ pauses: [pause()] });
+    const ups = newUploads(before);
+    assert.equal(ups.length, 1);
+    const payload = await open(ups[0].envelope);
+    assert.deepEqual(payload.capture_pauses, [pause()]);
+    assert.deepEqual(r.sessionsIncluded, ["s1"]);
+    // The pause shares the open segment with s1; only s1 counts as a session.
+    assert.equal(ups[0].meta.sessions, 1);
+  });
+
+  it("an unchanged pause uploads nothing; its end uploads again", async () => {
+    await sync({ pauses: [pause()] });
+    const before = cloud.uploads.length;
+    assert.equal((await sync({ pauses: [pause()] })).uploaded, 0);
+
+    const ended = pause({ resumed_at: iso(NOW - DAY), reason: "command" });
+    await sync({ pauses: [ended] });
+    const ups = newUploads(before);
+    assert.equal(ups.length, 1);
+    assert.deepEqual((await open(ups[0].envelope)).capture_pauses, [ended]);
+  });
+
+  it("a pause still in force stays in the window; an old ended one leaves it", async () => {
+    const old = pause({ pause_id: "old", paused_at: iso(NOW - 200 * DAY), resumed_at: iso(NOW - 199 * DAY), reason: "expired" });
+    const open_ = pause({ pause_id: "open", paused_at: iso(NOW - 200 * DAY) });
+    await sync({ pauses: [old, open_] });
+    const payload = await open(cloud.uploads.at(-1).envelope);
+    assert.deepEqual(payload.capture_pauses.map((p) => p.pause_id), ["open"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Through the sync runner, against a local stand-in for the API
 // ---------------------------------------------------------------------------
 
 function startApi({ segments = true } = {}) {
   const seen = [];
+  const bodies = [];
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
       seen.push(`${req.method} ${req.url}`);
+      if (req.method === "PUT" && req.url !== "/api/v1/sync/manifest") bodies.push(new Uint8Array(Buffer.concat(chunks)));
       const json = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
       if (req.url.startsWith("/api/v1/sync/segments/") || req.url === "/api/v1/sync/manifest") {
         if (!segments) { res.writeHead(404); res.end("404 Not Found"); return; }
@@ -305,7 +349,7 @@ function startApi({ segments = true } = {}) {
     });
   });
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
-    url: `http://127.0.0.1:${server.address().port}`, seen, close: () => new Promise((r) => server.close(r)),
+    url: `http://127.0.0.1:${server.address().port}`, seen, bodies, close: () => new Promise((r) => server.close(r)),
   })));
 }
 
@@ -361,6 +405,47 @@ describe("sync runner", () => {
       assert.equal(await syncEvents(), 2);
     } finally {
       await api.close();
+    }
+  });
+
+  it("carries pauses from the event log, in segments and in the single blob", async () => {
+    await writeLog(home);
+    const log = new EventLog({ root: path.join(home, "event-log") });
+    await log.init();
+    const pausedAt = Date.now() - 2 * 3600_000;
+    const marker = (event_type, at, extra) => ({
+      schema_version: 1, event_id: `m${++n}`, session_id: "omnodex-capture-control", occurred_at: iso(at),
+      recorded_at: iso(at), interceptor: "analyzer", event_type, pause_id: "pz", kind: "record", ...extra,
+    });
+    await log.append(marker("capture.paused", pausedAt, { until: null, machine_label: "case laptop" }));
+    await log.append(marker("capture.resumed", pausedAt + 600_000, { paused_at: iso(pausedAt), reason: "command", machine_label: "case laptop" }));
+    await log.close();
+
+    const openAny = async (bytes) => {
+      const { salt, iv, ciphertext } = decodeEnvelope(bytes);
+      const raw = await argon2id({ password: PASSPHRASE, salt, parallelism: 1, iterations: 3, memorySize: 65536, hashLength: 32, outputType: "binary" });
+      const k = await webcrypto.subtle.importKey("raw", raw, "AES-GCM", false, ["decrypt"]);
+      return JSON.parse(gunzipSync(new Uint8Array(await webcrypto.subtle.decrypt({ name: "AES-GCM", iv }, k, ciphertext))).toString("utf8"));
+    };
+    const expected = [{
+      pause_id: "pz", kind: "record", paused_at: iso(pausedAt), resumed_at: iso(pausedAt + 600_000),
+      until: null, reason: "command", machine_label: "case laptop",
+    }];
+
+    for (const segments of [true, false]) {
+      const api = await startApi({ segments });
+      try {
+        await fs.rm(path.join(home, SEGMENT_MANIFEST_FILE), { force: true });
+        await syncReadModel({ home, apiUrl: api.url, apiToken: "omx_test_case", passphrase: PASSPHRASE, customerId: "cust_case" });
+        // Without segment routes the segment attempt is refused first; the blob is the last upload.
+        const payloads = await Promise.all((segments ? api.bodies : api.bodies.slice(-1)).map(openAny));
+        const pauses = payloads.flatMap((p) => p.capture_pauses ?? []);
+        assert.deepEqual(pauses, expected, segments ? "segments" : "blob");
+        // The marker session is not a session.
+        assert.ok(payloads.every((p) => !p.session_ids.includes("omnodex-capture-control")));
+      } finally {
+        await api.close();
+      }
     }
   });
 

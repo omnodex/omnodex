@@ -308,6 +308,7 @@ export {
   PAUSE_STATE_FILE,
   activePauses,
   applyCapturePause,
+  capturePauseRows,
   endPause,
   isPauseMarker,
   LOCAL_ONLY_SEEN_FILE,
@@ -319,4 +320,4 @@ export {
   settleExpiredPauses,
   startPause,
 } from "./capture-pause.js";
-export type { PausableKind, PauseEntry, PauseState } from "./capture-pause.js";
+export type { CapturePauseRow, PausableKind, PauseEntry, PauseState } from "./capture-pause.js";

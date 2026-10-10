@@ -290,3 +290,60 @@ export async function localOnlySeen(home: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * Capture pauses, each folded from its capture.paused and capture.resumed
+ * markers into one row: the local dashboard's timeline and the synced
+ * payload both show them, so a pause stays visible after the fact.
+ */
+export interface CapturePauseRow {
+  pause_id: string;
+  kind: CapturePauseKind;
+  paused_at: string;
+  /** When it ended; null while it is still in force. */
+  resumed_at: string | null;
+  /** When it was set to end by itself, if it had a duration. */
+  until: string | null;
+  /** How it ended: resumed by a person, ran out, or replaced by a new pause. */
+  reason: "command" | "expired" | "replaced" | null;
+  machine_label: string | null;
+}
+
+/**
+ * One row per pause, oldest first. A pause can have two end markers when
+ * two processes noticed its expiry; the earliest wins. An end marker
+ * without its start (the start fell outside the log) still gives a row.
+ */
+export function capturePauseRows(events: Iterable<TraceEvent>): CapturePauseRow[] {
+  const rows = new Map<string, CapturePauseRow>();
+  for (const e of events) {
+    if (e.event_type === "capture.paused") {
+      const row = rows.get(e.pause_id);
+      rows.set(e.pause_id, {
+        pause_id: e.pause_id,
+        kind: e.kind,
+        paused_at: e.occurred_at,
+        resumed_at: row?.resumed_at ?? null,
+        until: e.until,
+        reason: row?.reason ?? null,
+        machine_label: e.machine_label ?? row?.machine_label ?? null,
+      });
+    } else if (e.event_type === "capture.resumed") {
+      const row = rows.get(e.pause_id) ?? {
+        pause_id: e.pause_id,
+        kind: e.kind,
+        paused_at: e.paused_at,
+        resumed_at: null,
+        until: null,
+        reason: null,
+        machine_label: e.machine_label ?? null,
+      };
+      if (row.resumed_at === null || e.occurred_at < row.resumed_at) {
+        row.resumed_at = e.occurred_at;
+        row.reason = e.reason;
+      }
+      rows.set(e.pause_id, row);
+    }
+  }
+  return [...rows.values()].sort((a, b) => a.paused_at.localeCompare(b.paused_at));
+}
