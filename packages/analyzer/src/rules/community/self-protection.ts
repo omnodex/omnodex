@@ -18,7 +18,9 @@
  *
  * RULE_SELF_PROTECTION_BASH (HIGH)
  *   Fires when a bash command attempts to uninstall Omnodex, stop
- *   the interceptor, or manipulate the hook configuration via CLI.
+ *   the interceptor, pause recording or uploads, or manipulate the hook
+ *   configuration via CLI. Pausing is for a person at a terminal; the
+ *   CLI also refuses it without one.
  *
  * Tier:     community
  * Severity: HIGH
@@ -87,6 +89,11 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
           // Killing omnodex processes
           regex: "\\b(?:kill|pkill|killall)\\b[^\\n]*omnodex",
           type: "omnodex-process-kill",
+        },
+        {
+          // Pausing recording or uploads (resume is allowed)
+          regex: "\\bomnodex\\s+(?:record|sync|enforce)\\s+pause\\b",
+          type: "omnodex-capture-pause",
         },
       ],
     },
