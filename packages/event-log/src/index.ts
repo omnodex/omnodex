@@ -308,7 +308,6 @@ export {
   PAUSE_STATE_FILE,
   activePauses,
   applyCapturePause,
-  capturePauseRows,
   endPause,
   isPauseMarker,
   LOCAL_ONLY_SEEN_FILE,
@@ -320,4 +319,8 @@ export {
   settleExpiredPauses,
   startPause,
 } from "./capture-pause.js";
-export type { CapturePauseRow, PausableKind, PauseEntry, PauseState } from "./capture-pause.js";
+export type { PausableKind, PauseEntry, PauseState } from "./capture-pause.js";
+// The pause fold is runtime-neutral, so it lives in shared (the local
+// dashboard bundles it); re-exported here beside the markers.
+export { capturePauseRows } from "@omnodex/shared";
+export type { CapturePauseRow } from "@omnodex/shared";

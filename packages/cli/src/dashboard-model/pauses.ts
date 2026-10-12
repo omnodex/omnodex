@@ -11,12 +11,11 @@
  * pause would look the same as data that went missing.
  */
 
-import type { CapturePauseKind } from "@omnodex/shared";
-import type { CapturePauseRow as PauseRow } from "@omnodex/event-log";
+import type { CapturePauseKind, CapturePauseRow as PauseRow } from "@omnodex/shared";
 
-// The fold itself lives with the markers, so sync uploads the same rows.
-export type { CapturePauseRow as PauseRow } from "@omnodex/event-log";
-export { capturePauseRows as pauseRows } from "@omnodex/event-log";
+// The fold lives in shared, so sync uploads the same rows the page shows.
+export type { CapturePauseRow as PauseRow } from "@omnodex/shared";
+export { capturePauseRows as pauseRows } from "@omnodex/shared";
 
 /** What a pause stopped, for a timeline label. */
 export function pauseLabel(kind: CapturePauseKind): string {
