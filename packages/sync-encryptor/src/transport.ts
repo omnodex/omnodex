@@ -19,6 +19,7 @@
  */
 
 import { isReceivingPaused } from "./live-gate.js";
+import { TokenRotatedError, isTokenRotated } from "./stream-credentials.js";
 import { encodeEnvelope } from "./envelope.js";
 
 /** The largest sync blob the cloud accepts, in bytes; a bigger push gets HTTP 413. */
@@ -144,6 +145,7 @@ export class HttpSyncTransport implements SyncTransport {
       if (!res.ok) {
         const text = await res.text().catch(() => "");
         if (isReceivingPaused(res.status, text)) throw new ReceivingPausedError();
+        if (isTokenRotated(res.status, text)) throw new TokenRotatedError();
         throw new Error(
           "sync push failed: HTTP " + res.status + " " + text.slice(0, 200),
         );

@@ -197,3 +197,24 @@ export async function computeKeyId(key: AesGcmKey): Promise<string> {
   const hash = await sha256Hex(new Uint8Array(raw));
   return hash.slice(0, 8);
 }
+
+// ---------------------------------------------------------------------------
+// Stream secret verifier
+// ---------------------------------------------------------------------------
+
+/** Stands in for the customer ID: one verifier per secret, known before a stream exists. */
+const VERIFIER_SCOPE = "omnodex-stream-verifier";
+const VERIFIER_INFO = new TextEncoder().encode("omnodex-stream-verifier-v1");
+
+/**
+ * The stream secret's verifier, base64. The cloud stores the first one it
+ * sees for a stream and refuses a different one, so a machine or account
+ * cannot move a stream to a new secret by accident; after a token rotate it
+ * also proves a machine holds the secret. One way: it reveals neither the
+ * secret nor the encryption key. Runs Argon2id, so it is slow by design.
+ * The hosted dashboard derives the same value.
+ */
+export async function deriveStreamVerifier(passphrase: string): Promise<string> {
+  const bytes = await deriveStreamSubkeyBytes(passphrase, VERIFIER_SCOPE, VERIFIER_INFO);
+  return Buffer.from(bytes).toString("base64");
+}

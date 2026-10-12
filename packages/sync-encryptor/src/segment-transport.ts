@@ -18,6 +18,7 @@
 
 import { isReceivingPaused } from "./live-gate.js";
 import { ReceivingPausedError, SyncBlobTooLargeError } from "./transport.js";
+import { TokenRotatedError, isTokenRotated } from "./stream-credentials.js";
 
 export interface SegmentMeta {
   machineId: string;
@@ -128,5 +129,6 @@ export class HttpSegmentTransport implements SegmentTransport {
 async function failure(what: string, res: Response): Promise<Error> {
   const text = await res.text().catch(() => "");
   if (isReceivingPaused(res.status, text)) return new ReceivingPausedError();
+  if (isTokenRotated(res.status, text)) return new TokenRotatedError();
   return new Error(`${what} failed: HTTP ${res.status} ${text.slice(0, 200)}`);
 }
