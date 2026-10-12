@@ -336,6 +336,12 @@ function startApi({ segments = true } = {}) {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
+      // The secret verifier check each new token and secret pair makes first.
+      if (req.url === "/api/v1/stream/verifier") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, status: "registered" }));
+        return;
+      }
       seen.push(`${req.method} ${req.url}`);
       if (req.method === "PUT" && req.url !== "/api/v1/sync/manifest") bodies.push(new Uint8Array(Buffer.concat(chunks)));
       const json = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };

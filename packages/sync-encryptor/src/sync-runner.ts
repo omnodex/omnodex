@@ -33,6 +33,7 @@ import { HttpSyncTransport } from "./transport.js";
 import { computeMachineId, readMachineLabel } from "./machine-id.js";
 import { syncSegments } from "./segment-sync.js";
 import { HttpSegmentTransport, SegmentsUnsupportedError } from "./segment-transport.js";
+import { TokenRotatedError, collectRotatedToken, ensureSecretVerifier } from "./stream-credentials.js";
 
 /** The read model a home's syncs use once it has recorded anything local-only. */
 export const SYNC_READ_MODEL_FILE = "sync-traces.db";
@@ -58,7 +59,11 @@ export interface SegmentSyncSummary {
   totalBytes: number;
 }
 
-export type SyncRunResult = SyncResult & { segments?: SegmentSyncSummary };
+export type SyncRunResult = SyncResult & {
+  segments?: SegmentSyncSummary;
+  /** Set when the owner had rotated the token and this sync collected the new one (saved to stream-config.json). */
+  collectedToken?: string;
+};
 
 /**
  * The events a sync uploads, in log order: none recorded local-only, and no
@@ -98,8 +103,28 @@ async function openSyncStore(home: string, dedicated: boolean): Promise<SqliteRe
   return store;
 }
 
-/** Rebuild the read model from the event log, then encrypt and push it. */
+/**
+ * Rebuild the read model from the event log, then encrypt and push it.
+ *
+ * First checks this machine's stream secret against the stream's verifier
+ * (registering it the first time), and stops with SecretMismatchError if it
+ * is not the stream's. If the owner rotated the token, collects the new one
+ * by proving the secret, saves it, and syncs with it.
+ */
 export async function syncReadModel(opts: SyncReadModelOptions): Promise<SyncRunResult> {
+  const credentials = { home: opts.home, apiUrl: opts.apiUrl, apiToken: opts.apiToken, passphrase: opts.passphrase };
+  try {
+    await ensureSecretVerifier(credentials);
+    return await syncOnce(opts);
+  } catch (err) {
+    if (!(err instanceof TokenRotatedError)) throw err;
+  }
+  const apiToken = await collectRotatedToken(credentials);
+  await ensureSecretVerifier({ ...credentials, apiToken });
+  return { ...(await syncOnce({ ...opts, apiToken })), collectedToken: apiToken };
+}
+
+async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
   const log = new EventLog({ root: path.join(opts.home, "event-log") });
   await log.init();
   const dedicated = await localOnlySeen(opts.home);

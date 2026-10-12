@@ -95,6 +95,12 @@ async function startSyncServer(status = 201, { segments = false } = {}) {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
     req.on("end", () => {
+      // The secret verifier check each new token and secret pair makes first.
+      if (req.url === "/api/v1/stream/verifier") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, status: "registered" }));
+        return;
+      }
       const segmentRoute = req.url.startsWith("/api/v1/sync/segments/") || req.url === "/api/v1/sync/manifest";
       if (segmentRoute && !segments) {
         res.writeHead(404);

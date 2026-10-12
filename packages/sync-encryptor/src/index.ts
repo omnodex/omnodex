@@ -7,7 +7,7 @@
 export { SyncEncryptor } from "./sync-encryptor.js";
 export type { SyncEncryptorOptions, SyncResult } from "./sync-encryptor.js";
 
-export { deriveKey, encrypt, decrypt, sha256Hex, randomSalt, randomIv, KDF_PARAMS, deriveStreamingKey, computeKeyId } from "./crypto.js";
+export { deriveKey, encrypt, decrypt, sha256Hex, randomSalt, randomIv, KDF_PARAMS, deriveStreamingKey, computeKeyId, deriveStreamVerifier } from "./crypto.js";
 
 export {
   HPKE_EVENT_SCHEME,
@@ -59,6 +59,20 @@ export type {
 export { StreamingTransport } from "./streaming-transport.js";
 
 export { computeMachineId, readMachineLabel } from "./machine-id.js";
+export {
+  TokenRotatedError,
+  SecretMismatchError,
+  TokenCollectionError,
+  isTokenRotated,
+  ensureSecretVerifier,
+  collectRotatedToken,
+  readVerifierState,
+  knownSecretMismatch,
+  probeStreamToken,
+  streamHasSecret,
+  STREAM_VERIFIER_FILE,
+} from "./stream-credentials.js";
+export type { VerifierState, CredentialOptions } from "./stream-credentials.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
 
 export { pushEventsToCloud } from "./shim-push.js";
