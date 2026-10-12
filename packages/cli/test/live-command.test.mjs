@@ -37,6 +37,7 @@ function run(env, args) {
       HOME: env.home,
       USERPROFILE: env.home,
       OMNODEX_HOME: env.omnodexHome,
+      OMNODEX_NO_UPDATE_CHECK: "1",
     },
     encoding: "utf8",
     timeout: 60_000,

@@ -132,7 +132,7 @@ test("the CLI refuses `record pause` from a non-interactive shell", async (t) =>
   const omnodexHome = path.join(home, ".omnodex");
   const result = spawnSync(process.execPath, [CLI, "record", "pause", "1h"], {
     cwd: home,
-    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     input: "pause\n",
     timeout: 60_000,
@@ -148,7 +148,7 @@ test("`omnodex status` shows recording and uploads", async (t) => {
   await startPause(omnodexHome, "sync", { untilMs: Date.now() + 3_600_000 });
   const result = spawnSync(process.execPath, [CLI, "status"], {
     cwd: home,
-    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     timeout: 60_000,
   });
@@ -162,7 +162,7 @@ test("`omnodex sync status` reports without running a sync", async (t) => {
   const omnodexHome = path.join(home, ".omnodex");
   const result = spawnSync(process.execPath, [CLI, "sync", "status"], {
     cwd: home,
-    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     timeout: 60_000,
   });

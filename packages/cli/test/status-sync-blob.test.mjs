@@ -30,7 +30,7 @@ async function scratch(t, autoSyncState) {
 function status(env) {
   const res = spawnSync(process.execPath, [CLI, "status"], {
     cwd: env.home,
-    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     timeout: 60_000,
   });
@@ -65,7 +65,7 @@ test("calls a segmented sync's id a commit, not a blob", async (t) => {
   const env = await scratch(t, { last_blob_bytes: 2 * MB, last_sync_segments: 2, last_sync_total_bytes: 3 * MB, last_blob_id: "commit_case_1" });
   const res = spawnSync(process.execPath, [CLI, "status"], {
     cwd: env.home,
-    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1" },
+    env: { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     timeout: 60_000,
   });

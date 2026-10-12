@@ -384,6 +384,10 @@ export async function scheduleBackgroundCheck(): Promise<void> {
     const child = spawn(process.execPath, ["-e", checkScript], {
       detached: true,
       stdio: "ignore",
+      // Not the caller's directory: on Windows a running process's working
+      // directory cannot be deleted or renamed, and this child can outlive
+      // the command by several seconds.
+      cwd: os.tmpdir(),
     });
     child.unref();
   } catch {
