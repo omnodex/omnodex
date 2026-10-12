@@ -83,6 +83,11 @@ import {
   pushEventsToCloud,
   readAdvancedUsage,
   ADVANCED_USAGE_MAX_AGE_DAYS,
+  probeStreamToken,
+  collectRotatedToken,
+  streamHasSecret,
+  ensureSecretVerifier,
+  SecretMismatchError,
 } from "@omnodex/sync-encryptor";
 import type { AdvancedUsageState } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
@@ -762,7 +767,12 @@ async function connectAfterInstall(
     return;
   }
 
-  // Token exists but no passphrase: auto-generate one and offer claim link
+  // Token exists but no passphrase: auto-generate one and offer claim link,
+  // unless the stream already has a secret this machine does not know.
+  if ((await streamHasSecret({ apiUrl: creds.apiUrl, apiToken: creds.apiToken })) === true) {
+    console.warn(`[connect] ${UNKNOWN_SECRET_MESSAGE}`);
+    return;
+  }
   const newPassphrase = generatePassphrase();
   await updateStreamConfig(omnodexHome, {
     api_token: creds.apiToken,
@@ -828,15 +838,26 @@ async function offerConnectionLink(
   }
 }
 
+/** The message for a stream that already has a secret this machine does not know. */
+const UNKNOWN_SECRET_MESSAGE =
+  "this stream already has a stream secret, and this machine does not have it. Reveal it in the dashboard " +
+  "Settings (Stream secret), then run: omnodex connect --secret <stream secret>";
+
 /**
  * Generate a connection link for the current machine.
  *
- *   omnodex connect [--token <omx_...>] [--passphrase <phrase>]
+ *   omnodex connect [--token <omx_...>] [--secret <stream secret>]
  *                   [--api <url>] [--platform <name>]
  *
- * If no passphrase exists yet, one is auto-generated and saved to
- * stream-config.json. The passphrase is encrypted under a one-time
- * transfer key before being sent to the server.
+ * If no stream secret exists yet, one is auto-generated and saved to
+ * stream-config.json, unless the stream already has one (then this asks for
+ * it instead of switching the stream to a new secret). The secret is
+ * encrypted under a one-time transfer key before being sent to the server.
+ *
+ * A token the cloud rejects (revoked, or rotated past collection) falls
+ * through to the device flow, where the account can re-authorize the same
+ * stream. A rotated token that can still be collected is swapped for the
+ * new one. A token or secret passed as a flag is checked and saved.
  */
 async function cmdConnect(args: string[]): Promise<void> {
   const paths = resolvePaths();
@@ -852,6 +873,32 @@ async function cmdConnect(args: string[]): Promise<void> {
     flagPassphrase,
     flagApiUrl,
   });
+
+  if (creds?.apiToken) {
+    const probe = await probeStreamToken({ apiUrl: creds.apiUrl, apiToken: creds.apiToken });
+    if (probe === "rotated" && creds.passphrase && !flagToken) {
+      try {
+        const apiToken = await collectRotatedToken({
+          home: paths.home, apiUrl: creds.apiUrl, apiToken: creds.apiToken, passphrase: creds.passphrase,
+        });
+        creds = { ...creds, apiToken, tokenSource: "config" };
+        console.log("[connect] the stream's owner rotated this machine's token; collected the new one");
+      } catch (err) {
+        console.error(`[connect] ${(err as Error).message}`);
+        process.exitCode = 1;
+        return;
+      }
+    } else if (probe === "rotated" || probe === "rejected") {
+      if (flagToken) {
+        console.error("[connect] that token is not valid: it was revoked, rotated or mistyped. Copy the current token from the dashboard Settings.");
+        process.exitCode = 1;
+        return;
+      }
+      console.log("[connect] this machine's token no longer works: the stream was revoked, or its token was rotated.");
+      console.log("[connect] sign in to authorize this machine again. To keep the stream and its history, choose it from the list.");
+      creds = { ...creds, apiToken: "" };
+    }
+  }
 
   // Auto-generate passphrase if missing (needed for both flows)
   const passphrase = creds?.passphrase || generatePassphrase();
@@ -896,6 +943,13 @@ async function cmdConnect(args: string[]): Promise<void> {
 
   // Token exists: ensure passphrase is saved
   if (!creds.passphrase) {
+    // A stream whose secret is registered keeps it; a new one would leave
+    // every linked dashboard unable to read what this machine uploads.
+    if ((await streamHasSecret({ apiUrl: creds.apiUrl, apiToken: creds.apiToken })) === true) {
+      console.error(`[connect] ${UNKNOWN_SECRET_MESSAGE}`);
+      process.exitCode = 1;
+      return;
+    }
     await updateStreamConfig(paths.home, {
       api_token: creds.apiToken,
       passphrase,
@@ -908,6 +962,30 @@ async function cmdConnect(args: string[]): Promise<void> {
       flagPassphrase,
       flagApiUrl,
     }))!;
+  }
+
+  // A token or secret given on the command line replaces the saved one,
+  // so syncs use it; a secret is checked against the stream's first.
+  if (creds.tokenSource === "flag" || creds.passphraseSource === "flag") {
+    try {
+      await ensureSecretVerifier({
+        home: paths.home, apiUrl: creds.apiUrl, apiToken: creds.apiToken, passphrase: creds.passphrase,
+      });
+    } catch (err) {
+      if (!(err instanceof SecretMismatchError)) throw err;
+      console.error("[connect] that stream secret is not the one this stream uses; nothing was saved. Reveal the stream secret in the dashboard Settings.");
+      process.exitCode = 1;
+      return;
+    }
+    await updateStreamConfig(paths.home, {
+      api_token: creds.apiToken,
+      passphrase: creds.passphrase,
+      api_url: creds.apiUrl,
+    });
+    console.log("[connect] saved the " + [
+      creds.tokenSource === "flag" ? "token" : "",
+      creds.passphraseSource === "flag" ? "stream secret" : "",
+    ].filter(Boolean).join(" and ") + " to stream-config.json");
   }
 
   // Token exists: generate a claim link (existing behavior)
