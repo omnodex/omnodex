@@ -45,7 +45,8 @@
 
 import * as os from "node:os";
 import * as path from "node:path";
-import { EventLog } from "@omnodex/event-log";
+import { applyCapturePause, EventLog } from "@omnodex/event-log";
+import type { TraceEvent } from "@omnodex/shared";
 import {
   AUTO_SYNC_CHILD_ENV,
   runAutoSync,
@@ -111,7 +112,11 @@ async function main(): Promise<void> {
       : {}),
   });
 
-  const emit = log.append.bind(log);
+  // A capture pause drops events (record) or keeps them on this machine
+  // only (sync); pause markers are always written.
+  const emit = async (event: TraceEvent): Promise<void> => {
+    for (const e of await applyCapturePause([event], home)) await log.append(e);
+  };
   const stop = await proxy.start(emit);
   const httpUrl = proxy.httpUrl();
   if (httpUrl) {

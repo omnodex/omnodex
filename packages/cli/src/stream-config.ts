@@ -15,8 +15,13 @@
  *
  * Environment variables always take precedence over the config file:
  *   OMNODEX_API_TOKEN > stream-config.json api_token
- *   OMNODEX_SYNC_PASSPHRASE > stream-config.json passphrase
+ *   OMNODEX_STREAM_SECRET (or the older OMNODEX_SYNC_PASSPHRASE)
+ *     > stream-config.json stream_secret (or the older passphrase)
  *   OMNODEX_API_URL > stream-config.json api_url
+ *
+ * The stream secret is the stream's encryption key. It used to be called
+ * the sync passphrase, and the file keeps that name too: it is written
+ * under both keys so an older Omnodex on the same machine still reads it.
  */
 
 import * as path from "node:path";
@@ -30,7 +35,10 @@ import { randomBytes } from "node:crypto";
 export interface StreamConfig {
   /** The stream's API token (omx_test_... or omx_live_...). */
   api_token: string;
-  /** Auto-generated or user-chosen sync passphrase. Never sent to the server. */
+  /**
+   * The stream secret: auto-generated or user-chosen, never sent to the
+   * server. Stored as both `stream_secret` and `passphrase` on disk.
+   */
   passphrase: string;
   /** API base URL. Defaults to https://api.omnodex.com. */
   api_url?: string;
@@ -85,9 +93,11 @@ export async function readStreamConfig(
 ): Promise<StreamConfig | null> {
   try {
     const raw = await fs.readFile(configPath(omnodexHome), "utf-8");
-    const parsed = JSON.parse(raw);
-    if (!parsed.api_token || !parsed.passphrase) return null;
-    return parsed as StreamConfig;
+    const parsed = JSON.parse(raw) as Partial<StreamConfig> & { stream_secret?: string };
+    const { stream_secret: secret, ...rest } = parsed;
+    const passphrase = secret || parsed.passphrase;
+    if (!parsed.api_token || !passphrase) return null;
+    return { ...rest, passphrase } as StreamConfig;
   } catch {
     return null;
   }
@@ -103,7 +113,9 @@ export async function writeStreamConfig(
 ): Promise<void> {
   const filePath = configPath(omnodexHome);
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const content = JSON.stringify(config, null, 2) + "\n";
+  const { passphrase, ...rest } = config;
+  // Both names, so an older version on this machine still finds the secret.
+  const content = JSON.stringify({ ...rest, stream_secret: passphrase, passphrase }, null, 2) + "\n";
   await fs.writeFile(filePath, content, { mode: 0o600 });
 }
 
@@ -134,7 +146,7 @@ export interface ResolvedCredentials {
   apiUrl: string;
   /** Where the api_token came from: "env", "flag", or "config". */
   tokenSource: "env" | "flag" | "config";
-  /** Where the passphrase came from: "env", "flag", or "config". */
+  /** Where the stream secret came from: "env", "flag", or "config". */
   passphraseSource: "env" | "flag" | "config";
 }
 
@@ -168,14 +180,15 @@ export async function resolveCredentials(
     tokenSource = "config";
   }
 
-  // Passphrase: flag > env > config
+  // Stream secret: flag > env > config
   let passphrase = "";
   let passphraseSource: "env" | "flag" | "config" = "config";
+  const envSecret = process.env.OMNODEX_STREAM_SECRET || process.env.OMNODEX_SYNC_PASSPHRASE;
   if (opts?.flagPassphrase) {
     passphrase = opts.flagPassphrase;
     passphraseSource = "flag";
-  } else if (process.env.OMNODEX_SYNC_PASSPHRASE) {
-    passphrase = process.env.OMNODEX_SYNC_PASSPHRASE;
+  } else if (envSecret) {
+    passphrase = envSecret;
     passphraseSource = "env";
   } else if (config?.passphrase) {
     passphrase = config.passphrase;

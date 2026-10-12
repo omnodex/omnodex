@@ -17,6 +17,7 @@
  * reads it.
  */
 
+import type { CapturePauseRow } from "@omnodex/event-log";
 import type {
   ReadModelStore,
   SessionRow,
@@ -55,6 +56,11 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * session was asked, which subagents it ran, and which calls each made.
  * Prompt text travels only inside the encrypted payload, as tool parameters
  * do. Blobs from before these were added have no prompts or subagents.
+ *
+ * capture_pauses (top level, not per session): each time recording or
+ * uploads were paused on the machine, so the dashboard can show the gap
+ * even if it was not open when the pause happened. They carry no captured
+ * content. Blobs from before pauses existed have none.
  */
 export const PAYLOAD_FIELDS = {
   sessions: [
@@ -123,17 +129,21 @@ export interface SyncPayload {
   risk_events: Record<string, RiskEventRow[]>;
   prompts: Record<string, PromptRow[]>;
   subagents: Record<string, SubagentRow[]>;
+  /** Pauses of recording or uploads on this machine. Absent before pauses existed. */
+  capture_pauses?: CapturePauseRow[];
 }
 
 /**
  * Serialize the read model into a SyncPayload.
  *
  * When sessionIds is provided, only those sessions are included.
- * When omitted, all sessions are serialized (full sync).
+ * When omitted, all sessions are serialized (full sync). Pauses, when given,
+ * are carried as they are.
  */
 export async function serializeReadModel(
   store: ReadModelStore,
   sessionIds?: string[],
+  pauses?: CapturePauseRow[],
 ): Promise<SyncPayload> {
   const sessions = sessionIds
     ? await Promise.all(
@@ -170,6 +180,7 @@ export async function serializeReadModel(
     risk_events: riskEvents,
     prompts,
     subagents,
+    ...(pauses?.length ? { capture_pauses: pauses } : {}),
   };
 }
 

@@ -11,15 +11,23 @@
  */
 
 import type { CollapsedToolCallRow, PromptRow, SessionView, SubagentRow } from "./view.js";
+import type { PauseRow } from "./pauses.js";
 
 export type TimelineEntry =
   | { kind: "prompt"; at: string; prompt: PromptRow }
   | { kind: "subagent-start"; at: string; subagent: SubagentRow }
   | { kind: "call"; at: string; call: CollapsedToolCallRow; subagent?: SubagentRow }
-  | { kind: "subagent-stop"; at: string; subagent: SubagentRow };
+  | { kind: "subagent-stop"; at: string; subagent: SubagentRow }
+  | { kind: "pause-start"; at: string; pause: PauseRow }
+  | { kind: "pause-end"; at: string; pause: PauseRow };
 
-/** At the same instant: the prompt, then the subagent starting, its calls, its finish. */
-const RANK: Record<TimelineEntry["kind"], number> = { prompt: 0, "subagent-start": 1, call: 2, "subagent-stop": 3 };
+/**
+ * At the same instant: a pause ending, the prompt, then the subagent
+ * starting, its calls, its finish, and last a pause starting.
+ */
+const RANK: Record<TimelineEntry["kind"], number> = {
+  "pause-end": 0, prompt: 1, "subagent-start": 2, call: 3, "subagent-stop": 4, "pause-start": 5,
+};
 
 /** A subagent's key; ids are unique per session. */
 export function subagentKey(row: Pick<SubagentRow, "session_id" | "agent_id">): string {
@@ -38,6 +46,10 @@ export function timelineEntries(view: SessionView, newestFirst: boolean): Timeli
   for (const subagent of view.subagents) {
     if (subagent.started_at) entries.push({ kind: "subagent-start", at: subagent.started_at, subagent });
     if (subagent.ended_at) entries.push({ kind: "subagent-stop", at: subagent.ended_at, subagent });
+  }
+  for (const pause of view.pauses ?? []) {
+    entries.push({ kind: "pause-start", at: pause.paused_at, pause });
+    if (pause.resumed_at) entries.push({ kind: "pause-end", at: pause.resumed_at, pause });
   }
   for (const call of view.toolCalls) {
     const subagent = call.agent_id ? subagents.get(subagentKey({ session_id: call.session_id, agent_id: call.agent_id })) : undefined;

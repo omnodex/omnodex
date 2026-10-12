@@ -33,6 +33,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { webcrypto } from "node:crypto";
 import type { TraceEvent } from "@omnodex/shared";
+import { outboundEvents } from "@omnodex/event-log";
 import { deriveStreamingKey, computeKeyId } from "./crypto.js";
 import type { AesGcmKey } from "./crypto.js";
 import { encrypt } from "./crypto.js";
@@ -98,9 +99,11 @@ async function readStreamConfig(
 ): Promise<StreamConfig | null> {
   try {
     const raw = await readFile(join(omnodexHome, "stream-config.json"), "utf-8");
-    const parsed = JSON.parse(raw) as StreamConfig;
-    if (!parsed.api_token || !parsed.passphrase) return null;
-    return parsed;
+    const parsed = JSON.parse(raw) as StreamConfig & { stream_secret?: string };
+    // `stream_secret` is the current key; `passphrase` is the older name.
+    const passphrase = parsed.stream_secret || parsed.passphrase;
+    if (!parsed.api_token || !passphrase) return null;
+    return { ...parsed, passphrase };
   } catch {
     return null;
   }
@@ -195,7 +198,11 @@ export async function pushEventsToCloud(
   timeoutMs = 3000,
 ): Promise<boolean> {
   try {
-    // 0. Skip while the relay has said no one is watching (one small read)
+    // 0. Nothing recorded under a capture pause leaves the machine.
+    events = await outboundEvents(events, omnodexHome);
+    if (events.length === 0) return false;
+
+    // Skip while the relay has said no one is watching (one small read)
     if (!(await livePushAllowed(omnodexHome))) return false;
 
     // 1. Read credentials

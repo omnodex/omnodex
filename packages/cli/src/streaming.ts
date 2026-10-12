@@ -188,6 +188,13 @@ export async function tailSession(
       if (processedIds.has(event.event_id)) continue;
       processedIds.add(event.event_id);
 
+      // A pause marker is not in the read model; the page reloads its
+      // snapshot, which carries the pauses.
+      if (event.event_type === "capture.paused" || event.event_type === "capture.resumed") {
+        server.broadcast({ type: "read_model.changed" });
+        continue;
+      }
+
       // Project the event into the read model and broadcast the update.
       await projector.apply(event, applyOpts);
       await broadcastProjection(event, store, server);
@@ -204,6 +211,8 @@ export async function tailSession(
         // Pre-register the event_id so the tail loop does not re-process
         // this risk event when it reads the appended line back from disk.
         processedIds.add(riskEvent.event_id);
+        // A finding about a call kept on this machine stays here with it.
+        if (event.local_only) riskEvent.local_only = true;
 
         await log.append(riskEvent);
         await projector.apply(riskEvent, applyOpts);

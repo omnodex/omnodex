@@ -37,6 +37,7 @@ function run(env, args) {
       HOME: env.home,
       USERPROFILE: env.home,
       OMNODEX_HOME: env.omnodexHome,
+      OMNODEX_NO_UPDATE_CHECK: "1",
     },
     encoding: "utf8",
     timeout: 60_000,
@@ -101,4 +102,14 @@ test("live with an unknown subcommand fails without touching the gate", async (t
   assert.equal(result.status, 1);
   assert.match(result.stderr, /unknown subcommand: restart/);
   await fs.access(path.join(env.omnodexHome, GATE));
+});
+
+test("status says when the stream's owner paused receiving", async (t) => {
+  const env = await scratch(t);
+  const state = { paused_until: Date.now() + 300_000, backoff_ms: 300_000, receiving_paused: true };
+  await fs.writeFile(path.join(env.omnodexHome, GATE), JSON.stringify(state) + "\n");
+  const result = run(env, ["status"]);
+  assert.equal(result.status, 0, result.stderr);
+  const line = result.stdout.split("\n").find((l) => l.startsWith("[status] live push:"));
+  assert.match(line, /receiving paused by the stream's owner in the dashboard/);
 });

@@ -157,6 +157,12 @@ export interface BaseEvent {
    * that subagent's subagent.started and subagent.stopped events.
    */
   agent_id?: string;
+  /**
+   * Recorded while uploads were paused on this machine. The event stays in
+   * the local log and local dashboard, and never leaves the machine: live
+   * push and sync skip it. Absent means the event may be uploaded.
+   */
+  local_only?: boolean;
 }
 
 export interface SessionStartedEvent extends BaseEvent {
@@ -476,6 +482,103 @@ export interface RuleUpdatedEvent extends BaseEvent {
   source: "cloud" | "local";
 }
 
+// ---------------------------------------------------------------------------
+// Capture pause markers (written when a person pauses or resumes capture)
+// ---------------------------------------------------------------------------
+
+/**
+ * What a pause stops. `record`: nothing is captured. `sync`: events are
+ * captured locally but never uploaded. `enforce`: rules stop blocking.
+ */
+export type CapturePauseKind = "record" | "sync" | "enforce";
+
+/** Session id that carries pause markers, which belong to no agent session. */
+export const CAPTURE_CONTROL_SESSION_ID = "omnodex-capture-control";
+
+/**
+ * A pause started. Markers carry no captured content, so they are written
+ * and uploaded under every pause, and a pause shows as a gap rather than as
+ * missing data.
+ */
+export interface CapturePausedEvent extends BaseEvent {
+  event_type: "capture.paused";
+  /** Same id on the matching capture.resumed. */
+  pause_id: string;
+  kind: CapturePauseKind;
+  /** When the pause ends by itself, ISO 8601; null when only a resume ends it. */
+  until: string | null;
+  /** Host name of the machine that paused. */
+  machine_label?: string;
+}
+
+/** A pause ended: resumed by a person, or its time ran out. */
+export interface CaptureResumedEvent extends BaseEvent {
+  event_type: "capture.resumed";
+  pause_id: string;
+  kind: CapturePauseKind;
+  /** When the pause started, ISO 8601. */
+  paused_at: string;
+  reason: "command" | "expired" | "replaced";
+  machine_label?: string;
+}
+
+/**
+ * Capture pauses, each folded from its capture.paused and capture.resumed
+ * markers into one row: the local dashboard's timeline and the synced
+ * payload both show them, so a pause stays visible after the fact.
+ */
+export interface CapturePauseRow {
+  pause_id: string;
+  kind: CapturePauseKind;
+  paused_at: string;
+  /** When it ended; null while it is still in force. */
+  resumed_at: string | null;
+  /** When it was set to end by itself, if it had a duration. */
+  until: string | null;
+  /** How it ended: resumed by a person, ran out, or replaced by a new pause. */
+  reason: "command" | "expired" | "replaced" | null;
+  machine_label: string | null;
+}
+
+/**
+ * One row per pause, oldest first. A pause can have two end markers when
+ * two processes noticed its expiry; the earliest wins. An end marker
+ * without its start (the start fell outside the log) still gives a row.
+ */
+export function capturePauseRows(events: Iterable<TraceEvent>): CapturePauseRow[] {
+  const rows = new Map<string, CapturePauseRow>();
+  for (const e of events) {
+    if (e.event_type === "capture.paused") {
+      const row = rows.get(e.pause_id);
+      rows.set(e.pause_id, {
+        pause_id: e.pause_id,
+        kind: e.kind,
+        paused_at: e.occurred_at,
+        resumed_at: row?.resumed_at ?? null,
+        until: e.until,
+        reason: row?.reason ?? null,
+        machine_label: e.machine_label ?? row?.machine_label ?? null,
+      });
+    } else if (e.event_type === "capture.resumed") {
+      const row = rows.get(e.pause_id) ?? {
+        pause_id: e.pause_id,
+        kind: e.kind,
+        paused_at: e.paused_at,
+        resumed_at: null,
+        until: null,
+        reason: null,
+        machine_label: e.machine_label ?? null,
+      };
+      if (row.resumed_at === null || e.occurred_at < row.resumed_at) {
+        row.resumed_at = e.occurred_at;
+        row.reason = e.reason;
+      }
+      rows.set(e.pause_id, row);
+    }
+  }
+  return [...rows.values()].sort((a, b) => a.paused_at.localeCompare(b.paused_at));
+}
+
 /** Discriminated union of every event type accepted by the event log. */
 export type TraceEvent =
   | SessionStartedEvent
@@ -493,7 +596,9 @@ export type TraceEvent =
   | PermissionDeniedEvent
   | SyncPushedEvent
   | FeatureExtractedEvent
-  | RuleUpdatedEvent;
+  | RuleUpdatedEvent
+  | CapturePausedEvent
+  | CaptureResumedEvent;
 
 export type EventType = TraceEvent["event_type"];
 

@@ -20,7 +20,7 @@ import { createToolListCache, upstreamCacheKey } from "../dist/tool-cache.js";
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const MOCK_SERVER = path.join(__dirname, "helpers", "mock-mcp-server.mjs");
 
-const BUILT_INS = ["omnodex_status", "omnodex_connect", "omnodex_connection_status"];
+const BUILT_INS = ["omnodex_status", "omnodex_connect", "omnodex_connection_status", "omnodex_resume"];
 const NO_RETRY = { retry_initial_delay_ms: 600000, retry_give_up_delay_ms: 6000000 };
 
 function mockUpstream(name, env = {}) {

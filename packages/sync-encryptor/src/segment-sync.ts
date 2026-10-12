@@ -38,7 +38,7 @@ import * as path from "node:path";
 import { gzipSync } from "node:zlib";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { ReadModelStore, SessionRow } from "@omnodex/projection";
-import type { EventLog } from "@omnodex/event-log";
+import type { CapturePauseRow, EventLog } from "@omnodex/event-log";
 import type { SyncPushedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 import { deriveKey, encrypt, sha256Hex } from "./crypto.js";
@@ -101,6 +101,12 @@ export interface SegmentSyncOptions {
   home: string;
   /** For the sync.pushed audit event. */
   eventLog?: EventLog;
+  /**
+   * Pauses of recording or uploads on this machine. Each travels as its own
+   * slice, placed like a session, so it reaches the cloud even when no
+   * session changed and stays until it ages out of the window.
+   */
+  pauses?: CapturePauseRow[];
   /** Overrides for tests. */
   now?: number;
   sealBytes?: number;
@@ -163,6 +169,11 @@ async function runOnce(
     .sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : a.session_id < b.session_id ? -1 : 1));
   const slices = new Map<string, Slice>();
   for (const row of rows) slices.set(row.session_id, await sliceOf(opts.store, row));
+  const nowIso = new Date(now).toISOString();
+  for (const pause of opts.pauses ?? []) {
+    const slice = pauseSlice(pause, nowIso);
+    if (slice.lastAt >= cutoff) slices.set(slice.id, slice);
+  }
 
   // 2. Classify against the manifest, and 3. take changed and gone sessions
   // out of their segments.
@@ -212,7 +223,7 @@ async function runOnce(
     const bytes = await opts.transport.putSegment(id, envelope, {
       machineId: opts.machineId,
       machineLabel: opts.machineLabel,
-      sessions: parts.length,
+      sessions: parts.filter((p) => !isPauseSlice(p.id)).length,
       firstAt: parts.reduce((m, p) => (p.firstAt < m ? p.firstAt : m), parts[0]!.firstAt),
       lastAt: parts.reduce((m, p) => (p.lastAt > m ? p.lastAt : m), parts[0]!.lastAt),
     });
@@ -243,7 +254,7 @@ async function runOnce(
   };
   await writeManifest(manifestPath, next);
 
-  const sessionsIncluded = [...slices.keys()];
+  const sessionsIncluded = [...slices.keys()].filter((id) => !isPauseSlice(id));
   const uploadedBytes = uploads.reduce((n, u) => n + u.bytes, 0);
   if (opts.eventLog && uploads.length > 0) {
     const at = new Date().toISOString();
@@ -296,6 +307,30 @@ async function sliceOf(store: ReadModelStore, row: SessionRow): Promise<Slice> {
   };
 }
 
+/** Slice ids of pauses; they can never collide with a session id. */
+const PAUSE_SLICE_PREFIX = "capture-pause:";
+
+function isPauseSlice(id: string): boolean {
+  return id.startsWith(PAUSE_SLICE_PREFIX);
+}
+
+/** One pause as a slice. A pause still in force counts as active now. */
+function pauseSlice(pause: CapturePauseRow, nowIso: string): Slice {
+  const part: Slice["part"] = {
+    session_ids: [], sessions: [], tool_calls: {}, file_events: {}, risk_events: {},
+    prompts: {}, subagents: {}, capture_pauses: [pause],
+  };
+  const json = JSON.stringify(part);
+  return {
+    id: PAUSE_SLICE_PREFIX + pause.pause_id,
+    part,
+    json,
+    hash: createHash("sha256").update(json).digest("hex"),
+    firstAt: pause.paused_at,
+    lastAt: pause.resumed_at ?? nowIso,
+  };
+}
+
 /** A segment's SyncPayload: its sessions' parts, side by side. */
 function assemble(parts: Slice[], serializedAt: string): SyncPayload {
   const payload: SyncPayload = {
@@ -317,6 +352,7 @@ function assemble(parts: Slice[], serializedAt: string): SyncPayload {
     Object.assign(payload.risk_events, part.risk_events);
     Object.assign(payload.prompts, part.prompts);
     Object.assign(payload.subagents, part.subagents);
+    if (part.capture_pauses?.length) (payload.capture_pauses ??= []).push(...part.capture_pauses);
   }
   return payload;
 }

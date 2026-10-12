@@ -111,3 +111,46 @@ test("no finding on omnodex status command", () => {
   }));
   assert.equal(findings.length, 0);
 });
+
+// ---- CAPTURE PAUSE ----
+
+for (const command of [
+  "omnodex record pause",
+  "omnodex sync pause 1h",
+  "omnodex   enforce pause",
+  "cd /tmp && omnodex record pause 30m",
+  "npx omnodex sync pause",
+]) {
+  test(`fires on capture pause: ${command}`, () => {
+    const engine = new RuleEngine([RULE_SELF_PROTECTION_BASH]);
+    const findings = engine.evaluate(makeEvent({ tool_name: "Bash", parameters: { command } }));
+    assert.equal(findings.length, 1);
+    assert.match(findings[0].description, /omnodex-capture-pause/);
+  });
+}
+
+for (const command of [
+  "omnodex record resume",
+  "omnodex sync resume",
+  "omnodex sync status",
+  "omnodex sync",
+  "omnodex sync --sessions a,b",
+  "echo pause",
+]) {
+  test(`no finding on: ${command}`, () => {
+    const engine = new RuleEngine([RULE_SELF_PROTECTION_BASH]);
+    const findings = engine.evaluate(makeEvent({ tool_name: "Bash", parameters: { command } }));
+    assert.equal(findings.length, 0);
+  });
+}
+
+test("fires on a write to the pause state file", () => {
+  const engine = new RuleEngine([RULE_SELF_PROTECTION_CONFIG_WRITE]);
+  const findings = engine.evaluate(makeEvent({
+    parameters: {
+      file_path: "/home/case/.omnodex/pause-state.json",
+      content: '{"record":{"pause_id":"x","paused_at":"2026-06-02T00:00:00.000Z","until":null,"by":"cli"}}',
+    },
+  }));
+  assert.equal(findings.length, 1);
+});

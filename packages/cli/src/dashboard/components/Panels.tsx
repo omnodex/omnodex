@@ -18,6 +18,8 @@ import {
   sourcesLabel,
   timeAgo,
   parseParameters,
+  pauseLabel,
+  resumeLabel,
   promptPreview,
   subagentKey,
   subagentLabel,
@@ -250,6 +252,29 @@ export function Timeline({ view, sessions, utc, detail, newCallIds, onSelect }: 
             {ownerBadge(p.session_id)}
             <span className="timeline-session-badge" style={toneStyle("cyan")}>Prompt</span>
             <div className="timeline-prompt-text" title={p.prompt}>{promptPreview(p.prompt)}</div>
+          </div>
+        </li>
+      );
+    }
+    if (entry.kind === "pause-start" || entry.kind === "pause-end") {
+      const p = entry.pause;
+      const start = entry.kind === "pause-start";
+      const ended = p.reason === "expired" ? "time ran out" : p.reason === "replaced" ? "replaced by a new pause" : "resumed";
+      const detail = start
+        ? (p.kind === "sync"
+          ? "Events from this time stay on this machine and were not uploaded."
+          : p.kind === "record"
+            ? "Nothing was captured during this time."
+            : "Rules did not block during this time.")
+          + (p.until ? ` Set to end ${formatTime(p.until, utc)}.` : " No end time set.")
+        : ended;
+      return (
+        <li key={`${entry.kind}:${p.pause_id}`} className="timeline-item timeline-pause">
+          <div className="timeline-time">{formatTime(entry.at, utc)}</div>
+          <div className="timeline-content">
+            <span className="timeline-session-badge" style={toneStyle("orange")}>{start ? pauseLabel(p.kind) : resumeLabel(p.kind)}</span>
+            {p.machine_label && <span className="timeline-server">{p.machine_label}</span>}
+            <div className="timeline-detail">{detail}</div>
           </div>
         </li>
       );

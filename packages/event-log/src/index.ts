@@ -303,3 +303,24 @@ export {
   sessionRenamedIfChanged,
 } from "./session-title.js";
 export type { FoundTitle, SessionRenamedOptions, TitleSource } from "./session-title.js";
+export {
+  PAUSABLE_KINDS,
+  PAUSE_STATE_FILE,
+  activePauses,
+  applyCapturePause,
+  endPause,
+  isPauseMarker,
+  LOCAL_ONLY_SEEN_FILE,
+  localOnlySeen,
+  markLocalOnlySeen,
+  outboundEvents,
+  pauseActive,
+  readPauseState,
+  settleExpiredPauses,
+  startPause,
+} from "./capture-pause.js";
+export type { PausableKind, PauseEntry, PauseState } from "./capture-pause.js";
+// The pause fold is runtime-neutral, so it lives in shared (the local
+// dashboard bundles it); re-exported here beside the markers.
+export { capturePauseRows } from "@omnodex/shared";
+export type { CapturePauseRow } from "@omnodex/shared";

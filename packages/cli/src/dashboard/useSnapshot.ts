@@ -12,9 +12,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReadModelSnapshot } from "../dashboard-model/view.js";
+import type { LocalSnapshot } from "../dashboard-model/view.js";
 
-const EMPTY: ReadModelSnapshot = { sessions: [], tool_calls: {}, file_events: {}, risk_events: {} };
+const EMPTY: LocalSnapshot = { sessions: [], tool_calls: {}, file_events: {}, risk_events: {} };
 /** How long after a change to reload: long enough to batch a burst of events. */
 const RELOAD_DELAY_MS = 250;
 const RETRY_MS = 3000;
@@ -22,7 +22,7 @@ const RETRY_MS = 3000;
 const NEW_ARRIVAL_MS = 1500;
 
 export interface SnapshotState {
-  snapshot: ReadModelSnapshot;
+  snapshot: LocalSnapshot;
   loading: boolean;
   error: string | null;
   /** True while the live event stream is connected. */
@@ -31,7 +31,7 @@ export interface SnapshotState {
   newCallIds: ReadonlySet<string>;
 }
 
-function callIds(snapshot: ReadModelSnapshot): Set<string> {
+function callIds(snapshot: LocalSnapshot): Set<string> {
   const ids = new Set<string>();
   for (const rows of Object.values(snapshot.tool_calls)) for (const row of rows) ids.add(row.tool_call_id);
   return ids;
@@ -47,7 +47,7 @@ export function useSnapshot(): SnapshotState {
     try {
       const res = await fetch("/api/snapshot");
       if (!res.ok) throw new Error(`API ${res.status}`);
-      const snapshot = (await res.json()) as ReadModelSnapshot;
+      const snapshot = (await res.json()) as LocalSnapshot;
       const ids = callIds(snapshot);
       const previous = known.current;
       const fresh = previous ? new Set([...ids].filter((id) => !previous.has(id))) : new Set<string>();

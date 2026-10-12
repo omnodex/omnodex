@@ -18,12 +18,25 @@
  * the pulled blob alone. Session IDs ride in the X-Omnodex-Sessions header.
  */
 
+import { isReceivingPaused } from "./live-gate.js";
 import { encodeEnvelope } from "./envelope.js";
 
 /** The largest sync blob the cloud accepts, in bytes; a bigger push gets HTTP 413. */
 export const SYNC_BLOB_MAX_BYTES = 50 * 1024 * 1024;
 
 /** Thrown by a push the cloud refused for size (HTTP 413). */
+/**
+ * The stream's owner paused receiving in the dashboard, so the server
+ * refuses uploads. Nothing is wrong on this machine; the next sync after
+ * they resume it uploads everything recorded meanwhile.
+ */
+export class ReceivingPausedError extends Error {
+  constructor() {
+    super("upload refused: the stream's owner paused receiving in the dashboard; uploads resume when they resume it");
+    this.name = "ReceivingPausedError";
+  }
+}
+
 export class SyncBlobTooLargeError extends Error {
   readonly bytes: number;
   readonly maxBytes: number;
@@ -130,6 +143,7 @@ export class HttpSyncTransport implements SyncTransport {
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        if (isReceivingPaused(res.status, text)) throw new ReceivingPausedError();
         throw new Error(
           "sync push failed: HTTP " + res.status + " " + text.slice(0, 200),
         );
