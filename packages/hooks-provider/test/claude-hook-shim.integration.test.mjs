@@ -213,6 +213,11 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
     req.resume();
     req.on("end", () => {
       pushes.push({ method: req.method, url: req.url.replace(/segments\/.+$/, "segments/:id") });
+      if (req.url === "/api/v1/stream/verifier") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, status: "registered" }));
+        return;
+      }
       res.writeHead(req.url === "/api/v1/sync/manifest" ? 200 : 201, { "Content-Type": "application/json" });
       res.end(JSON.stringify(req.url === "/api/v1/sync/manifest" ? { commit_id: "commit_case_shim" } : { segment_id: "x" }));
     });
@@ -260,8 +265,10 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
 
   assert.equal(state.last_error ?? null, null, `sync error: ${state.last_error}`);
   assert.equal(state.last_blob_id, "commit_case_shim");
-  // One segment holding the session, then the commit that makes it visible.
+  // The stream secret check for a new token and secret pair, then one
+  // segment holding the session, then the commit that makes it visible.
   assert.deepEqual(pushes, [
+    { method: "PUT", url: "/api/v1/stream/verifier" },
     { method: "PUT", url: "/api/v1/sync/segments/:id" },
     { method: "PUT", url: "/api/v1/sync/manifest" },
   ]);
