@@ -35,6 +35,11 @@ import { syncSegments } from "./segment-sync.js";
 import { HttpSegmentTransport, SegmentsUnsupportedError } from "./segment-transport.js";
 import { TokenRotatedError, collectRotatedToken, ensureSecretVerifier } from "./stream-credentials.js";
 
+/** The server-set interval for a SyncRunResult, when the cloud announced one. */
+function announced(seconds: number | null): { serverIntervalSeconds?: number } {
+  return seconds === null ? {} : { serverIntervalSeconds: seconds };
+}
+
 /** The read model a home's syncs use once it has recorded anything local-only. */
 export const SYNC_READ_MODEL_FILE = "sync-traces.db";
 
@@ -63,6 +68,8 @@ export type SyncRunResult = SyncResult & {
   segments?: SegmentSyncSummary;
   /** Set when the owner had rotated the token and this sync collected the new one (saved to stream-config.json). */
   collectedToken?: string;
+  /** Minimum seconds the cloud asks between this machine's syncs (0: none); undefined when it did not say. */
+  serverIntervalSeconds?: number;
 };
 
 /**
@@ -161,10 +168,11 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
     // Pauses go up with every sync, so the dashboard shows them later even
     // if it was not open (live push is its only other source).
     const pauses = capturePauseRows(await log.readSession(CAPTURE_CONTROL_SESSION_ID));
+    const blobTransport = new HttpSyncTransport({ baseUrl: opts.apiUrl, apiToken: opts.apiToken });
     const encryptor = new SyncEncryptor({
       passphrase: opts.passphrase,
       customerId: opts.customerId,
-      transport: new HttpSyncTransport({ baseUrl: opts.apiUrl, apiToken: opts.apiToken }),
+      transport: blobTransport,
       store,
       eventLog: log,
       kdfSalt,
@@ -178,10 +186,11 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
     await fs.writeFile(saltPath, salt);
 
     if (!opts.sessionIds && process.env.OMNODEX_SYNC_SEGMENTS !== "0") {
+      const segmentTransport = new HttpSegmentTransport({ baseUrl: opts.apiUrl, apiToken: opts.apiToken });
       try {
         const r = await syncSegments({
           store,
-          transport: new HttpSegmentTransport({ baseUrl: opts.apiUrl, apiToken: opts.apiToken }),
+          transport: segmentTransport,
           passphrase: opts.passphrase,
           kdfSalt: salt,
           customerId: opts.customerId,
@@ -202,6 +211,7 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
           kdfSalt: salt,
           machineId,
           segments: { count: r.segments, uploaded: r.uploaded, totalBytes: r.totalBytes },
+          ...announced(segmentTransport.serverIntervalSeconds),
         };
       } catch (err) {
         if (!(err instanceof SegmentsUnsupportedError)) throw err;
@@ -210,7 +220,7 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
     }
 
     const result = await encryptor.sync(opts.sessionIds);
-    return result;
+    return { ...result, ...announced(blobTransport.serverIntervalSeconds) };
   } finally {
     await store.close();
     await log.close();

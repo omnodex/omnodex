@@ -17,7 +17,7 @@
  */
 
 import { isReceivingPaused } from "./live-gate.js";
-import { ReceivingPausedError, SyncBlobTooLargeError } from "./transport.js";
+import { ReceivingPausedError, SyncBlobTooLargeError, syncIntervalFrom, syncTooSoon } from "./transport.js";
 import { TokenRotatedError, isTokenRotated } from "./stream-credentials.js";
 
 export interface SegmentMeta {
@@ -66,6 +66,8 @@ export class HttpSegmentTransport implements SegmentTransport {
   private readonly baseUrl: string;
   private readonly apiToken: string;
   private readonly timeoutMs: number;
+  /** The sync interval the cloud announced on the last response, or null if it did not say. */
+  serverIntervalSeconds: number | null = null;
 
   constructor(options: HttpSegmentTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -112,7 +114,7 @@ export class HttpSegmentTransport implements SegmentTransport {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      return await fetch(this.baseUrl + path, {
+      const res = await fetch(this.baseUrl + path, {
         method,
         headers: { ...headers, Authorization: "Bearer " + this.apiToken },
         // BodyInit typings do not accept a Uint8Array view; envelopes are
@@ -120,6 +122,8 @@ export class HttpSegmentTransport implements SegmentTransport {
         body: typeof body === "string" ? body : (body.buffer as ArrayBuffer),
         signal: controller.signal,
       });
+      this.serverIntervalSeconds = syncIntervalFrom(res);
+      return res;
     } finally {
       clearTimeout(timer);
     }
@@ -128,6 +132,8 @@ export class HttpSegmentTransport implements SegmentTransport {
 
 async function failure(what: string, res: Response): Promise<Error> {
   const text = await res.text().catch(() => "");
+  const tooSoon = syncTooSoon(res, text);
+  if (tooSoon) return tooSoon;
   if (isReceivingPaused(res.status, text)) return new ReceivingPausedError();
   if (isTokenRotated(res.status, text)) return new TokenRotatedError();
   return new Error(`${what} failed: HTTP ${res.status} ${text.slice(0, 200)}`);

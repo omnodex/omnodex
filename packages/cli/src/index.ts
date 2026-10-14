@@ -73,8 +73,10 @@ import {
   AUTO_SYNC_CHILD_ENV,
   readAutoSyncState,
   recordSyncOutcome,
+  syncDeferred,
   acquireSyncLock,
   SyncBlobTooLargeError,
+  SyncTooSoonError,
   SYNC_BLOB_MAX_BYTES,
   runAutoSync,
   startBackgroundSync,
@@ -2132,6 +2134,14 @@ async function cmdSync(args: string[]): Promise<void> {
   }
 
   try {
+    // The cloud sets a minimum gap between a machine's syncs; it would
+    // refuse this one anyway.
+    const state = await readAutoSyncState(paths.home);
+    if (syncDeferred(state)) {
+      console.error(`[sync] ${syncWaitMessage(Date.parse(state.sync_not_before!))}`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`[sync] encrypting and pushing to ${apiUrl} ...`);
     let result: Awaited<ReturnType<typeof syncReadModel>>;
     try {
@@ -2148,6 +2158,11 @@ async function cmdSync(args: string[]): Promise<void> {
       await recordSyncOutcome(paths.home, err);
       if (err instanceof SyncBlobTooLargeError) {
         console.error(`[sync] ${describeSyncBlob({ blob_too_large_bytes: err.bytes }, paths.home)}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (err instanceof SyncTooSoonError) {
+        console.error(`[sync] ${syncWaitMessage(Date.now() + err.retryAfterSeconds * 1000)}`);
         process.exitCode = 1;
         return;
       }
@@ -2174,6 +2189,14 @@ async function cmdSync(args: string[]): Promise<void> {
   } finally {
     await release();
   }
+}
+
+/** What `omnodex sync` says when the cloud asks this machine to wait. */
+export function syncWaitMessage(until: number, now = Date.now()): string {
+  const minutes = Math.max(1, Math.ceil((until - now) / 60_000));
+  const at = new Date(until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `the cloud asks this machine to wait between syncs; try again in ${minutes} minute(s), after ${at}. ` +
+    "Nothing is lost: everything recorded meanwhile goes up with the next sync.";
 }
 
 async function main(): Promise<void> {

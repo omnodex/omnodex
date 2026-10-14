@@ -38,6 +38,49 @@ export class ReceivingPausedError extends Error {
   }
 }
 
+/** Response header in which the cloud gives the minimum seconds between this machine's syncs; 0 means none. */
+export const SYNC_INTERVAL_HEADER = "X-Omnodex-Sync-Interval";
+
+/** How long to wait after a 429 that names no time. */
+const DEFAULT_RETRY_AFTER_SECONDS = 15 * 60;
+
+/**
+ * The cloud asked this machine to wait before syncing again (HTTP 429,
+ * sync_too_soon): it synced less than the server-set interval ago. Nothing
+ * is lost; the events stay in the local log and go up with the next sync.
+ */
+export class SyncTooSoonError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super(`sync deferred: the cloud asks this machine to wait ${Math.ceil(retryAfterSeconds / 60)} more minute(s) between syncs`);
+    this.name = "SyncTooSoonError";
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/** The interval a response announced, in seconds, or null when it did not say. */
+export function syncIntervalFrom(res: Response): number | null {
+  const raw = res.headers.get(SYNC_INTERVAL_HEADER);
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+/** A SyncTooSoonError for a 429 answer, else null. Retry-After first, then the body's retry_after. */
+export function syncTooSoon(res: Response, text: string): SyncTooSoonError | null {
+  if (res.status !== 429) return null;
+  let seconds = Number(res.headers.get("Retry-After"));
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    try {
+      seconds = Number((JSON.parse(text) as { retry_after?: unknown }).retry_after);
+    } catch {
+      seconds = NaN;
+    }
+  }
+  return new SyncTooSoonError(Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds) : DEFAULT_RETRY_AFTER_SECONDS);
+}
+
 export class SyncBlobTooLargeError extends Error {
   readonly bytes: number;
   readonly maxBytes: number;
@@ -104,6 +147,8 @@ export class HttpSyncTransport implements SyncTransport {
   private readonly baseUrl: string;
   private readonly apiToken: string;
   private readonly timeoutMs: number;
+  /** The sync interval the cloud announced on the last response, or null if it did not say. */
+  serverIntervalSeconds: number | null = null;
 
   constructor(options: HttpSyncTransportOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -139,11 +184,14 @@ export class HttpSyncTransport implements SyncTransport {
         signal: controller.signal,
       });
 
+      this.serverIntervalSeconds = syncIntervalFrom(res);
       if (res.status === 413) {
         throw new SyncBlobTooLargeError(envelope.byteLength);
       }
       if (!res.ok) {
         const text = await res.text().catch(() => "");
+        const tooSoon = syncTooSoon(res, text);
+        if (tooSoon) throw tooSoon;
         if (isReceivingPaused(res.status, text)) throw new ReceivingPausedError();
         if (isTokenRotated(res.status, text)) throw new TokenRotatedError();
         throw new Error(
