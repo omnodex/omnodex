@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { refreshRuleBundle, RULE_BUNDLE_FILE } from "../dist/rules-refresh.js";
+import { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_STATE_FILE } from "../dist/rules-refresh.js";
 import { runAutoSync } from "../dist/auto-sync.js";
 
 let home;
@@ -112,9 +112,26 @@ test("a subscription that lapsed makes no bundle request", async () => {
 test("refusals and failures leave the installed bundle alone", async () => {
   for (const [status, outcome] of [[403, "not-entitled"], [404, "no-bundle"], [500, "failed"], ["throw", "failed"]]) {
     await setup({ installed: "1.0.0" });
+    await rm(path.join(home, RULES_REFRESH_STATE_FILE), { force: true });
     assert.equal(await refreshRuleBundle(home, cloud({ status })), outcome, String(status));
     assert.equal(await installed(), "1.0.0", String(status));
   }
+});
+
+test("checks again after an hour when current, six when none is published, next pass when it failed", async () => {
+  const t0 = Date.parse("2026-10-14T12:00:00Z");
+  const ask = async (status, minutes) => {
+    const c = cloud({ status });
+    const outcome = await refreshRuleBundle(home, { ...c, now: t0 + minutes * 60_000 });
+    return [outcome, c.calls.fetch.length];
+  };
+  await setup({ installed: "1.0.0" });
+  assert.deepEqual(await ask(304, 0), ["current", 1]);
+  assert.deepEqual(await ask(304, 30), ["waiting", 0]);
+  assert.deepEqual(await ask(404, 61), ["no-bundle", 1]);
+  assert.deepEqual(await ask(404, 61 + 300), ["waiting", 0]);
+  assert.deepEqual(await ask(500, 61 + 361), ["failed", 1]);
+  assert.deepEqual(await ask(304, 61 + 362), ["current", 1]);
 });
 
 test("OMNODEX_RULES_REFRESH=0 turns it off", async () => {

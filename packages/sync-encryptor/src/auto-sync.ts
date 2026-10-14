@@ -39,6 +39,13 @@
  *   - auto_sync_min_interval_seconds: <n>   minimum gap between syncs (default 60)
  *   - auto_sync_interval_seconds: <n>       proxy timer period, and how stale a
  *                                           pass may get mid-session (default 900)
+ * The cloud may also set a minimum gap between a machine's syncs: it says
+ * so in a header on every sync response, and answers a sync that comes too
+ * soon with 429 and Retry-After. Either way the time is kept as
+ * sync_not_before in auto-sync-state.json, and no sync is tried before it;
+ * detection still runs. The cloud enforces the gap itself, so this only
+ * saves requests that would be refused.
+ *
  * The child also keeps the license cache current: once license-cache.json is
  * past its TTL (a day), it re-validates before anything reads the tier, so a
  * plan change reaches the install without a CLI command. Hooks
@@ -59,7 +66,7 @@ import { validateLicense } from "@omnodex/license-client";
 import { licenseCacheStale, readOrFetchLicense } from "./license-cache.js";
 import { addAdvancedUsage, submitAdvancedUsage, type DayCounts } from "./advanced-usage.js";
 import { pushEventsToCloud } from "./shim-push.js";
-import { SyncBlobTooLargeError } from "./transport.js";
+import { SyncBlobTooLargeError, SyncTooSoonError } from "./transport.js";
 
 /** Set on the detached child so the shim runs a sync instead of a hook. */
 export const AUTO_SYNC_CHILD_ENV = "OMNODEX_AUTO_SYNC_CHILD";
@@ -121,6 +128,12 @@ export interface AutoSyncState {
   pass_pending?: boolean;
   /** Last background license re-validation attempt (refreshStaleLicense). */
   license_checked_at?: string;
+  /**
+   * No sync before this time: the cloud's minimum gap between this
+   * machine's syncs, from the last sync's response or a 429. Null when the
+   * cloud set none.
+   */
+  sync_not_before?: string | null;
 }
 
 export type AutoSyncDecision =
@@ -134,6 +147,7 @@ export type AutoSyncDecision =
 
 export type AutoSyncOutcome =
   | "synced"
+  | "deferred"
   | "in-progress"
   | "no-credentials"
   | "disabled"
@@ -235,6 +249,9 @@ export async function startBackgroundSync(
       }
     };
 
+    // Nothing to do when only a sync was asked for and the cloud said to wait.
+    if (!detect && syncDeferred(state, now)) return "too-soon";
+
     if (await lockIsHeld(opts.home, now)) {
       await markPending();
       return "in-progress";
@@ -314,6 +331,8 @@ export async function runAutoSync(
     if (typeof settings === "string") return "no-credentials";
     if (!settings.enabled) return "disabled";
 
+    if (syncDeferred(await readAutoSyncState(home), Date.now())) return "deferred";
+
     // Loaded lazily: hook shims import this module on every event, but
     // only the background child needs SQLite and the projector.
     const { syncReadModel } = await import("./sync-runner.js");
@@ -345,9 +364,17 @@ export async function runAutoSync(
  */
 export async function recordSyncOutcome(
   home: string,
-  outcome: { blobId: string; blobBytes: number; segments?: { count: number; totalBytes: number } } | unknown,
+  outcome:
+    | { blobId: string; blobBytes: number; segments?: { count: number; totalBytes: number }; serverIntervalSeconds?: number }
+    | unknown,
+  now = Date.now(),
 ): Promise<void> {
-  const ok = outcome as { blobId?: unknown; blobBytes?: unknown; segments?: { count?: unknown; totalBytes?: unknown } };
+  const ok = outcome as {
+    blobId?: unknown;
+    blobBytes?: unknown;
+    segments?: { count?: unknown; totalBytes?: unknown };
+    serverIntervalSeconds?: unknown;
+  };
   if (ok && typeof ok === "object" && typeof ok.blobId === "string" && typeof ok.blobBytes === "number") {
     const segmented = typeof ok.segments?.count === "number" && typeof ok.segments?.totalBytes === "number";
     await updateAutoSyncState(home, {
@@ -358,13 +385,25 @@ export async function recordSyncOutcome(
       last_sync_total_bytes: segmented ? (ok.segments!.totalBytes as number) : null,
       blob_too_large_bytes: null,
       last_error: null,
+      sync_not_before: typeof ok.serverIntervalSeconds === "number" && ok.serverIntervalSeconds > 0
+        ? new Date(now + ok.serverIntervalSeconds * 1000).toISOString()
+        : null,
     });
     return;
   }
   await updateAutoSyncState(home, {
     last_error: (outcome as Error)?.message ?? String(outcome),
     ...(outcome instanceof SyncBlobTooLargeError ? { blob_too_large_bytes: outcome.bytes } : {}),
+    ...(outcome instanceof SyncTooSoonError
+      ? { sync_not_before: new Date(now + outcome.retryAfterSeconds * 1000).toISOString() }
+      : {}),
   });
+}
+
+/** True while the cloud's minimum gap since this machine's last sync has not passed. */
+export function syncDeferred(state: AutoSyncState, now = Date.now()): boolean {
+  const until = state.sync_not_before ? Date.parse(state.sync_not_before) : NaN;
+  return !Number.isNaN(until) && now < until;
 }
 
 /** Submit counted advanced rule usage with this home's credentials. */

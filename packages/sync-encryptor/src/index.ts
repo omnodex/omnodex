@@ -44,7 +44,14 @@ export {
 } from "./envelope.js";
 export type { DecodedEnvelope } from "./envelope.js";
 
-export { HttpSyncTransport, ReceivingPausedError, SyncBlobTooLargeError, SYNC_BLOB_MAX_BYTES } from "./transport.js";
+export {
+  HttpSyncTransport,
+  ReceivingPausedError,
+  SyncBlobTooLargeError,
+  SyncTooSoonError,
+  SYNC_BLOB_MAX_BYTES,
+  SYNC_INTERVAL_HEADER,
+} from "./transport.js";
 export { syncSegments, SEGMENT_SEAL_BYTES, SEGMENT_WINDOW_DAYS, SEGMENT_MANIFEST_FILE } from "./segment-sync.js";
 export type { SegmentSyncOptions, SegmentSyncResult, SegmentManifest } from "./segment-sync.js";
 export { HttpSegmentTransport, SegmentsUnsupportedError, MissingSegmentsError } from "./segment-transport.js";
@@ -99,6 +106,7 @@ export {
   backgroundPassDue,
   readAutoSyncState,
   recordSyncOutcome,
+  syncDeferred,
   readAutoSyncIntervalMs,
   includesSessionEnd,
   AUTO_SYNC_CHILD_ENV,

@@ -28,6 +28,10 @@
  * Installs whose cached licence is not Pro or Enterprise make no request at
  * all, so free and Hosted users cost the cloud nothing for this. Never
  * throws; every failure leaves whatever bundle and key were already there.
+ *
+ * Bundles change rarely, so a check that found the bundle current waits an
+ * hour before the next, and one that found none published waits six
+ * (rules/refresh-state.json). A failed check is retried on the next pass.
  */
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -45,6 +49,7 @@ const ENTITLED_TIERS = new Set(["pro", "enterprise"]);
 
 export type RulesRefreshOutcome =
   | "disabled"
+  | "waiting"
   | "no-credentials"
   | "not-entitled"
   | "no-bundle"
@@ -52,7 +57,18 @@ export type RulesRefreshOutcome =
   | "updated"
   | "failed";
 
+/** Where the last check's time and answer are kept. */
+export const RULES_REFRESH_STATE_FILE = join("rules", "refresh-state.json");
+
+/** How long to wait after a check, by its answer. Others are retried on the next pass. */
+export const RULES_RECHECK_MS: Partial<Record<RulesRefreshOutcome, number>> = {
+  current: 60 * 60 * 1000,
+  "no-bundle": 6 * 60 * 60 * 1000,
+};
+
 export interface RulesRefreshOptions {
+  /** Clock, for tests. */
+  now?: number;
   /** HTTP, for tests. */
   fetchFn?: typeof fetch;
   /** Licence validation, for tests. */
@@ -109,6 +125,17 @@ export async function refreshRuleBundle(
     let license = (await validate(licenseConfig)).license;
     if (!ENTITLED_TIERS.has(license.tier)) return "not-entitled";
 
+    const now = opts.now ?? Date.now();
+    const last = await readJson(join(home, RULES_REFRESH_STATE_FILE));
+    const wait = RULES_RECHECK_MS[last?.outcome as RulesRefreshOutcome];
+    const checkedAt = typeof last?.checked_at === "string" ? Date.parse(last.checked_at) : NaN;
+    if (wait !== undefined && !Number.isNaN(checkedAt) && now - checkedAt < wait) return "waiting";
+    const remember = async (outcome: RulesRefreshOutcome): Promise<RulesRefreshOutcome> => {
+      await mkdir(join(home, "rules"), { recursive: true });
+      await writeFile(join(home, RULES_REFRESH_STATE_FILE), JSON.stringify({ checked_at: new Date(now).toISOString(), outcome }), "utf8");
+      return outcome;
+    };
+
     const installed = await installedVersion(home);
     const fetchFn = opts.fetchFn ?? fetch;
     const res = await fetchFn(
@@ -133,7 +160,7 @@ export async function refreshRuleBundle(
     } else if (res.status === 403) {
       return "not-entitled";
     } else if (res.status === 404) {
-      return "no-bundle";
+      return remember("no-bundle");
     } else {
       return "failed";
     }
@@ -143,7 +170,7 @@ export async function refreshRuleBundle(
     if (license.rule_bundle?.bundle_version !== version) {
       license = (await validate({ ...licenseConfig, force: true })).license;
     }
-    return outcome;
+    return remember(outcome);
   } catch {
     return "failed";
   }
