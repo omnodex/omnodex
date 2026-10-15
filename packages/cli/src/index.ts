@@ -111,6 +111,7 @@ import {
   LAUNCHER_PLATFORMS,
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
+import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
 import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
@@ -1034,6 +1035,13 @@ function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] 
 }
 
 async function cmdInstall(args: string[]): Promise<void> {
+  // No target, or a project folder in its place: set up every surface found.
+  const positional = args.find((a) => !a.startsWith("-"));
+  if (positional === undefined || (!isTargetName(positional) && await isDirectory(positional))) {
+    await installAllSurfaces(args);
+    return;
+  }
+
   const parsed = resolveTarget(args);
   if (!parsed) return;
   const { target, rest } = parsed;
@@ -1048,6 +1056,144 @@ async function cmdInstall(args: string[]): Promise<void> {
     case "antigravity":
       await installAntigravity(rest);
       return;
+  }
+}
+
+async function isDirectory(p: string): Promise<boolean> {
+  try {
+    return (await fs.stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function readOrNull(file: string): Promise<string | null> {
+  try {
+    return await fs.readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The project file each surface's hooks are written to. */
+function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: string, args: readonly string[]): string {
+  switch (surface) {
+    case "claude-code":
+      return new ClaudeCodeInterceptor({
+        projectPath,
+        shimPath: CLAUDE_HOOK_SHIM_PATH,
+        omnodexHome,
+        settingsFile: args.includes("--project-settings") ? "settings.json" : "settings.local.json",
+      }).settingsFilePath();
+    case "codex":
+      return new CodexInterceptor({ projectPath, shimPath: CODEX_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
+    case "antigravity":
+      return new AntigravityInterceptor({ projectPath, shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
+  }
+}
+
+const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
+  "claude-code": (args) => installClaudeCode(args),
+  codex: (args) => installCodex(args),
+  antigravity: (args) => installAntigravity(args),
+};
+
+/**
+ * `omnodex install` with no target: find every supported surface on this
+ * host, show what will be written, confirm once, install each, and sign in
+ * to the dashboard once at the end.
+ */
+async function installAllSurfaces(args: string[]): Promise<void> {
+  const positional = args.find((a) => !a.startsWith("-"));
+  const projectPath = path.resolve(positional ?? process.cwd());
+  const flags = args.filter((a) => a.startsWith("-") && a !== "--yes" && a !== "-y");
+  const paths = resolvePaths();
+
+  const detected = detectSurfaces({ home: os.homedir(), platform: process.platform, env: process.env });
+  const note = wslNote(detectWsl(defaultWslProbe(process.env), projectPath));
+  const printNote = () => {
+    if (note.length === 0) return;
+    console.log("");
+    for (const line of note) console.log(line ? `[install] ${line}` : "");
+  };
+
+  if (detected.length === 0) {
+    console.error(`[install] no supported agent surfaces found on this host (looked for ${Object.values(SURFACE_LABELS).join(", ")}).`);
+    console.error(`[install] install one first, or name a target: omnodex install <target>`);
+    printNote();
+    process.exitCode = 1;
+    return;
+  }
+
+  const plan = detected.map((d) => ({ ...d, file: surfaceHooksFile(d.surface, projectPath, paths.home, flags) }));
+  const width = Math.max(...plan.map((p) => SURFACE_LABELS[p.surface].length));
+  console.log(`[install] Omnodex will set up ${plan.length === 1 ? "this agent surface" : "these agent surfaces"} for ${projectPath}:`);
+  console.log("");
+  for (const p of plan) {
+    console.log(`  ${SURFACE_LABELS[p.surface].padEnd(width)}  (found: ${p.evidence})`);
+    const shown = p.file.startsWith(projectPath + path.sep) ? path.relative(projectPath, p.file) : p.file;
+    console.log(`  ${"".padEnd(width)}  hooks: ${shown}`);
+  }
+  printNote();
+  console.log("");
+
+  if (!args.includes("--yes") && !args.includes("-y")) {
+    if (!process.stdin.isTTY) {
+      console.error(`[install] not running in a terminal, so nothing was installed. Re-run with --yes to install.`);
+      process.exitCode = 1;
+      return;
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = (await rl.question("Install? (Y/n) ")).trim().toLowerCase();
+    rl.close();
+    if (answer !== "" && answer !== "y" && answer !== "yes") {
+      console.log("[install] cancelled");
+      return;
+    }
+  }
+
+  // Each surface skips the sign-in; it runs once below for the whole install.
+  const surfaceArgs = [projectPath, ...flags.filter((f) => f !== "--no-connect"), "--no-connect"];
+  const outcomes: { surface: Surface; result: string; failed: boolean }[] = [];
+  const priorExitCode = process.exitCode;
+  for (const p of plan) {
+    console.log("");
+    console.log(`[install] ${SURFACE_LABELS[p.surface]}:`);
+    const before = await readOrNull(p.file);
+    process.exitCode = undefined;
+    let error: string | null = null;
+    try {
+      await SURFACE_INSTALLERS[p.surface](surfaceArgs);
+      if (process.exitCode) error = "install reported an error (see above)";
+    } catch (err) {
+      error = (err as Error).message;
+      console.error(`[install] ${SURFACE_LABELS[p.surface]} failed: ${error}`);
+    }
+    const after = await readOrNull(p.file);
+    const result = error
+      ? `failed: ${error}`
+      : before === null
+        ? "installed"
+        : before === after
+          ? "already set up, nothing changed"
+          : "updated";
+    outcomes.push({ surface: p.surface, result, failed: error !== null });
+  }
+  const anyFailed = outcomes.some((o) => o.failed);
+  process.exitCode = anyFailed ? 1 : priorExitCode;
+
+  console.log("");
+  console.log(`[install] summary:`);
+  for (const o of outcomes) console.log(`  ${SURFACE_LABELS[o.surface].padEnd(width)}  ${o.result}`);
+  if (outcomes.every((o) => o.result === "already set up, nothing changed")) {
+    console.log(`[install] nothing to change; Omnodex is already set up here`);
+  }
+  if (outcomes.some((o) => !o.failed)) {
+    await connectAfterInstall(paths.home, {
+      args,
+      platform: detected.length === 1 ? platformFromTarget(detected[0].surface) : undefined,
+      projectLabel: path.basename(projectPath),
+    });
   }
 }
 
@@ -2347,11 +2493,16 @@ commands:
                      Flags:
                        --check               dry run — show available update
                        --refresh-launchers   just refresh launcher scripts
-  install <target> [project]
+  install [target] [project]
                      install Omnodex hooks for an AI agent platform.
                      Targets: claude-code, codex, antigravity (or agy)
+                     Without a target, finds every supported agent on
+                     this machine, shows what it will write, asks once,
+                     and installs them all.
                      Defaults to cwd if project is omitted.
                      Flags:
+                       --yes, -y             install without asking (needed
+                                             when not in a terminal)
                        --debug               verbose shim logging
                        --no-connect          skip the dashboard sign-in
                                              (also skipped without a terminal)
