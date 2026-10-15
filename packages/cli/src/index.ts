@@ -99,7 +99,7 @@ import {
   resolveCredentials,
   readStreamConfig,
 } from "./stream-config.js";
-import { createClaim, platformFromTarget } from "./connect.js";
+import { canonicalTarget, createClaim, platformFromTarget } from "./connect.js";
 import {
   writeLauncher,
   launcherPath,
@@ -867,7 +867,8 @@ async function cmdConnect(args: string[]): Promise<void> {
   const flagToken = readFlagValue(args, "--token");
   const flagPassphrase = readFlagValue(args, "--secret") ?? readFlagValue(args, "--passphrase");
   const flagApiUrl = readFlagValue(args, "--api");
-  const flagPlatform = readFlagValue(args, "--platform");
+  const rawPlatform = readFlagValue(args, "--platform");
+  const flagPlatform = rawPlatform === undefined ? undefined : canonicalTarget(rawPlatform);
 
   // Resolve or generate credentials
   let creds = await resolveCredentials(paths.home, {
@@ -1008,14 +1009,18 @@ async function cmdConnect(args: string[]): Promise<void> {
 const VALID_TARGETS = ["claude-code", "codex", "antigravity"] as const;
 type InstallTarget = typeof VALID_TARGETS[number];
 
+function isTargetName(arg: string): boolean {
+  return VALID_TARGETS.includes(canonicalTarget(arg) as InstallTarget);
+}
+
 function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] } | null {
   const targetArg = args.find((a) => !a.startsWith("--"));
-  if (!targetArg || !VALID_TARGETS.includes(targetArg as InstallTarget)) {
+  if (!targetArg || !isTargetName(targetArg)) {
     const validList = VALID_TARGETS.join(", ");
     console.error(
       targetArg
         ? `[omnodex] unknown target '${targetArg}'. Valid targets: ${validList}`
-        : `[omnodex] target required. Valid targets: ${validList}`,
+        : `[omnodex] target required. Valid targets: ${validList} (agy also works for antigravity)`,
     );
     console.error(`\n  omnodex install <target> [project]`);
     console.error(`  omnodex uninstall [target] [project]\n`);
@@ -1023,7 +1028,7 @@ function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] 
     return null;
   }
   return {
-    target: targetArg as InstallTarget,
+    target: canonicalTarget(targetArg) as InstallTarget,
     rest: args.filter((a) => a !== targetArg),
   };
 }
@@ -1357,13 +1362,14 @@ async function installAntigravityMcp(
 
 async function cmdUninstall(args: string[]): Promise<void> {
   const projectPath = path.resolve(
-    args.find((a) => !a.startsWith("--") && !VALID_TARGETS.includes(a as InstallTarget)) ?? process.cwd(),
+    args.find((a) => !a.startsWith("--") && !isTargetName(a)) ?? process.cwd(),
   );
   const paths = resolvePaths();
   const confirmed = args.includes("--confirm");
 
   // Determine which targets to uninstall
-  const targetArg = args.find((a) => VALID_TARGETS.includes(a as InstallTarget)) as InstallTarget | undefined;
+  const targetName = args.find((a) => isTargetName(a));
+  const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
 
   interface InstalledHook {
     target: InstallTarget;
@@ -2343,7 +2349,7 @@ commands:
                        --refresh-launchers   just refresh launcher scripts
   install <target> [project]
                      install Omnodex hooks for an AI agent platform.
-                     Targets: claude-code, codex, antigravity
+                     Targets: claude-code, codex, antigravity (or agy)
                      Defaults to cwd if project is omitted.
                      Flags:
                        --debug               verbose shim logging

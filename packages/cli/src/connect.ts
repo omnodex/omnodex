@@ -194,8 +194,26 @@ const TARGET_PLATFORM_MAP: Record<string, string> = {
 };
 
 /**
+ * Other names users type for a target. `agy` is Antigravity's own CLI
+ * launcher command. Aliases are resolved where arguments are parsed, so
+ * only canonical names are ever stored or sent.
+ */
+const TARGET_ALIASES: Record<string, string> = {
+  agy: "antigravity",
+};
+
+/**
+ * Resolve a target alias to its canonical name. Unknown names are
+ * returned unchanged.
+ */
+export function canonicalTarget(name: string): string {
+  return TARGET_ALIASES[name] ?? name;
+}
+
+/**
  * Map an install target name to a platform identifier for the claim.
  */
 export function platformFromTarget(target: string): string {
-  return TARGET_PLATFORM_MAP[target] || target;
+  const canonical = canonicalTarget(target);
+  return TARGET_PLATFORM_MAP[canonical] || canonical;
 }
