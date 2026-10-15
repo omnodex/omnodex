@@ -1120,6 +1120,8 @@ async function installClaudeCode(args: string[]): Promise<void> {
   // Record in the installation registry
   await addInstallation({
     target: "claude-code",
+    component: "hooks",
+    scope: "project",
     projectPath,
     settingsFile: targetFile,
     installedAt: new Date().toISOString(),
@@ -1179,6 +1181,8 @@ async function installCodex(args: string[]): Promise<void> {
   // Record in the installation registry
   await addInstallation({
     target: "codex",
+    component: "hooks",
+    scope: "project",
     projectPath,
     settingsFile: "hooks.json",
     installedAt: new Date().toISOString(),
@@ -1237,24 +1241,40 @@ async function installAntigravity(args: string[]): Promise<void> {
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
   }
 
-  if (doMcp) {
-    await installAntigravityMcp(projectPath, paths.home, nodePath);
-  }
+  const mcpWritten = doMcp ? await installAntigravityMcp(projectPath, paths.home, nodePath) : false;
 
   console.log(
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry
-  await addInstallation({
-    target: "antigravity",
-    projectPath,
-    settingsFile: doHooks ? "hooks.json" : "mcp_config.json",
-    installedAt: new Date().toISOString(),
-    installedVersion: getInstalledVersion(),
-    usesLauncher: !useLegacy,
-    launcherPath: useLegacy ? undefined : shimPath,
-  });
+  // Record in the installation registry, one entry per component
+  const installedAt = new Date().toISOString();
+  if (doHooks) {
+    await addInstallation({
+      target: "antigravity",
+      component: "hooks",
+      scope: "project",
+      projectPath,
+      settingsFile: "hooks.json",
+      installedAt,
+      installedVersion: getInstalledVersion(),
+      usesLauncher: !useLegacy,
+      launcherPath: useLegacy ? undefined : shimPath,
+    });
+  }
+  if (mcpWritten) {
+    await addInstallation({
+      target: "antigravity",
+      component: "mcp",
+      scope: "project",
+      projectPath,
+      settingsFile: "mcp_config.json",
+      installedAt,
+      installedVersion: getInstalledVersion(),
+      usesLauncher: !useLegacy,
+      launcherPath: useLegacy ? undefined : shimPath,
+    });
+  }
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
@@ -1276,7 +1296,7 @@ async function installAntigravityMcp(
   projectPath: string,
   omnodexHome: string,
   nodePath: string,
-): Promise<void> {
+): Promise<boolean> {
   // Locate launch-proxy.js: check plugin install dirs, then fall back
   // to the omnodex-plugins source tree.
   const candidates = [
@@ -1300,7 +1320,7 @@ async function installAntigravityMcp(
     console.warn(`[install]          Install the plugin first: unzip omnodex-antigravity.plugin,`);
     console.warn(`[install]          then \`agy plugin install <dir>\``);
     console.warn(`[install]          After installing, re-run with --mcp to configure the proxy.`);
-    return;
+    return false;
   }
 
   const mcpConfigPath = path.join(projectPath, ".agents", "mcp_config.json");
@@ -1332,6 +1352,7 @@ async function installAntigravityMcp(
   console.log(`[install] wrote MCP proxy config to`);
   console.log(`          ${mcpConfigPath}`);
   console.log(`[install] proxy launcher: ${launchProxyPath}`);
+  return true;
 }
 
 async function cmdUninstall(args: string[]): Promise<void> {
@@ -1444,7 +1465,7 @@ async function cmdUninstall(args: string[]): Promise<void> {
 
   for (const hook of toRemove) {
     await hook.uninstall();
-    await removeInstallation(hook.target as LauncherPlatform, projectPath);
+    await removeInstallation(hook.target as LauncherPlatform, projectPath, "hooks");
     console.log(`[uninstall] removed ${hook.label} hooks from ${hook.path}`);
   }
 }
@@ -1486,9 +1507,16 @@ async function cmdStatus(_args: string[]): Promise<void> {
     console.log(`  Registered installations (${allInstalls.length}):\n`);
     for (const inst of allInstalls) {
       const launcherTag = inst.usesLauncher ? "launcher" : "legacy";
-      console.log(`  ${inst.target} — ${inst.projectPath}`);
+      const where = inst.scope === "user" ? "user-wide" : inst.projectPath;
+      console.log(`  ${inst.target} ${inst.component} (${inst.scope}) — ${where}`);
       console.log(`    installed: ${inst.installedAt}  v${inst.installedVersion}  (${launcherTag})`);
-      console.log(`    settings: ${inst.settingsFile}`);
+      if (inst.component === "plugin") {
+        const version = inst.pluginVersion ? ` v${inst.pluginVersion}` : "";
+        const override = inst.pluginOverride ? " (version override)" : "";
+        console.log(`    plugin: ${inst.pluginPath ?? inst.settingsFile}${version}${override}`);
+      } else {
+        console.log(`    settings: ${inst.settingsFile}`);
+      }
     }
 
     // Warn about stale (legacy) installations
