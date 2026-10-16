@@ -170,7 +170,7 @@ async function machine(t) {
 
 test("without a terminal and without --yes, it shows the plan and installs nothing", async (t) => {
   const m = await machine(t);
-  const result = await run(["install", m.project], m.env);
+  const result = await run(["install", "--hooks", m.project], m.env);
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /Claude Code\s+\(found: ~\/\.claude\)/);
   assert.match(result.out, /Codex\s+\(found: ~\/\.codex\)/);
@@ -182,7 +182,7 @@ test("without a terminal and without --yes, it shows the plan and installs nothi
 
 test("with --yes it records every project on every detected surface, and a rerun changes nothing", async (t) => {
   const m = await machine(t);
-  const first = await run(["install", m.project, "--yes"], m.env);
+  const first = await run(["install", "--hooks", m.project, "--yes"], m.env);
   assert.equal(first.code, 0, first.out);
   assert.match(first.out, /to record every project:/);
   assert.match(first.out, /Claude Code\s+installed/);
@@ -197,7 +197,7 @@ test("with --yes it records every project on every detected surface, and a rerun
   const registry = JSON.parse(await fs.readFile(path.join(m.home, ".omnodex", "installations.json"), "utf8"));
   assert.deepEqual(registry.installations.map((i) => i.target).sort(), ["claude-code", "codex"]);
 
-  const again = await run(["install", m.project, "--yes"], m.env);
+  const again = await run(["install", "--hooks", m.project, "--yes"], m.env);
   assert.equal(again.code, 0, again.out);
   assert.match(again.out, /Claude Code\s+already set up, nothing changed/);
   assert.match(again.out, /nothing to change; Omnodex is already set up here/);
@@ -205,7 +205,7 @@ test("with --yes it records every project on every detected surface, and a rerun
 
 test("--this-project writes project hooks, in the current directory when no project is given", async (t) => {
   const m = await machine(t);
-  const child = spawn(process.execPath, [CLI, "install", "-y", "--this-project"], { env: m.env, cwd: m.project, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI, "install", "--hooks", "-y", "--this-project"], { env: m.env, cwd: m.project, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();
   let out = "";
   child.stdout.on("data", (d) => (out += d));
@@ -219,7 +219,7 @@ test("one surface failing does not stop the others", async (t) => {
   const m = await machine(t);
   // A directory where Claude Code's settings file should be makes its install fail.
   await fs.mkdir(path.join(m.home, ".claude", "settings.json"), { recursive: true });
-  const result = await run(["install", m.project, "--yes"], m.env);
+  const result = await run(["install", "--hooks", m.project, "--yes"], m.env);
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /Claude Code\s+failed:/);
   assert.match(result.out, /Codex\s+installed/);
@@ -230,7 +230,7 @@ test("with no supported surface on the host it says so and exits non-zero", asyn
   const m = await machine(t);
   await fs.rm(path.join(m.home, ".claude"), { recursive: true });
   await fs.rm(path.join(m.home, ".codex"), { recursive: true });
-  const result = await run(["install", m.project, "--yes"], m.env);
+  const result = await run(["install", "--hooks", m.project, "--yes"], m.env);
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /no supported agent surfaces found/);
 });

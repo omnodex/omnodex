@@ -42,11 +42,13 @@ Full setup guides: [docs.omnodex.com](https://docs.omnodex.com/getting-started/i
 
 | Agent | Mechanism | Setup |
 | --- | --- | --- |
-| Claude Code (CLI and IDE extensions) | Hooks | `omnodex install claude-code` in the project |
-| OpenAI Codex (ChatGPT Desktop, CLI, IDE) | Hooks, plus the Omnodex MCP server | `omnodex install codex` in the project, and register the MCP server in Codex |
+| Claude Code (CLI and IDE extensions) | Hooks, plus the MCP proxy through the Omnodex plugin | `omnodex install claude-code` |
+| OpenAI Codex (ChatGPT Desktop, CLI, IDE) | Hooks, plus the MCP proxy through the Omnodex plugin | `omnodex install codex` |
 | Cowork | MCP proxy via the Omnodex plugin | Plugin plus `omnodex-proxy.json` |
-| Google Antigravity (CLI, Desktop, IDE) | Hooks, optionally the MCP proxy | `omnodex install antigravity [--mcp]` in the project |
+| Google Antigravity (CLI, Desktop, IDE) | Hooks, plus the MCP proxy through the Omnodex plugin | `omnodex install antigravity` |
 | Any other MCP client | MCP proxy | Point the client at the proxy |
+
+`omnodex install <target>` sets up both parts: the hooks, and the agent's Omnodex plugin, which runs the MCP proxy. `--hooks` or `--plugin` installs one of them. The plugin is downloaded from downloads.omnodex.com and checked against the sha256 this release of the CLI pins; it is unpacked where the agent looks for plugins and registered with the agent's own CLI when that is on PATH (`claude plugin install --scope user`, `codex plugin add`; Antigravity loads it from `~/.gemini/config/plugins/`). If the download fails, the hooks are still installed and the command says how to retry. `--plugin-version <version|latest>` installs another published version, checked against its published checksum, and `--from <file>` installs a bundle you downloaded yourself (it must match the pin, a published checksum, or `--sha256 <hex>`). The plugin applies to every project; `omnodex uninstall <target> --plugin` removes it.
 
 ### Every project or one project
 
@@ -83,7 +85,7 @@ Two independent parts:
 
    Writes `.codex/hooks.json`. Hooks are enabled by default in Codex; no feature flag is needed. Trust the Omnodex hooks when Codex asks. Local hooks record session lifecycle and local Bash/unified-exec, `apply_patch`, MCP, and function calls. Successful `apply_patch` calls also produce `file.written` events for paths present in the patch.
 
-2. **The Omnodex MCP server**, once per host. `omnodex install codex` does not register it. In ChatGPT Desktop use **Settings > MCP servers > Add server** (STDIO), or from the CLI:
+2. **The Omnodex MCP server**, once per host. `omnodex install codex` installs the Omnodex plugin, which provides it: the plugin is added to your personal marketplace (`~/.agents/plugins/marketplace.json`) and registered with `codex plugin add`. Without the plugin, register the server yourself; in ChatGPT Desktop use **Settings > MCP servers > Add server** (STDIO), or from the CLI:
 
    ```bash
    codex mcp add omnodex -- /absolute/path/to/node /path/to/omnodex/packages/mcp-proxy/dist/bin/omnodex-mcp-proxy.js --config ~/.omnodex/omnodex-proxy.json
@@ -163,20 +165,25 @@ All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `da
 ## CLI reference
 
 ```
-omnodex install [target] [project]  install hooks for an AI agent platform
+omnodex install [target] [project]  install hooks and the agent's plugin
                                       targets: claude-code, codex, antigravity (or agy);
                                       without one, every agent found on this machine
                                       --everywhere          record every project
                                       --this-project        hooks in this project only
                                       --yes, -y             no questions; every project
+                                      --hooks, --plugin     install only that part
+                                      --plugin-version <v>  another published version, or latest
+                                      --from <file>         a downloaded plugin bundle
+                                                            (with --sha256 <hex> if unpublished)
                                       --debug               verbose shim logging
                                       --project-settings    (claude-code) edit
                                                             settings.json instead
-                                      --hooks, --mcp        (antigravity) hooks and/or
-                                                            the MCP proxy
+                                      --mcp                 (antigravity) project MCP entry
+                                                            instead of the plugin
 omnodex uninstall [target] [project] remove the project's hooks; when the agent records
                                       every project, leave this project out instead
                                       --everywhere          stop recording every project
+                                      --plugin              remove the agent's plugin
                                       --confirm             do not ask first
 omnodex status [project]            show which hooks record the project
                                       --all                 full installation registry

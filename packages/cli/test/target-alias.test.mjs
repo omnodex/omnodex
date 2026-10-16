@@ -47,7 +47,7 @@ async function installWith(target) {
   await fs.mkdir(project, { recursive: true });
   // An isolated home: never the developer's real ~/.omnodex.
   const env = { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex") };
-  const result = await run(["install", target, project, "--no-connect"], env);
+  const result = await run(["install", "--hooks", target, project, "--no-connect"], env);
   const hooks = await fs.readFile(path.join(project, ".agents", "hooks.json"), "utf8");
   const registry = JSON.parse(await fs.readFile(path.join(home, ".omnodex", "installations.json"), "utf8"));
   return { root, home, project, env, result, hooks, registry };
