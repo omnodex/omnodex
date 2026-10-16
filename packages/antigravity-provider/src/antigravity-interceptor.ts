@@ -38,7 +38,7 @@
  * apply to all surfaces, so this single interceptor covers all three.
  *
  * Config directory: `.agents/` (project-level).
- * Global hooks: `~/.gemini/config/hooks.json` (not managed by this interceptor).
+ * Global hooks: `~/.gemini/config/hooks.json`, written when `hooksPath` points there.
  * MCP config: `.agents/mcp_config.json` (separate file, not touched here).
  */
 
@@ -64,6 +64,17 @@ export interface AntigravityInterceptorOptions {
    * nvm/fnm/volta in PATH.
    */
   nodePath?: string;
+  /**
+   * Absolute hooks file to edit instead of `<projectPath>/.agents/hooks.json`,
+   * such as the user-level `~/.gemini/config/hooks.json` that applies to
+   * every project.
+   */
+  hooksPath?: string;
+  /**
+   * Arguments for the launcher, placed right after its path (before an
+   * event name). User-level installs pass the launcher's user-scope marker.
+   */
+  launcherArgs?: string[];
   /**
    * Target platform for hook command syntax. Defaults to process.platform.
    * Set explicitly in tests or when cross-compiling hooks for a different OS.
@@ -135,7 +146,7 @@ export class AntigravityInterceptor implements Interceptor {
   }
 
   hooksFilePath(): string {
-    return path.join(this.options.projectPath, ".agents", "hooks.json");
+    return this.options.hooksPath ?? path.join(this.options.projectPath, ".agents", "hooks.json");
   }
 
   async install(): Promise<void> {
@@ -197,7 +208,8 @@ export class AntigravityInterceptor implements Interceptor {
       `OMNODEX_HOME=${shellQuote(this.options.omnodexHome)}` +
       (this.options.debug ? " OMNODEX_DEBUG=1" : "");
     const nodeBin = this.options.nodePath ?? "node";
-    return `${envPrefix} ${shellQuote(nodeBin)} ${shellQuote(this.options.shimPath)} ${eventName}`;
+    const args = (this.options.launcherArgs ?? []).map((a) => `${shellQuote(a)} `).join("");
+    return `${envPrefix} ${shellQuote(nodeBin)} ${shellQuote(this.options.shimPath)} ${args}${eventName}`;
   }
 
   private shimCommandWindows(eventName: string): string {
@@ -206,7 +218,8 @@ export class AntigravityInterceptor implements Interceptor {
       envParts.push(`set "OMNODEX_DEBUG=1"`);
     }
     const nodeBin = this.options.nodePath ?? "node";
-    return `${envParts.join(" && ")} && ${cmdQuote(nodeBin)} ${cmdQuote(this.options.shimPath)} ${eventName}`;
+    const args = (this.options.launcherArgs ?? []).map((a) => `${cmdQuote(a)} `).join("");
+    return `${envParts.join(" && ")} && ${cmdQuote(nodeBin)} ${cmdQuote(this.options.shimPath)} ${args}${eventName}`;
   }
 
   private async readHooks(hooksPath: string): Promise<HooksFile> {

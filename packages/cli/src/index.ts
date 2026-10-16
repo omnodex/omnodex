@@ -113,6 +113,16 @@ import {
 import type { LauncherPlatform } from "./launcher-template.js";
 import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
 import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
+import {
+  USER_SCOPE_ARG,
+  addExclusion,
+  exclusionFor,
+  isEverywhere,
+  readHookScope,
+  removeExclusion,
+  setEverywhere,
+  userHooksFile,
+} from "./hook-scope.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
 import { bootstrapCloudConnection, describeBootstrap } from "./cloud-bootstrap.js";
@@ -1092,6 +1102,215 @@ function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: st
   }
 }
 
+type HookScopeChoice = "everywhere" | "this-project";
+
+const YES_FLAGS = ["--yes", "-y"];
+const hasYes = (args: readonly string[]) => args.some((a) => YES_FLAGS.includes(a));
+
+/** Ask, at a terminal, whether hooks record every project or only this one. */
+async function askHookScope(projectPath: string): Promise<HookScopeChoice> {
+  console.log(`[install] Where should Omnodex record?`);
+  console.log(`  1) Every project you open (recommended)`);
+  console.log(`  2) Only ${projectPath}`);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question("Choose 1 or 2 [1]: ")).trim();
+  rl.close();
+  return answer === "2" ? "this-project" : "everywhere";
+}
+
+/**
+ * The hook scope for a one-target install. Flags win; a target that already
+ * records every project stays that way (installing in a left-out project
+ * records it again); --yes picks the recommended every-project scope; at a
+ * terminal the user is asked. Without a terminal and without --yes, hooks go
+ * into the project, as they always have.
+ */
+async function resolveHookScope(
+  target: InstallTarget,
+  args: readonly string[],
+  projectPath: string,
+  omnodexHome: string,
+): Promise<HookScopeChoice | null> {
+  const legacy = args.includes("--legacy-shim");
+  if (args.includes("--everywhere")) {
+    if (legacy) {
+      console.error(`[install] --everywhere needs the stable launcher; it cannot be combined with --legacy-shim`);
+      process.exitCode = 1;
+      return null;
+    }
+    return "everywhere";
+  }
+  if (args.includes("--this-project") || legacy) return "this-project";
+  if (isEverywhere(await readHookScope(omnodexHome), target)) return "everywhere";
+  if (hasYes(args)) return "everywhere";
+  if (!process.stdin.isTTY) return "this-project";
+  return askHookScope(projectPath);
+}
+
+interface ProjectHooks {
+  target: InstallTarget;
+  label: string;
+  path: string;
+  uninstall: () => Promise<void>;
+}
+
+/**
+ * True when a project hooks file is the agent's user-level file, which
+ * happens in the home folder (~/.claude/settings.json, ~/.codex/hooks.json).
+ */
+const isUserLevelFile = (target: InstallTarget, file: string) =>
+  path.resolve(file) === path.resolve(userHooksFile(target));
+
+/** Omnodex hooks written into this project's own files, per agent. */
+async function findProjectHooks(projectPath: string, omnodexHome: string): Promise<ProjectHooks[]> {
+  const found = await findProjectHookFiles(projectPath, omnodexHome);
+  return found.filter((h) => !isUserLevelFile(h.target, h.path));
+}
+
+async function findProjectHookFiles(projectPath: string, omnodexHome: string): Promise<ProjectHooks[]> {
+  const found: ProjectHooks[] = [];
+  for (const settingsFile of ["settings.local.json", "settings.json"] as const) {
+    const interceptor = new ClaudeCodeInterceptor({ projectPath, shimPath: CLAUDE_HOOK_SHIM_PATH, omnodexHome, settingsFile });
+    if (await interceptor.isInstalled()) {
+      found.push({
+        target: "claude-code",
+        label: `Claude Code (${settingsFile})`,
+        path: interceptor.settingsFilePath(),
+        uninstall: () => interceptor.uninstall(),
+      });
+    }
+  }
+  const codex = new CodexInterceptor({ projectPath, shimPath: CODEX_HOOK_SHIM_PATH, omnodexHome });
+  if ((await readOrNull(codex.hooksFilePath()))?.includes("omnodex")) {
+    found.push({ target: "codex", label: "Codex", path: codex.hooksFilePath(), uninstall: () => codex.uninstall() });
+  }
+  const antigravity = new AntigravityInterceptor({ projectPath, shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome });
+  if ((await readOrNull(antigravity.hooksFilePath()))?.includes("omnodex")) {
+    found.push({
+      target: "antigravity",
+      label: "Antigravity",
+      path: antigravity.hooksFilePath(),
+      uninstall: () => antigravity.uninstall(),
+    });
+  }
+  return found;
+}
+
+/** Writes or removes a target's hooks in its user-level file. */
+function userLevelHooks(
+  target: InstallTarget,
+  opts: { omnodexHome: string; shimPath: string; debug?: boolean; homeRelativeShimPath?: string },
+): { file: string; install: () => Promise<void>; uninstall: () => Promise<void> } {
+  const file = userHooksFile(target);
+  const common = {
+    projectPath: os.homedir(),
+    shimPath: opts.shimPath,
+    omnodexHome: opts.omnodexHome,
+    debug: opts.debug,
+    nodePath: "node",
+    launcherArgs: [USER_SCOPE_ARG],
+  };
+  const interceptor =
+    target === "claude-code"
+      ? new ClaudeCodeInterceptor({ ...common, settingsPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
+      : target === "codex"
+        ? new CodexInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
+        : new AntigravityInterceptor({ ...common, hooksPath: file });
+  return { file, install: () => interceptor.install(), uninstall: () => interceptor.uninstall() };
+}
+
+const TARGET_SHIMS: Record<InstallTarget, string> = {
+  "claude-code": CLAUDE_HOOK_SHIM_PATH,
+  codex: CODEX_HOOK_SHIM_PATH,
+  antigravity: ANTIGRAVITY_HOOK_SHIM_PATH,
+};
+
+/**
+ * Record every project for a target: hooks in the agent's user-level file,
+ * pointing at the stable launcher with the user-scope marker. Project hooks
+ * already in place step aside (the launcher checks hook-scope.json), and the
+ * project this runs in is recorded again if it had been left out.
+ */
+async function installEverywhere(target: InstallTarget, projectPath: string, args: readonly string[]): Promise<void> {
+  const paths = resolvePaths();
+  const debug = args.includes("--debug");
+  const shimPath = await writeLauncher(target);
+  const portable = canUsePortableHookCommand(paths, { useLegacy: false, debug });
+  const hooks = userLevelHooks(target, {
+    omnodexHome: paths.home,
+    shimPath,
+    debug,
+    homeRelativeShimPath: portable && target !== "antigravity" ? launcherHomeRelativePath(target) : undefined,
+  });
+  await hooks.install();
+  await setEverywhere(paths.home, target, true);
+  const reincluded = await removeExclusion(paths.home, target, projectPath);
+  const label = SURFACE_LABELS[target];
+
+  console.log(`[install] ${label} now records every project. Hooks are in`);
+  console.log(`          ${hooks.file}`);
+  console.log(`[install] launcher:     ${shimPath}`);
+  await checkLauncherShim(target, paths.home, TARGET_SHIMS[target]);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  if (reincluded) {
+    console.log(`[install] ${reincluded} had been left out; ${label} records it again`);
+  }
+  if ((await findProjectHooks(projectPath, paths.home)).some((h) => h.target === target)) {
+    console.log(`[install] this project also has its own ${label} hooks; they step aside so each event is recorded once`);
+  }
+  if (target === "codex") {
+    console.log(`[install] Codex asks you to review new hooks: run /hooks in Codex and trust the Omnodex entries`);
+  }
+  console.log(`[install] to leave out one project, run \`omnodex uninstall ${target}\` in it;`);
+  console.log(`          to stop recording every project, run \`omnodex uninstall ${target} --everywhere\``);
+
+  await addInstallation({
+    target,
+    component: "hooks",
+    scope: "user",
+    settingsFile: hooks.file,
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: true,
+    launcherPath: shimPath,
+  });
+}
+
+/** For a project-only install: say how it relates to every-project recording. */
+async function noteProjectScope(target: InstallTarget, projectPath: string, omnodexHome: string): Promise<void> {
+  const reincluded = await removeExclusion(omnodexHome, target, projectPath);
+  if (reincluded) console.log(`[install] ${reincluded} had been left out; it is recorded again`);
+  if (isEverywhere(await readHookScope(omnodexHome), target)) {
+    console.log(`[install] ${SURFACE_LABELS[target]} already records every project, so these project hooks step aside`);
+  }
+}
+
+/** Matches a hook command that runs an Omnodex launcher or shim. */
+const OMNODEX_HOOK = /-hook-(?:launcher|shim)\.js/;
+
+/** Same JSON content, whatever the key order (agents rewrite their own files). */
+function sameContent(a: string, b: string | null): boolean {
+  if (a === b) return true;
+  if (b === null) return false;
+  const canonical = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canonical)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]))
+        : v;
+  try {
+    return JSON.stringify(canonical(JSON.parse(a))) === JSON.stringify(canonical(JSON.parse(b)));
+  } catch {
+    return false;
+  }
+}
+
+/** What an install did to a hooks file, for the summary. */
+function installOutcome(before: string | null, after: string | null): string {
+  if (before === null || !OMNODEX_HOOK.test(before)) return "installed";
+  return sameContent(before, after) ? "already set up, nothing changed" : "updated";
+}
+
 const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   "claude-code": (args) => installClaudeCode(args),
   codex: (args) => installCodex(args),
@@ -1106,7 +1325,7 @@ const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
 async function installAllSurfaces(args: string[]): Promise<void> {
   const positional = args.find((a) => !a.startsWith("-"));
   const projectPath = path.resolve(positional ?? process.cwd());
-  const flags = args.filter((a) => a.startsWith("-") && a !== "--yes" && a !== "-y");
+  const flags = args.filter((a) => a.startsWith("-") && !YES_FLAGS.includes(a) && a !== "--everywhere" && a !== "--this-project");
   const paths = resolvePaths();
 
   const detected = detectSurfaces({ home: os.homedir(), platform: process.platform, env: process.env });
@@ -1125,9 +1344,20 @@ async function installAllSurfaces(args: string[]): Promise<void> {
     return;
   }
 
-  const plan = detected.map((d) => ({ ...d, file: surfaceHooksFile(d.surface, projectPath, paths.home, flags) }));
+  // One scope for every surface. --yes, and the plan shown without a
+  // terminal, use the recommended every-project scope.
+  const scope: HookScopeChoice = args.includes("--this-project") || args.includes("--legacy-shim")
+    ? "this-project"
+    : args.includes("--everywhere") || hasYes(args) || !process.stdin.isTTY
+      ? "everywhere"
+      : await askHookScope(projectPath);
+  const plan = detected.map((d) => ({
+    ...d,
+    file: scope === "everywhere" ? userHooksFile(d.surface) : surfaceHooksFile(d.surface, projectPath, paths.home, flags),
+  }));
   const width = Math.max(...plan.map((p) => SURFACE_LABELS[p.surface].length));
-  console.log(`[install] Omnodex will set up ${plan.length === 1 ? "this agent surface" : "these agent surfaces"} for ${projectPath}:`);
+  const where = scope === "everywhere" ? "every project" : projectPath;
+  console.log(`[install] Omnodex will set up ${plan.length === 1 ? "this agent surface" : "these agent surfaces"} to record ${where}:`);
   console.log("");
   for (const p of plan) {
     console.log(`  ${SURFACE_LABELS[p.surface].padEnd(width)}  (found: ${p.evidence})`);
@@ -1137,7 +1367,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   printNote();
   console.log("");
 
-  if (!args.includes("--yes") && !args.includes("-y")) {
+  if (!hasYes(args)) {
     if (!process.stdin.isTTY) {
       console.error(`[install] not running in a terminal, so nothing was installed. Re-run with --yes to install.`);
       process.exitCode = 1;
@@ -1153,7 +1383,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   }
 
   // Each surface skips the sign-in; it runs once below for the whole install.
-  const surfaceArgs = [projectPath, ...flags.filter((f) => f !== "--no-connect"), "--no-connect"];
+  const surfaceArgs = [projectPath, ...flags.filter((f) => f !== "--no-connect"), "--no-connect", `--${scope}`];
   const outcomes: { surface: Surface; result: string; failed: boolean }[] = [];
   const priorExitCode = process.exitCode;
   for (const p of plan) {
@@ -1170,13 +1400,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
       console.error(`[install] ${SURFACE_LABELS[p.surface]} failed: ${error}`);
     }
     const after = await readOrNull(p.file);
-    const result = error
-      ? `failed: ${error}`
-      : before === null
-        ? "installed"
-        : before === after
-          ? "already set up, nothing changed"
-          : "updated";
+    const result = error ? `failed: ${error}` : installOutcome(before, after);
     outcomes.push({ surface: p.surface, result, failed: error !== null });
   }
   const anyFailed = outcomes.some((o) => o.failed);
@@ -1206,6 +1430,14 @@ async function installClaudeCode(args: string[]): Promise<void> {
 
   const targetFile = useProjectSettings ? "settings.json" : "settings.local.json";
   const alternateFile = useProjectSettings ? "settings.local.json" : "settings.json";
+
+  const scope = await resolveHookScope("claude-code", args, projectPath, paths.home);
+  if (scope === null) return;
+  if (scope === "everywhere") {
+    await installEverywhere("claude-code", projectPath, args);
+    await connectAfterInstall(paths.home, { args, platform: platformFromTarget("claude-code"), projectLabel: path.basename(projectPath) });
+    return;
+  }
 
   // Write (or refresh) the stable launcher and use it as the shim path.
   // The launcher resolves the actual shim at runtime, so hook commands
@@ -1263,6 +1495,7 @@ async function installClaudeCode(args: string[]): Promise<void> {
   }
   if (!useLegacy) await checkLauncherShim("claude-code", paths.home, CLAUDE_HOOK_SHIM_PATH);
   logHookCommandForm("claude-code", portable, useLegacy);
+  await noteProjectScope("claude-code", projectPath, paths.home);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(
     `[install] run \`omnodex uninstall claude-code ${projectPath}\` to remove`,
@@ -1295,6 +1528,14 @@ async function installCodex(args: string[]): Promise<void> {
   const debug = args.includes("--debug");
   const useLegacy = args.includes("--legacy-shim");
 
+  const scope = await resolveHookScope("codex", args, projectPath, paths.home);
+  if (scope === null) return;
+  if (scope === "everywhere") {
+    await installEverywhere("codex", projectPath, args);
+    await connectAfterInstall(paths.home, { args, platform: platformFromTarget("codex"), projectLabel: path.basename(projectPath) });
+    return;
+  }
+
   const shimPath = useLegacy
     ? CODEX_HOOK_SHIM_PATH
     : await writeLauncher("codex");
@@ -1322,6 +1563,7 @@ async function installCodex(args: string[]): Promise<void> {
   }
   if (!useLegacy) await checkLauncherShim("codex", paths.home, CODEX_HOOK_SHIM_PATH);
   logHookCommandForm("codex", portable, useLegacy);
+  await noteProjectScope("codex", projectPath, paths.home);
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(`[install] hooks are enabled by default; this project will ask you to trust new hook commands`);
   console.log(`[install] next: register the Omnodex MCP server in Codex for proxied MCP visibility`);
@@ -1362,6 +1604,20 @@ async function installAntigravity(args: string[]): Promise<void> {
   const doHooks = wantHooks || !wantMcp;
   const doMcp = wantMcp;
 
+  if (doHooks) {
+    const scope = await resolveHookScope("antigravity", args, projectPath, paths.home);
+    if (scope === null) return;
+    if (scope === "everywhere") {
+      await installEverywhere("antigravity", projectPath, args);
+      if (doMcp) {
+        // The MCP config is per project whatever the hook scope.
+        await installAntigravity([projectPath, "--mcp", "--no-connect", ...args.filter((a) => a === "--legacy-shim")]);
+      }
+      await connectAfterInstall(paths.home, { args, platform: platformFromTarget("antigravity"), projectLabel: path.basename(projectPath) });
+      return;
+    }
+  }
+
   const shimPath = useLegacy
     ? ANTIGRAVITY_HOOK_SHIM_PATH
     : await writeLauncher("antigravity");
@@ -1390,6 +1646,7 @@ async function installAntigravity(args: string[]): Promise<void> {
     console.log(`[install] OMNODEX_HOME: ${paths.home}`);
     if (!useLegacy) await checkLauncherShim("antigravity", paths.home, ANTIGRAVITY_HOOK_SHIM_PATH);
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
+    await noteProjectScope("antigravity", projectPath, paths.home);
   }
 
   const mcpWritten = doMcp ? await installAntigravityMcp(projectPath, paths.home, nodePath) : false;
@@ -1512,98 +1769,79 @@ async function cmdUninstall(args: string[]): Promise<void> {
   );
   const paths = resolvePaths();
   const confirmed = args.includes("--confirm");
+  const everywhereFlag = args.includes("--everywhere");
 
-  // Determine which targets to uninstall
   const targetName = args.find((a) => isTargetName(a));
   const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
+  const targets: readonly InstallTarget[] = targetArg ? [targetArg] : VALID_TARGETS;
+  const scope = await readHookScope(paths.home);
 
-  interface InstalledHook {
-    target: InstallTarget;
-    label: string;
-    path: string;
-    uninstall: () => Promise<void>;
+  interface Action {
+    lines: string[];
+    run: () => Promise<string>;
   }
+  const actions: Action[] = [];
 
-  const installed: InstalledHook[] = [];
-
-  // Check Claude Code
-  for (const settingsFile of ["settings.local.json", "settings.json"] as const) {
-    const interceptor = new ClaudeCodeInterceptor({
-      projectPath,
-      shimPath: CLAUDE_HOOK_SHIM_PATH,
-      omnodexHome: paths.home,
-      settingsFile,
-    });
-    if (await interceptor.isInstalled()) {
-      installed.push({
-        target: "claude-code",
-        label: `Claude Code (${settingsFile})`,
-        path: interceptor.settingsFilePath(),
-        uninstall: () => interceptor.uninstall(),
+  if (everywhereFlag) {
+    // Stop recording every project: remove the user-level hooks.
+    for (const target of targets) {
+      const hooks = userLevelHooks(target, { omnodexHome: paths.home, shimPath: launcherPath(target) });
+      const present = (await readOrNull(hooks.file))?.includes("omnodex") ?? false;
+      if (!isEverywhere(scope, target) && !present) continue;
+      actions.push({
+        lines: [`${SURFACE_LABELS[target]}: stop recording every project`, `  ${hooks.file}`],
+        run: async () => {
+          await hooks.uninstall();
+          await setEverywhere(paths.home, target, false);
+          await removeInstallation(target, undefined, "hooks");
+          return `removed ${SURFACE_LABELS[target]} every-project hooks from ${hooks.file}`;
+        },
       });
     }
-  }
-
-  // Check Codex
-  const codexInterceptor = new CodexInterceptor({
-    projectPath,
-    shimPath: CODEX_HOOK_SHIM_PATH,
-    omnodexHome: paths.home,
-  });
-  try {
-    const codexHooksPath = codexInterceptor.hooksFilePath();
-    await fs.access(codexHooksPath);
-    const content = await fs.readFile(codexHooksPath, "utf8");
-    if (content.includes("omnodex")) {
-      installed.push({
-        target: "codex",
-        label: "Codex",
-        path: codexHooksPath,
-        uninstall: () => codexInterceptor.uninstall(),
+    if (actions.length === 0) {
+      console.log(`[uninstall] ${targetArg ? SURFACE_LABELS[targetArg] : "no agent"} records every project; nothing to remove`);
+      return;
+    }
+  } else {
+    for (const hook of (await findProjectHooks(projectPath, paths.home)).filter((h) => targets.includes(h.target))) {
+      actions.push({
+        lines: [`${hook.label}: remove this project's hooks`, `  ${hook.path}`],
+        run: async () => {
+          await hook.uninstall();
+          await removeInstallation(hook.target as LauncherPlatform, projectPath, "hooks");
+          return `removed ${hook.label} hooks from ${hook.path}`;
+        },
       });
     }
-  } catch { /* not installed */ }
-
-  // Check Antigravity
-  const antigravityInterceptor = new AntigravityInterceptor({
-    projectPath,
-    shimPath: ANTIGRAVITY_HOOK_SHIM_PATH,
-    omnodexHome: paths.home,
-  });
-  try {
-    const agHooksPath = antigravityInterceptor.hooksFilePath();
-    await fs.access(agHooksPath);
-    const content = await fs.readFile(agHooksPath, "utf8");
-    if (content.includes("omnodex")) {
-      installed.push({
-        target: "antigravity",
-        label: "Antigravity",
-        path: agHooksPath,
-        uninstall: () => antigravityInterceptor.uninstall(),
+    // With every-project recording on, leave this project out.
+    for (const target of targets) {
+      if (!isEverywhere(scope, target) || exclusionFor(scope, target, projectPath)) continue;
+      actions.push({
+        lines: [`${SURFACE_LABELS[target]}: stop recording this project (other projects are still recorded)`],
+        run: async () => {
+          await addExclusion(paths.home, target, projectPath);
+          return `${SURFACE_LABELS[target]} no longer records ${projectPath}; run \`omnodex install ${target}\` here to record it again`;
+        },
       });
     }
-  } catch { /* not installed */ }
-
-  // Filter to target if specified
-  const toRemove = targetArg
-    ? installed.filter((h) => h.target === targetArg)
-    : installed;
-
-  if (toRemove.length === 0) {
-    if (targetArg) {
-      console.log(`[uninstall] no ${targetArg} hooks found in ${projectPath}`);
-    } else {
-      console.log(`[uninstall] no Omnodex hooks found in ${projectPath}`);
+    if (actions.length === 0) {
+      const leftOut = targets.filter((t) => isEverywhere(scope, t));
+      if (leftOut.length > 0) {
+        console.log(`[uninstall] ${projectPath} is already left out for ${leftOut.map((t) => SURFACE_LABELS[t]).join(", ")}`);
+      } else if (targetArg) {
+        console.log(`[uninstall] no ${targetArg} hooks found in ${projectPath}`);
+      } else {
+        console.log(`[uninstall] no Omnodex hooks found in ${projectPath}`);
+      }
+      return;
     }
-    return;
   }
 
-  // Show what will be removed and require confirmation
-  console.log(`[uninstall] the following Omnodex hooks will be removed:\n`);
-  for (const hook of toRemove) {
-    console.log(`  ${hook.label}`);
-    console.log(`    ${hook.path}\n`);
+  console.log(`[uninstall] this will:\n`);
+  for (const action of actions) {
+    for (const line of action.lines) console.log(`  ${line}`);
   }
+  console.log("");
 
   if (!confirmed) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -1615,11 +1853,7 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
-  for (const hook of toRemove) {
-    await hook.uninstall();
-    await removeInstallation(hook.target as LauncherPlatform, projectPath, "hooks");
-    console.log(`[uninstall] removed ${hook.label} hooks from ${hook.path}`);
-  }
+  for (const action of actions) console.log(`[uninstall] ${await action.run()}`);
 }
 
 async function cmdStatus(_args: string[]): Promise<void> {
@@ -1671,6 +1905,14 @@ async function cmdStatus(_args: string[]): Promise<void> {
       }
     }
 
+    const scope = await readHookScope(paths.home);
+    if (scope.everywhere.length > 0) {
+      console.log(`\n  Recording every project: ${scope.everywhere.map((t) => SURFACE_LABELS[t]).join(", ")}`);
+      for (const [root, targets] of Object.entries(scope.excluded)) {
+        console.log(`    left out: ${root} (${targets.map((t) => SURFACE_LABELS[t]).join(", ")})`);
+      }
+    }
+
     // Warn about stale (legacy) installations
     const stale = await findStaleInstallations();
     if (stale.length > 0) {
@@ -1682,6 +1924,21 @@ async function cmdStatus(_args: string[]): Promise<void> {
 
   let anyInstalled = false;
 
+  // Every-project recording, and whether this project is left out.
+  const scope = await readHookScope(paths.home);
+  for (const target of scope.everywhere) {
+    const root = exclusionFor(scope, target, projectPath);
+    console.log(`  ${SURFACE_LABELS[target]}: records every project${root ? ", but this project is left out" : ""}`);
+    console.log(`    ${userHooksFile(target)}`);
+    if (root) {
+      console.log(`    left out: ${root}; run \`omnodex install ${target}\` here to record it again`);
+    }
+    anyInstalled = true;
+  }
+  const stepsAside = (target: InstallTarget) => {
+    if (isEverywhere(scope, target)) console.log(`    steps aside: the every-project hooks record this project`);
+  };
+
   // Check Claude Code
   for (const settingsFile of ["settings.local.json", "settings.json"] as const) {
     const interceptor = new ClaudeCodeInterceptor({
@@ -1690,9 +1947,11 @@ async function cmdStatus(_args: string[]): Promise<void> {
       omnodexHome: paths.home,
       settingsFile,
     });
+    if (isUserLevelFile("claude-code", interceptor.settingsFilePath())) continue;
     if (await interceptor.isInstalled()) {
       console.log(`  Claude Code (${settingsFile}): installed`);
       console.log(`    ${interceptor.settingsFilePath()}`);
+      stepsAside("claude-code");
       // Hooks an older version installed lack the events added since;
       // install is idempotent and adds them.
       const missing = await interceptor.missingEvents();
@@ -1712,11 +1971,13 @@ async function cmdStatus(_args: string[]): Promise<void> {
   });
   try {
     const codexHooksPath = codexInterceptor.hooksFilePath();
+    if (isUserLevelFile("codex", codexHooksPath)) throw new Error("user-level file");
     await fs.access(codexHooksPath);
     const fileContent = await fs.readFile(codexHooksPath, "utf8");
     if (fileContent.includes("omnodex")) {
       console.log(`  Codex: installed`);
       console.log(`    ${codexHooksPath}`);
+      stepsAside("codex");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -1734,6 +1995,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     if (fileContent.includes("omnodex")) {
       console.log(`  Antigravity: installed`);
       console.log(`    ${agHooksPath}`);
+      stepsAside("antigravity");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -2500,9 +2762,18 @@ commands:
                      this machine, shows what it will write, asks once,
                      and installs them all.
                      Defaults to cwd if project is omitted.
+                     Asks whether to record every project (recommended)
+                     or only this one; an agent that already records every
+                     project keeps doing so, and a left-out project is
+                     recorded again.
                      Flags:
+                       --everywhere          record every project (hooks in
+                                             the agent's user-level file)
+                       --this-project        hooks in this project only
+                                             (the default without a terminal)
                        --yes, -y             install without asking (needed
-                                             when not in a terminal)
+                                             when not in a terminal); picks
+                                             --everywhere unless told otherwise
                        --debug               verbose shim logging
                        --no-connect          skip the dashboard sign-in
                                              (also skipped without a terminal)
@@ -2517,9 +2788,15 @@ commands:
                                              Combine: --hooks --mcp for both.
                                              Default (no flags): hooks only.
   uninstall [target] [project]
-                     remove Omnodex hooks. If target is omitted, removes
-                     all hooks found in the project. Requires --confirm.
-  status [project]   show which Omnodex hooks are installed in a project.
+                     remove Omnodex hooks from the project. If the agent
+                     records every project, leaves this project out
+                     instead (\`omnodex install\` here records it again).
+                     If target is omitted, applies to every agent.
+                     Asks first; --confirm skips the question.
+                     Flags:
+                       --everywhere          stop recording every project
+  status [project]   show which Omnodex hooks record a project, including
+                     every-project hooks and left-out projects.
                      Flags:
                        --all                 show all registered installations
   license            show current license tier and features, using the

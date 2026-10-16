@@ -75,6 +75,17 @@ export interface ClaudeCodeInterceptorOptions {
    * only use it when the shim's default OMNODEX_HOME is the right one.
    */
   homeRelativeShimPath?: string;
+  /**
+   * Absolute settings file to edit instead of
+   * `<projectPath>/.claude/<settingsFile>`, such as the user-level
+   * `~/.claude/settings.json` that applies to every project.
+   */
+  settingsPath?: string;
+  /**
+   * Arguments for the launcher, placed right after its path (before an
+   * event name). User-level installs pass the launcher's user-scope marker.
+   */
+  launcherArgs?: string[];
 }
 
 /**
@@ -155,7 +166,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
 
   /** Absolute path to the settings file we edit. */
   settingsFilePath(): string {
-    return path.join(this.options.projectPath, ".claude", this.options.settingsFile);
+    return this.options.settingsPath ?? path.join(this.options.projectPath, ".claude", this.options.settingsFile);
   }
 
   /** Write our hook handlers into the project's settings file. */
@@ -267,8 +278,9 @@ export class ClaudeCodeInterceptor implements Interceptor {
   }
 
   private shimCommand(): string {
+    const extra = (this.options.launcherArgs ?? []).map((a) => ` ${shellQuote(a)}`).join("");
     if (this.options.homeRelativeShimPath !== undefined) {
-      return portableCommand(this.options.homeRelativeShimPath);
+      return portableCommand(this.options.homeRelativeShimPath) + extra;
     }
     // We pass OMNODEX_HOME and OMNODEX_DEBUG via `env` so the shim has
     // everything it needs without touching Claude Code's own env file
@@ -278,7 +290,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
       `OMNODEX_HOME=${shellQuote(this.options.omnodexHome)}` +
       (this.options.debug ? ` OMNODEX_DEBUG=1` : "");
     const nodeBin = this.options.nodePath ?? "node";
-    return `${envPrefix} ${shellQuote(nodeBin)} ${shellQuote(this.options.shimPath)}`;
+    return `${envPrefix} ${shellQuote(nodeBin)} ${shellQuote(this.options.shimPath)}${extra}`;
   }
 
   private async readSettings(settingsPath: string): Promise<SettingsFile> {
