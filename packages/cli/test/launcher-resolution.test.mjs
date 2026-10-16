@@ -17,7 +17,7 @@
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { promises as fs, readFileSync, realpathSync } from "node:fs";
+import { promises as fs, existsSync, readFileSync, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -155,7 +155,17 @@ test("launcher: forwards its arguments to the shim", async () => {
   }
 });
 
-test("launcher: resolve-only mode exits 1 when no shim can be found", async () => {
+// The launcher also looks next to the Node binary running it (nvm, fnm,
+// volta and npm global layouts), so on a machine where omnodex is installed
+// globally for this Node there is always a shim to find.
+const globalOmnodexBesideNode = [
+  path.join(path.dirname(NODE_DIR), "lib", "node_modules", "omnodex"),
+  path.join(NODE_DIR, "node_modules", "omnodex"),
+].some((dir) => existsSync(dir));
+
+test("launcher: resolve-only mode exits 1 when no shim can be found", {
+  skip: globalOmnodexBesideNode && "omnodex is installed globally for the Node running the tests",
+}, async () => {
   const tmp = await makeTemp();
   try {
     const home = path.join(tmp, "home");
