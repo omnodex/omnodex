@@ -39,5 +39,5 @@ export const RULE_CREDENTIAL_EXFIL: RuleDefinition = {
   severity: "CRITICAL",
   category: "credential_exfiltration",
   description_template:
-    "Credential(s) transmitted to external endpoint via {{tool_name}}: {{credential_types}}.",
+    "Credential(s) transmitted to {{matched_destination}} via {{tool_name}}: {{credential_types}}.",
 };

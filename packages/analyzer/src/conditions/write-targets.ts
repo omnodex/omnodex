@@ -52,7 +52,8 @@ function shellSkeleton(command: string): string {
     .replace(/"((?:[^"\\]|\\.)*)"/g, blank);
 }
 
-function commandTargets(command: string): string[] {
+/** The files a shell command writes to: redirections, tee, and cp/mv destinations. */
+export function commandTargets(command: string): string[] {
   const out: string[] = [];
   command = shellSkeleton(command);
 
