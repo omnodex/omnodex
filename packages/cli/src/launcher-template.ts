@@ -28,12 +28,22 @@
  * passes the hook event name this way). Setting OMNODEX_LAUNCHER_RESOLVE_ONLY=1
  * prints the resolved shim path and exits without running it, which is how
  * `omnodex status` checks that hooks can find their shim.
+ *
+ * Hook scope (hook-scope.ts): hooks written to an agent's user-level file pass
+ * --user-scope as the first argument, which the launcher removes. When
+ * <OMNODEX_HOME>/hook-scope.json says a platform records every project, a
+ * launcher run from project hooks exits without recording, so the project is
+ * not recorded twice. A project listed as excluded for the platform is not
+ * recorded at all. The project is the payload's `cwd` (Claude Code, Codex) or
+ * first `workspacePaths` entry (Antigravity), read from stdin and passed on to
+ * the shim unchanged; stdin is read only when an exclusion could apply.
  */
 
 import { promises as fs } from "node:fs";
 import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
+import { HOOK_SCOPE_FILE, USER_SCOPE_ARG } from "./hook-scope.js";
 
 export type LauncherPlatform = "claude-code" | "codex" | "antigravity";
 
@@ -106,7 +116,7 @@ export function generateLauncherSource(platform: LauncherPlatform): string {
     '"use strict";',
     'const { spawnSync } = require("node:child_process");',
     'const { existsSync, readFileSync, realpathSync, mkdirSync, appendFileSync } = require("node:fs");',
-    'const { join, dirname } = require("node:path");',
+    'const { join, dirname, resolve, sep } = require("node:path");',
     'const os = require("node:os");',
     '',
     'const PLATFORM = ' + JSON.stringify(platform) + ';',
@@ -118,6 +128,11 @@ export function generateLauncherSource(platform: LauncherPlatform): string {
     'const OMNODEX_DIR = process.env.OMNODEX_HOME || join(HOME, ".omnodex");',
     'const DEBUG = process.env.OMNODEX_DEBUG === "1";',
     'const LOG_PATH = join(OMNODEX_DIR, "launcher.log");',
+    '',
+    '// A leading --user-scope marks hooks in the agent user-level file.',
+    'var args = process.argv.slice(2);',
+    'var USER_SCOPE = args[0] === ' + JSON.stringify(USER_SCOPE_ARG) + ';',
+    'if (USER_SCOPE) args = args.slice(1);',
     '',
     'function log(msg) {',
     '  if (!DEBUG) return;',
@@ -259,14 +274,75 @@ export function generateLauncherSource(platform: LauncherPlatform): string {
     '}',
     '',
     'log("launcher started");',
-    'var shimPath = findShim();',
     '',
     '// Resolve-only mode: report the shim path without running it',
     'if (process.env.OMNODEX_LAUNCHER_RESOLVE_ONLY === "1") {',
-    '  if (shimPath) process.stdout.write(shimPath + "\\n");',
-    '  process.exit(shimPath ? 0 : 1);',
+    '  var resolvedShim = findShim();',
+    '  if (resolvedShim) process.stdout.write(resolvedShim + "\\n");',
+    '  process.exit(resolvedShim ? 0 : 1);',
     '}',
     '',
+    'function readScope() {',
+    '  try {',
+    '    return JSON.parse(readFileSync(join(OMNODEX_DIR, ' + JSON.stringify(HOOK_SCOPE_FILE) + '), "utf8"));',
+    '  } catch (e) {',
+    '    return null;',
+    '  }',
+    '}',
+    '',
+    'function canonical(p) {',
+    '  var r = resolve(p);',
+    '  try { r = realpathSync(r); } catch (e) {}',
+    '  return process.platform === "win32" ? r.toLowerCase() : r;',
+    '}',
+    '',
+    'function readStdin() {',
+    '  if (process.stdin.isTTY) return null;',
+    '  try {',
+    '    return readFileSync(process.platform === "win32" ? 0 : "/dev/stdin");',
+    '  } catch (e) {',
+    '    log("could not read stdin: " + e.message);',
+    '    return null;',
+    '  }',
+    '}',
+    '',
+    'function projectFromPayload(buf) {',
+    '  try {',
+    '    var payload = JSON.parse(buf.toString("utf8"));',
+    '    if (payload && typeof payload.cwd === "string" && payload.cwd) return payload.cwd;',
+    '    if (payload && Array.isArray(payload.workspacePaths) && typeof payload.workspacePaths[0] === "string") return payload.workspacePaths[0];',
+    '  } catch (e) {}',
+    '  return null;',
+    '}',
+    '',
+    '// Stdin read here (to find the project) is passed to the shim as input.',
+    'var stdinInput = null;',
+    'var scope = readScope();',
+    'if (scope) {',
+    '  var everywhere = Array.isArray(scope.everywhere) && scope.everywhere.indexOf(PLATFORM) !== -1;',
+    '  if (!USER_SCOPE && everywhere) {',
+    '    log("project hooks step aside: user-level hooks record every project");',
+    '    process.exit(0);',
+    '  }',
+    '  var roots = [];',
+    '  var excluded = scope.excluded || {};',
+    '  for (var root in excluded) {',
+    '    if (Array.isArray(excluded[root]) && excluded[root].indexOf(PLATFORM) !== -1) roots.push(root);',
+    '  }',
+    '  if (roots.length > 0) {',
+    '    stdinInput = readStdin();',
+    '    var project = canonical((stdinInput && projectFromPayload(stdinInput)) || process.env.CLAUDE_PROJECT_DIR || process.cwd());',
+    '    for (var ri = 0; ri < roots.length; ri++) {',
+    '      var r = roots[ri];',
+    '      if (project === r || project.indexOf(r.charAt(r.length - 1) === sep ? r : r + sep) === 0) {',
+    '        log("not recording excluded project: " + project);',
+    '        process.exit(0);',
+    '      }',
+    '    }',
+    '  }',
+    '}',
+    '',
+    'var shimPath = findShim();',
     'if (!shimPath) {',
     '  logFatal("Could not locate " + PLATFORM + " hook shim. Run: omnodex status");',
     '  // Exit 0 so the AI agent is never blocked by a missing Omnodex install',
@@ -274,8 +350,9 @@ export function generateLauncherSource(platform: LauncherPlatform): string {
     '}',
     '',
     'log("spawning shim: " + shimPath);',
-    'var result = spawnSync(process.execPath, [shimPath].concat(process.argv.slice(2)), {',
-    '  stdio: "inherit",',
+    'var result = spawnSync(process.execPath, [shimPath].concat(args), {',
+    '  stdio: stdinInput ? ["pipe", "inherit", "inherit"] : "inherit",',
+    '  input: stdinInput || undefined,',
     '  env: process.env,',
     '});',
     '',

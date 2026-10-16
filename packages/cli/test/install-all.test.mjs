@@ -159,6 +159,8 @@ async function machine(t) {
     HOME: home,
     USERPROFILE: home,
     OMNODEX_HOME: path.join(home, ".omnodex"),
+    CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
+    CODEX_HOME: path.join(home, ".codex"),
     PATH: emptyBin,
     OMNODEX_APPLICATIONS_DIR: path.join(root, "Applications"),
     WSL_DISTRO_NAME: "",
@@ -178,14 +180,17 @@ test("without a terminal and without --yes, it shows the plan and installs nothi
   assert.ok(!existsSync(path.join(m.project, ".codex", "hooks.json")));
 });
 
-test("with --yes it installs every detected surface, and a rerun changes nothing", async (t) => {
+test("with --yes it records every project on every detected surface, and a rerun changes nothing", async (t) => {
   const m = await machine(t);
   const first = await run(["install", m.project, "--yes"], m.env);
   assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /to record every project:/);
   assert.match(first.out, /Claude Code\s+installed/);
   assert.match(first.out, /Codex\s+installed/);
-  assert.ok(existsSync(path.join(m.project, ".claude", "settings.local.json")));
-  assert.ok(existsSync(path.join(m.project, ".codex", "hooks.json")));
+  assert.ok(existsSync(path.join(m.home, ".claude", "settings.json")));
+  assert.ok(existsSync(path.join(m.home, ".codex", "hooks.json")));
+  assert.ok(!existsSync(path.join(m.project, ".claude", "settings.local.json")));
+  assert.ok(!existsSync(path.join(m.project, ".codex", "hooks.json")));
   // One sign-in notice for the whole install, not one per surface.
   assert.equal(first.out.match(/skipped the dashboard sign-in/g)?.length ?? 0, 1, first.out);
 
@@ -198,9 +203,9 @@ test("with --yes it installs every detected surface, and a rerun changes nothing
   assert.match(again.out, /nothing to change; Omnodex is already set up here/);
 });
 
-test("defaults to the current directory when no project is given", async (t) => {
+test("--this-project writes project hooks, in the current directory when no project is given", async (t) => {
   const m = await machine(t);
-  const child = spawn(process.execPath, [CLI, "install", "-y"], { env: m.env, cwd: m.project, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI, "install", "-y", "--this-project"], { env: m.env, cwd: m.project, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();
   let out = "";
   child.stdout.on("data", (d) => (out += d));
@@ -213,12 +218,12 @@ test("defaults to the current directory when no project is given", async (t) => 
 test("one surface failing does not stop the others", async (t) => {
   const m = await machine(t);
   // A directory where Claude Code's settings file should be makes its install fail.
-  await fs.mkdir(path.join(m.project, ".claude", "settings.local.json"), { recursive: true });
+  await fs.mkdir(path.join(m.home, ".claude", "settings.json"), { recursive: true });
   const result = await run(["install", m.project, "--yes"], m.env);
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /Claude Code\s+failed:/);
   assert.match(result.out, /Codex\s+installed/);
-  assert.ok(existsSync(path.join(m.project, ".codex", "hooks.json")));
+  assert.ok(existsSync(path.join(m.home, ".codex", "hooks.json")));
 });
 
 test("with no supported surface on the host it says so and exits non-zero", async (t) => {

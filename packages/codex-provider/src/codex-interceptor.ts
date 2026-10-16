@@ -65,6 +65,16 @@ export interface CodexInterceptorOptions {
    */
   homeRelativeShimPath?: string;
   /**
+   * Absolute hooks file to edit instead of `<projectPath>/.codex/hooks.json`,
+   * such as the user-level `~/.codex/hooks.json` that applies to every project.
+   */
+  hooksPath?: string;
+  /**
+   * Arguments for the launcher, placed right after its path (before an
+   * event name). User-level installs pass the launcher's user-scope marker.
+   */
+  launcherArgs?: string[];
+  /**
    * Target platform for hook command syntax. Defaults to process.platform.
    * Set explicitly in tests or when cross-compiling hooks for a different OS.
    */
@@ -141,7 +151,7 @@ export class CodexInterceptor implements Interceptor {
   }
 
   hooksFilePath(): string {
-    return path.join(this.options.projectPath, ".codex", "hooks.json");
+    return this.options.hooksPath ?? path.join(this.options.projectPath, ".codex", "hooks.json");
   }
 
   async install(): Promise<void> {
@@ -213,13 +223,14 @@ export class CodexInterceptor implements Interceptor {
   }
 
   private shimCommand(): string {
+    const args = this.options.launcherArgs ?? [];
     if (this.options.homeRelativeShimPath !== undefined) {
-      return portableCommand(this.options.homeRelativeShimPath);
+      return portableCommand(this.options.homeRelativeShimPath) + args.map((a) => ` ${shellQuote(a)}`).join("");
     }
     if (this.options.platform === "win32") {
-      return this.shimCommandWindows();
+      return this.shimCommandWindows() + args.map((a) => ` ${cmdQuote(a)}`).join("");
     }
-    return this.shimCommandPosix();
+    return this.shimCommandPosix() + args.map((a) => ` ${shellQuote(a)}`).join("");
   }
 
   private shimCommandPosix(): string {

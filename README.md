@@ -48,6 +48,15 @@ Full setup guides: [docs.omnodex.com](https://docs.omnodex.com/getting-started/i
 | Google Antigravity (CLI, Desktop, IDE) | Hooks, optionally the MCP proxy | `omnodex install antigravity [--mcp]` in the project |
 | Any other MCP client | MCP proxy | Point the client at the proxy |
 
+### Every project or one project
+
+`omnodex install` asks whether to record every project you open (recommended) or only the current one. Every project puts the hooks in the agent's user-level file (`~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.gemini/config/hooks.json`); one project puts them in the project, as described below. `--everywhere` and `--this-project` answer the question up front; `--yes` picks every project; without a terminal and without a flag, hooks go into the project.
+
+- **Leave one project out:** `omnodex uninstall <target>` in that project. Other projects are still recorded. `omnodex install <target>` there records it again.
+- **Stop recording every project:** `omnodex uninstall <target> --everywhere`.
+- **No double counting:** a project that also has its own Omnodex hooks is recorded once; its project hooks step aside while every-project recording is on.
+- `omnodex status` shows which applies to the current project.
+
 ### Claude Code
 
 ```bash
@@ -154,15 +163,22 @@ All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `da
 ## CLI reference
 
 ```
-omnodex install <target> [project]  install hooks for an AI agent platform
-                                      targets: claude-code, codex, antigravity
+omnodex install [target] [project]  install hooks for an AI agent platform
+                                      targets: claude-code, codex, antigravity (or agy);
+                                      without one, every agent found on this machine
+                                      --everywhere          record every project
+                                      --this-project        hooks in this project only
+                                      --yes, -y             no questions; every project
                                       --debug               verbose shim logging
                                       --project-settings    (claude-code) edit
                                                             settings.json instead
                                       --hooks, --mcp        (antigravity) hooks and/or
                                                             the MCP proxy
-omnodex uninstall [target] [project] remove Omnodex hooks (requires --confirm)
-omnodex status [project]            show which hooks are installed
+omnodex uninstall [target] [project] remove the project's hooks; when the agent records
+                                      every project, leave this project out instead
+                                      --everywhere          stop recording every project
+                                      --confirm             do not ask first
+omnodex status [project]            show which hooks record the project
                                       --all                 full installation registry
                                                             with stale install warnings
 omnodex update                      self-update (npm: npm update -g; source: git pull
