@@ -10,7 +10,7 @@ import { promises as fs, existsSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { detectSurfaces, detectWsl, findOnPath, isWsl, wslNote } from "../dist/surfaces.js";
+import { defaultWslProbe, detectSurfaces, detectWsl, findOnPath, isWsl, wslNote } from "../dist/surfaces.js";
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 
@@ -78,6 +78,12 @@ test("findOnPath honors PATHEXT on Windows", async (t) => {
 // ---------------------------------------------------------------------------
 // WSL
 // ---------------------------------------------------------------------------
+
+test("defaultWslProbe takes the Windows mount root from OMNODEX_WSL_MOUNT_ROOT, else /mnt", () => {
+  assert.equal(defaultWslProbe({ OMNODEX_WSL_MOUNT_ROOT: "/elsewhere" }).mountRoot, "/elsewhere");
+  assert.equal(defaultWslProbe({}).mountRoot, "/mnt");
+  assert.equal(defaultWslProbe({ OMNODEX_WSL_MOUNT_ROOT: "" }).mountRoot, "/mnt");
+});
 
 test("isWsl reads WSL_DISTRO_NAME or /proc/version, and only on Linux", () => {
   assert.equal(isWsl({ platform: "linux", env: { WSL_DISTRO_NAME: "Ubuntu" }, procVersion: null, mountRoot: "/mnt" }), true);
@@ -164,6 +170,8 @@ async function machine(t) {
     PATH: emptyBin,
     OMNODEX_APPLICATIONS_DIR: path.join(root, "Applications"),
     WSL_DISTRO_NAME: "",
+    // /proc/version still says WSL on a WSL machine; point the Windows scan at nothing.
+    OMNODEX_WSL_MOUNT_ROOT: path.join(root, "no-windows-mount"),
   };
   return { root, home, project, env };
 }
