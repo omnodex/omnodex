@@ -125,6 +125,7 @@ import {
   setEverywhere,
   userHooksFile,
 } from "./hook-scope.js";
+import { findMissingHookPaths } from "./hook-paths.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
 import { bootstrapCloudConnection, describeBootstrap } from "./cloud-bootstrap.js";
@@ -199,9 +200,14 @@ async function checkLauncherShim(
 }
 
 function logHookCommandForm(target: InstallTarget, portable: boolean, useLegacy: boolean): void {
+  // Antigravity on Windows runs hooks under cmd.exe, so only its POSIX hosts share the file.
+  const hosts = target === "antigravity" ? "macOS, Linux and WSL" : "Windows, WSL and other devices";
   if (portable) {
-    console.log(`[install] hook command is host-neutral: the same file works on Windows, WSL and other devices`);
+    console.log(`[install] hook command is host-neutral: the same file works on ${hosts}`);
     console.log(`          once \`omnodex install ${target}\` has been run on each of them`);
+  } else if (target === "antigravity" && process.platform === "win32" && !useLegacy) {
+    console.log(`[install] note: Antigravity runs hooks under cmd.exe on Windows, so this hook command`);
+    console.log(`          names this machine's paths; other machines need their own install`);
   } else if (!useLegacy) {
     console.log(`[install] note: --debug or a custom OMNODEX_HOME writes a host-specific hook command;`);
     console.log(`          installing ${target} from another host in this project will replace it`);
@@ -1140,6 +1146,23 @@ async function readOrNull(file: string): Promise<string | null> {
   }
 }
 
+/**
+ * Under a hooks file `omnodex status` lists: the paths its Omnodex hook
+ * commands name that this machine does not have. Such a file usually came
+ * from another machine (a shared repo or a synced folder), and its hooks
+ * fail on every call.
+ */
+async function reportMissingHookPaths(file: string, reinstall: string): Promise<void> {
+  const content = await readOrNull(file);
+  if (!content) return;
+  const missing = await findMissingHookPaths(content, { home: os.homedir() });
+  if (missing.length === 0) return;
+  console.log(`    ⚠ names paths this machine does not have, so these hooks fail on every call:`);
+  for (const entry of missing) console.log(`        ${entry.path}`);
+  console.log(`      it was probably written on another machine (a shared repo or synced folder);`);
+  console.log(`      run \`${reinstall}\` here to rewrite it for this machine`);
+}
+
 /** The project file each surface's hooks are written to. */
 function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: string, args: readonly string[]): string {
   switch (surface) {
@@ -1763,6 +1786,11 @@ async function installAntigravityHooksAndMcp(
     : await writeLauncher("antigravity");
 
   const nodePath = useLegacy ? process.execPath : "node";
+  // A project hooks file can reach other machines (a shared repo, a synced
+  // folder), so it names the launcher by $HOME rather than this machine's
+  // path. Windows hooks run under cmd.exe, which does not expand $HOME.
+  const portable =
+    canUsePortableHookCommand(paths, { useLegacy, debug }) && process.platform !== "win32";
 
   if (doHooks) {
     const interceptor = new AntigravityInterceptor({
@@ -1771,6 +1799,7 @@ async function installAntigravityHooksAndMcp(
       omnodexHome: paths.home,
       debug,
       nodePath,
+      homeRelativeShimPath: portable ? launcherHomeRelativePath("antigravity") : undefined,
     });
     await interceptor.install();
     console.log(`[install] installed Antigravity hooks into`);
@@ -1785,6 +1814,7 @@ async function installAntigravityHooksAndMcp(
     }
     console.log(`[install] OMNODEX_HOME: ${paths.home}`);
     if (!useLegacy) await checkLauncherShim("antigravity", paths.home, ANTIGRAVITY_HOOK_SHIM_PATH);
+    logHookCommandForm("antigravity", portable, useLegacy);
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
     await noteProjectScope("antigravity", projectPath, paths.home);
     console.log(
@@ -2100,6 +2130,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     const root = exclusionFor(scope, target, projectPath);
     console.log(`  ${SURFACE_LABELS[target]}: records every project${root ? ", but this project is left out" : ""}`);
     console.log(`    ${userHooksFile(target)}`);
+    await reportMissingHookPaths(userHooksFile(target), `omnodex install ${target} --everywhere`);
     if (root) {
       console.log(`    left out: ${root}; run \`omnodex install ${target}\` here to record it again`);
     }
@@ -2128,6 +2159,10 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`  Claude Code (${settingsFile}): installed`);
       console.log(`    ${interceptor.settingsFilePath()}`);
       stepsAside("claude-code");
+      await reportMissingHookPaths(
+        interceptor.settingsFilePath(),
+        `omnodex install claude-code --this-project${settingsFile === "settings.json" ? " --project-settings" : ""}`,
+      );
       // Hooks an older version installed lack the events added since;
       // install is idempotent and adds them.
       const missing = await interceptor.missingEvents();
@@ -2154,6 +2189,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`  Codex: installed`);
       console.log(`    ${codexHooksPath}`);
       stepsAside("codex");
+      await reportMissingHookPaths(codexHooksPath, "omnodex install codex --this-project");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -2172,6 +2208,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`  Antigravity: installed`);
       console.log(`    ${agHooksPath}`);
       stepsAside("antigravity");
+      await reportMissingHookPaths(agHooksPath, "omnodex install antigravity --this-project");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
