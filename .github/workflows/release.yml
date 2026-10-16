@@ -71,6 +71,17 @@ jobs:
         id: plan
         run: node scripts/release.mjs plan --bump "${{ inputs.bump }}"
 
+      # A reminder, not a gate: the release still publishes. Stale pins mean
+      # omnodex install keeps installing older plugins than downloads.omnodex.com
+      # serves; refresh them with scripts/refresh-plugin-pins.mjs in a PR.
+      - name: Check the plugin pins are current
+        continue-on-error: true
+        run: |
+          if ! node scripts/refresh-plugin-pins.mjs --check; then
+            echo "::warning title=Plugin pins are behind::Newer plugins are published than packages/cli/src/plugin-pins.ts installs. Run node scripts/refresh-plugin-pins.mjs and merge it, then release again to ship them."
+            echo "Plugin pins are behind the published plugins; this release installs the older versions. Run \`node scripts/refresh-plugin-pins.mjs\`, merge it, and release again." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Nothing to release
         if: steps.plan.outputs.changed != 'true' && !inputs.force
         run: echo "Nothing that ships changed since ${{ steps.plan.outputs.last_tag }}; not publishing." >> "$GITHUB_STEP_SUMMARY"
