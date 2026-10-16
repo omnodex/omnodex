@@ -28,6 +28,8 @@ import * as https from "node:https";
 import { fileURLToPath } from "node:url";
 import { getInstalledVersion } from "./registry.js";
 import { writeAllLaunchers } from "./launcher-template.js";
+import { refreshPlugins } from "./plugin-refresh.js";
+import { findInstallations } from "./registry.js";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -404,7 +406,14 @@ export async function scheduleBackgroundCheck(): Promise<void> {
 export async function runUpdate(opts: {
   check?: boolean;
   refreshLaunchers?: boolean;
+  /** Only bring installed agent plugins to this CLI's pins. */
+  refreshPlugins?: boolean;
 }): Promise<void> {
+  if (opts.refreshPlugins) {
+    await refreshPluginsStep(false);
+    return;
+  }
+
   const installed = getInstalledVersion();
   const method = detectInstallMethod();
 
@@ -466,6 +475,7 @@ export async function runUpdate(opts: {
         console.log(`\n  Run \`omnodex update\` (without --check) to pull and rebuild.`);
       } else {
         console.log("[update] already up to date.");
+        await refreshPluginsStep(true);
       }
       return;
     }
@@ -481,6 +491,8 @@ export async function runUpdate(opts: {
     for (const [platform, p] of Object.entries(launcherPaths)) {
       console.log(`  ${platform}: ${p}`);
     }
+
+    refreshPluginsInNewVersion();
 
     // Show new commit info
     const newInfo = getSourceInstallInfo();
@@ -510,6 +522,7 @@ export async function runUpdate(opts: {
     console.log("[update] already up to date.");
     // Refresh launchers anyway in case format changed
     await writeAllLaunchers();
+    await refreshPluginsStep(Boolean(opts.check));
     return;
   }
 
@@ -517,6 +530,9 @@ export async function runUpdate(opts: {
   console.log(`[update] release notes: ${RELEASES_URL}`);
 
   if (opts.check) {
+    if ((await findInstallations({ component: "plugin" })).length > 0) {
+      console.log(`[update] installed agent plugins are then brought to the versions ${latest} pins`);
+    }
     console.log(
       `\n  Run \`omnodex update\` (without --check) to install the update.`,
     );
@@ -555,6 +571,8 @@ export async function runUpdate(opts: {
     console.log(`  ${platform}: ${p}`);
   }
 
+  refreshPluginsInNewVersion();
+
   // Update the cache so we don't nag on the next invocation
   await writeUpdateCache({
     lastCheck: new Date().toISOString(),
@@ -564,4 +582,34 @@ export async function runUpdate(opts: {
 
   console.log("\n[update] done. All hook installations will use the updated code.");
   console.log("[update] no need to re-run \`omnodex install\` — launchers resolve the new shims automatically.");
+}
+
+/**
+ * Bring installed plugins to this CLI's pins and report each one. With
+ * `check`, only says what would change. Sets a failing exit code when a
+ * plugin could not be updated.
+ */
+async function refreshPluginsStep(check: boolean): Promise<void> {
+  if ((await findInstallations({ component: "plugin" })).length === 0) return;
+  console.log(check ? "[update] agent plugins:" : "[update] bringing agent plugins to this version's pins:");
+  const outcomes = await refreshPlugins({ check });
+  if (outcomes.some((o) => o.result === "failed")) process.exitCode = 1;
+}
+
+/**
+ * After an update the plugin pins that matter are the new version's, and
+ * this process is still the old one. Run the new code to refresh plugins:
+ * npm and a source rebuild both replace the CLI at the same entry path.
+ */
+function refreshPluginsInNewVersion(): void {
+  const entry = process.argv[1];
+  if (!entry) {
+    console.log("[update] run `omnodex update --refresh-plugins` to bring agent plugins to the new version's pins");
+    return;
+  }
+  const r = spawnSync(process.execPath, [entry, "update", "--refresh-plugins"], { stdio: "inherit" });
+  if (r.status !== 0) {
+    console.error("[update] some agent plugins were not updated; run `omnodex update --refresh-plugins` to retry");
+    process.exitCode = 1;
+  }
 }
