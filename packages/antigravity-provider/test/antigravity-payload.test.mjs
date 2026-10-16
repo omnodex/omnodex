@@ -283,3 +283,60 @@ test("session_id comes from conversationId", () => {
   );
   assert.equal(events[0].session_id, COMMON.conversationId);
 });
+
+test("call_mcp_tool is recorded as the MCP server and tool it called, with that tool's arguments", () => {
+  const events = mapAntigravityPayload(
+    "PostToolUse",
+    {
+      ...COMMON,
+      toolCall: {
+        name: "call_mcp_tool",
+        args: {
+          ServerName: "omnodex-antigravity_omnodex",
+          ToolName: "filesystem__read_text_file",
+          Arguments: { path: "/home/case/repo/README.md" },
+          toolAction: "Reading README",
+          toolSummary: "Read README.md",
+        },
+      },
+      stepIdx: 4,
+    },
+    makeOptions(),
+  );
+  const invoked = events.find((e) => e.event_type === "tool.invoked");
+  assert.equal(invoked.tool_name, "mcp__omnodex-antigravity_omnodex__filesystem__read_text_file");
+  assert.equal(invoked.mcp_server, "omnodex-antigravity_omnodex");
+  assert.deepEqual(invoked.parameters, { path: "/home/case/repo/README.md" });
+});
+
+test("call_mcp_tool without arguments records empty parameters", () => {
+  const events = mapAntigravityPayload(
+    "PostToolUse",
+    {
+      ...COMMON,
+      toolCall: { name: "call_mcp_tool", args: { ServerName: "plane", ToolName: "workitem", Arguments: {} } },
+      stepIdx: 5,
+    },
+    makeOptions(),
+  );
+  const invoked = events.find((e) => e.event_type === "tool.invoked");
+  assert.equal(invoked.tool_name, "mcp__plane__workitem");
+  assert.equal(invoked.mcp_server, "plane");
+  assert.deepEqual(invoked.parameters, {});
+});
+
+test("call_mcp_tool missing its server or tool is recorded as it came", () => {
+  const events = mapAntigravityPayload(
+    "PostToolUse",
+    {
+      ...COMMON,
+      toolCall: { name: "call_mcp_tool", args: { ToolName: "workitem" } },
+      stepIdx: 6,
+    },
+    makeOptions(),
+  );
+  const invoked = events.find((e) => e.event_type === "tool.invoked");
+  assert.equal(invoked.tool_name, "call_mcp_tool");
+  assert.equal(invoked.mcp_server, "builtin");
+  assert.deepEqual(invoked.parameters, { ToolName: "workitem" });
+});

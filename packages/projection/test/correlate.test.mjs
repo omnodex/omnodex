@@ -717,3 +717,99 @@ for (const kind of ["in-memory", "sqlite"]) {
     await store.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Antigravity: hooks observe after the call
+// ---------------------------------------------------------------------------
+
+/**
+ * Antigravity's PostToolUse hook fires once the call is done, so its row is
+ * stamped after the proxy's: the proxy call starts first.
+ */
+const AGY_SESSION = "a6e1c0de-agy";
+const AGY_TOOL = "mcp__omnodex-antigravity_omnodex__filesystem__read_text_file";
+
+function agyHook({ eventId = "e-agy", toolCallId = "antigravity-a6e1c0de-agy-step-4", at }) {
+  return invoked({
+    eventId,
+    sessionId: AGY_SESSION,
+    interceptor: "antigravity-hook",
+    toolCallId,
+    toolName: AGY_TOOL,
+    mcpServer: "omnodex-antigravity_omnodex",
+    at,
+  });
+}
+
+function agyProxy({ eventId = "e-agy-proxy", toolCallId = "agy-proxy-1", at }) {
+  return invoked({
+    eventId,
+    sessionId: PROXY_SESSION,
+    interceptor: "mcp-proxy",
+    toolCallId,
+    toolName: "filesystem__read_text_file",
+    mcpServer: "filesystem",
+    at,
+  });
+}
+
+async function correlateEvents(events) {
+  const store = await project(events, new InMemoryReadModelStore());
+  return correlateToolCalls({
+    sessions: await store.listSessions(),
+    toolCalls: await store.listAllToolCalls(),
+  });
+}
+
+test("pairs an Antigravity hook with the proxy call that started before it", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyProxy({ at: "2026-09-18T14:57:41.000Z" }),
+    agyHook({ at: "2026-09-18T14:57:42.200Z" }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].hook_tool_call_id, "antigravity-a6e1c0de-agy-step-4");
+  assert.equal(result[0].proxy_tool_call_id, "agy-proxy-1");
+  assert.equal(result[0].upstream_mcp_server, "filesystem");
+});
+
+test("does not pair an Antigravity hook with a proxy call that started after it", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyHook({ at: "2026-09-18T14:57:41.000Z" }),
+    agyProxy({ at: "2026-09-18T14:57:42.000Z" }),
+  ]);
+  assert.equal(result.length, 0, "a later proxy call is some later call");
+});
+
+test("does not pair an Antigravity hook with a proxy call outside the window", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyProxy({ at: "2026-09-18T14:57:00.000Z" }),
+    agyHook({ at: "2026-09-18T14:57:41.000Z" }),
+  ]);
+  assert.equal(result.length, 0);
+});
+
+test("pairs two identical Antigravity calls in the order they happened", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyProxy({ eventId: "p1", toolCallId: "proxy-1", at: "2026-09-18T14:57:41.000Z" }),
+    agyHook({ eventId: "h1", toolCallId: "agy-step-1", at: "2026-09-18T14:57:41.500Z" }),
+    agyProxy({ eventId: "p2", toolCallId: "proxy-2", at: "2026-09-18T14:57:42.000Z" }),
+    agyHook({ eventId: "h2", toolCallId: "agy-step-2", at: "2026-09-18T14:57:42.500Z" }),
+  ]);
+  const pairs = Object.fromEntries(result.map((c) => [c.hook_tool_call_id, c.proxy_tool_call_id]));
+  assert.deepEqual(pairs, { "agy-step-1": "proxy-1", "agy-step-2": "proxy-2" });
+});
+
+test("a pre-call hook still does not pair with a proxy call that started before it", async () => {
+  const result = await correlateEvents(
+    routedCallEvents({ proxy: { at: "2026-09-18T14:57:40.000Z" } }),
+  );
+  assert.equal(result.length, 0);
+});
