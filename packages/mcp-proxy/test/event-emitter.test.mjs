@@ -33,6 +33,7 @@ function makePool({
   return {
     getTools: () => knownTools.map((n) => ({ prefixedName: n })),
     getServerName: (name) => serverMap[name],
+    getFullToolName: () => undefined,
     callTool: async (_name, _args) => {
       if (callError) throw callError;
       return callResult;

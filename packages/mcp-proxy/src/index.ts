@@ -54,10 +54,12 @@ export {
 export type { HttpServeOptions, ProxyHttpServer, ProxyHttpServerOptions } from "./http-server.js";
 export {
   TOOL_NAME_SEPARATOR,
+  fitToolName,
   normalizeSchemaDialect,
   prefixedToolName,
   prefixToolDefinition,
   resolvePrefixedName,
+  toolNameLimit,
 } from "./core/tool-routing.js";
 export {
   REDACTED_SENTINEL,

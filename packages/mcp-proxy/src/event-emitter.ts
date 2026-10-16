@@ -89,7 +89,8 @@ export async function callToolWithEvents(
     sessionId,
     toolCallId,
     at: invokedAt,
-    toolName: prefixedName,
+    // The unshortened name, so events match across platform name limits.
+    toolName: pool.getFullToolName(prefixedName) ?? prefixedName,
     mcpServer: serverName,
     args,
     redact,

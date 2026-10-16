@@ -43,6 +43,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { type ProxyConfig } from "./config.js";
 import { UpstreamClientPool } from "./upstream-client.js";
 import { createToolListCache } from "./tool-cache.js";
+import { toolNameLimit } from "./core/tool-routing.js";
 import { runProxyServer } from "./proxy-server.js";
 import {
   startProxyHttpServer,
@@ -134,6 +135,8 @@ export class MCPProxy implements Interceptor {
   async start(emit: EmitFn): Promise<StopFn> {
     const pool = new UpstreamClientPool({
       toolCache: createToolListCache(path.join(this.home, "proxy-tool-cache")),
+      // Some hosts drop tools whose prefixed names run past their limit.
+      toolNameLimit: toolNameLimit(process.env.OMNODEX_PLATFORM, process.env.OMNODEX_TOOL_NAME_MAX),
     });
     pool.start(this.config);
 

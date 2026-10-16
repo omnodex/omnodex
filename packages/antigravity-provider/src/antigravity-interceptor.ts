@@ -65,6 +65,17 @@ export interface AntigravityInterceptorOptions {
    */
   nodePath?: string;
   /**
+   * Launcher path relative to the user's home directory, with forward
+   * slashes. When set, the hook command is `node "$HOME/<path>" <event>`
+   * with no env prefix, so a project hooks file that reaches another
+   * machine (a shared repo, a synced folder) resolves to that machine's own
+   * launcher. `shimPath`, `nodePath`, `omnodexHome` and `debug` are then not
+   * written into the command, so only use it when the launcher's default
+   * OMNODEX_HOME is the right one. Ignored on Windows, where hooks run under
+   * cmd.exe, which does not expand $HOME.
+   */
+  homeRelativeShimPath?: string;
+  /**
    * Absolute hooks file to edit instead of `<projectPath>/.agents/hooks.json`,
    * such as the user-level `~/.gemini/config/hooks.json` that applies to
    * every project.
@@ -199,6 +210,10 @@ export class AntigravityInterceptor implements Interceptor {
   private shimCommand(eventName: string): string {
     if (this.options.platform === "win32") {
       return this.shimCommandWindows(eventName);
+    }
+    if (this.options.homeRelativeShimPath !== undefined) {
+      const args = (this.options.launcherArgs ?? []).map((a) => `${shellQuote(a)} `).join("");
+      return `node "$HOME/${this.options.homeRelativeShimPath}" ${args}${eventName}`;
     }
     return this.shimCommandPosix(eventName);
   }

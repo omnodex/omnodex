@@ -41,6 +41,9 @@
  *   OMNODEX_PLATFORM           the runtime this proxy serves (claude-code, codex,
  *                              cowork, antigravity, copilot, web); --platform
  *                              overrides it. Plugins pass --platform.
+ *   OMNODEX_TOOL_NAME_MAX      longest tool name to offer (16 or more); longer
+ *                              names are shortened. Defaults to the platform's
+ *                              limit (Antigravity: 32), otherwise no limit.
  */
 
 import * as os from "node:os";

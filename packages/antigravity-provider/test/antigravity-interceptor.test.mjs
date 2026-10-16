@@ -271,3 +271,64 @@ test("POSIX platform uses env-prefix syntax (default)", async (t) => {
   assert.match(cmd, /^OMNODEX_HOME=/);
   assert.ok(!cmd.includes('set "'), "POSIX commands must not use set");
 });
+
+test("home-relative launcher writes a host-neutral command on POSIX", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = new AntigravityInterceptor({
+    projectPath,
+    shimPath: "/home/case/.omnodex/bin/antigravity-hook-launcher.js",
+    omnodexHome: "/home/case/.omnodex",
+    platform: "darwin",
+    homeRelativeShimPath: ".omnodex/bin/antigravity-hook-launcher.js",
+  });
+  await interceptor.install();
+  const file = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+  const commands = [
+    file.omnodex.PostToolUse[0].hooks[0].command,
+    file.omnodex.Stop[0].command,
+    file.omnodex.PreInvocation[0].command,
+  ];
+  assert.deepEqual(commands, [
+    'node "$HOME/.omnodex/bin/antigravity-hook-launcher.js" PostToolUse',
+    'node "$HOME/.omnodex/bin/antigravity-hook-launcher.js" Stop',
+    'node "$HOME/.omnodex/bin/antigravity-hook-launcher.js" PreInvocation',
+  ]);
+  for (const cmd of commands) {
+    assert.ok(!cmd.includes("/home/case"), "no machine-specific path in the command");
+    assert.ok(!cmd.includes("OMNODEX_HOME="), "no env prefix");
+  }
+});
+
+test("home-relative launcher keeps launcher args before the event name", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = new AntigravityInterceptor({
+    projectPath,
+    shimPath: "/home/case/.omnodex/bin/antigravity-hook-launcher.js",
+    omnodexHome: "/home/case/.omnodex",
+    platform: "linux",
+    homeRelativeShimPath: ".omnodex/bin/antigravity-hook-launcher.js",
+    launcherArgs: ["--user-scope"],
+  });
+  await interceptor.install();
+  const file = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+  assert.equal(
+    file.omnodex.Stop[0].command,
+    'node "$HOME/.omnodex/bin/antigravity-hook-launcher.js" --user-scope Stop',
+  );
+});
+
+test("home-relative launcher is ignored on Windows, which keeps cmd.exe syntax", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = new AntigravityInterceptor({
+    projectPath,
+    shimPath: "C:\\Users\\case\\.omnodex\\bin\\antigravity-hook-launcher.js",
+    omnodexHome: "C:\\Users\\case\\.omnodex",
+    platform: "win32",
+    homeRelativeShimPath: ".omnodex/bin/antigravity-hook-launcher.js",
+  });
+  await interceptor.install();
+  const file = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+  const cmd = file.omnodex.PostToolUse[0].hooks[0].command;
+  assert.match(cmd, /^set "OMNODEX_HOME=/);
+  assert.ok(!cmd.includes("$HOME"), "cmd.exe does not expand $HOME");
+});
