@@ -152,7 +152,8 @@ export function defaultWslProbe(env: Record<string, string | undefined>): WslPro
   } catch {
     // not Linux, or not readable
   }
-  return { platform: process.platform, env, procVersion, mountRoot: "/mnt" };
+  // OMNODEX_WSL_MOUNT_ROOT points elsewhere for tests and nonstandard automount roots.
+  return { platform: process.platform, env, procVersion, mountRoot: env.OMNODEX_WSL_MOUNT_ROOT || "/mnt" };
 }
 
 export function isWsl(probe: WslProbe): boolean {

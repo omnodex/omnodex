@@ -46,6 +46,8 @@ async function machine(t) {
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
     CODEX_HOME: path.join(home, ".codex"),
     WSL_DISTRO_NAME: "",
+    // /proc/version still says WSL on a WSL machine; point the Windows scan at nothing.
+    OMNODEX_WSL_MOUNT_ROOT: path.join(root, "no-windows-mount"),
   };
   return { root, home, omnodexHome, project, other, env };
 }

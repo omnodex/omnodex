@@ -61,6 +61,8 @@ async function machine(t, published) {
     OMNODEX_NO_UPDATE_CHECK: "1",
     PATH: [bin, path.dirname(process.execPath)].join(path.delimiter),
     WSL_DISTRO_NAME: "",
+    // /proc/version still says WSL on a WSL machine; point the Windows scan at nothing.
+    OMNODEX_WSL_MOUNT_ROOT: path.join(root, "no-windows-mount"),
   };
   const hostCalls = async () => (existsSync(log) ? (await fs.readFile(log, "utf8")).trim().split("\n").map((l) => JSON.parse(l)) : []);
   return { root, home, project, env, site, hostCalls, omnodexHome: env.OMNODEX_HOME };
