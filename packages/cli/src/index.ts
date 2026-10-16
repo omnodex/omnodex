@@ -2850,6 +2850,7 @@ async function main(): Promise<void> {
       await runUpdate({
         check: rest.includes("--check"),
         refreshLaunchers: rest.includes("--refresh-launchers"),
+        refreshPlugins: rest.includes("--refresh-plugins"),
       });
       return;
     case "--version":
@@ -2931,6 +2932,11 @@ commands:
                      Flags:
                        --check               dry run — show available update
                        --refresh-launchers   just refresh launcher scripts
+                       --refresh-plugins     just bring installed agent
+                                             plugins to the versions this
+                                             release pins (a version chosen
+                                             with --plugin-version is kept
+                                             until a newer one is pinned)
   install [target] [project]
                      install Omnodex hooks for an AI agent platform.
                      Targets: claude-code, codex, antigravity (or agy)

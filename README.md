@@ -192,6 +192,9 @@ omnodex update                      self-update (npm: npm update -g; source: git
                                       --ff-only + npm install + npm run build)
                                       --check               dry-run, show available updates
                                       --refresh-launchers   rewrite hook launchers only
+                                      --refresh-plugins     bring installed agent plugins to the
+                                                            versions this release pins (also
+                                                            done after every update)
 omnodex --version, -V               show version (source installs show branch + sha)
 
 omnodex connect [--token <token>]   connect this host to your dashboard account.
