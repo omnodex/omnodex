@@ -241,3 +241,19 @@ test("an unknown name that is not a folder is still an unknown target", async (t
   assert.equal(result.code, 1, result.out);
   assert.match(result.out, /unknown target 'codx'/);
 });
+
+test("the summary says installed for a user-level file that had no Omnodex hooks, and ignores key order", async (t) => {
+  const m = await machine(t);
+  await fs.writeFile(path.join(m.home, ".claude", "settings.json"), JSON.stringify({ model: "opus" }));
+  const first = await run(["install", "--hooks", m.project, "--yes"], m.env);
+  assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /Claude Code\s+installed/);
+
+  // An agent rewriting its settings with keys in another order is not a change.
+  const file = path.join(m.home, ".claude", "settings.json");
+  const settings = JSON.parse(await fs.readFile(file, "utf8"));
+  const reordered = Object.fromEntries(Object.entries(settings).reverse());
+  await fs.writeFile(file, JSON.stringify(reordered, null, 2));
+  const again = await run(["install", "--hooks", m.project, "--yes"], m.env);
+  assert.match(again.out, /Claude Code\s+already set up, nothing changed/);
+});

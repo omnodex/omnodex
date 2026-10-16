@@ -1285,6 +1285,32 @@ async function noteProjectScope(target: InstallTarget, projectPath: string, omno
   }
 }
 
+/** Matches a hook command that runs an Omnodex launcher or shim. */
+const OMNODEX_HOOK = /-hook-(?:launcher|shim)\.js/;
+
+/** Same JSON content, whatever the key order (agents rewrite their own files). */
+function sameContent(a: string, b: string | null): boolean {
+  if (a === b) return true;
+  if (b === null) return false;
+  const canonical = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(canonical)
+      : v && typeof v === "object"
+        ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canonical((v as Record<string, unknown>)[k])]))
+        : v;
+  try {
+    return JSON.stringify(canonical(JSON.parse(a))) === JSON.stringify(canonical(JSON.parse(b)));
+  } catch {
+    return false;
+  }
+}
+
+/** What an install did to a hooks file, for the summary. */
+function installOutcome(before: string | null, after: string | null): string {
+  if (before === null || !OMNODEX_HOOK.test(before)) return "installed";
+  return sameContent(before, after) ? "already set up, nothing changed" : "updated";
+}
+
 const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   "claude-code": (args) => installClaudeCode(args),
   codex: (args) => installCodex(args),
@@ -1374,13 +1400,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
       console.error(`[install] ${SURFACE_LABELS[p.surface]} failed: ${error}`);
     }
     const after = await readOrNull(p.file);
-    const result = error
-      ? `failed: ${error}`
-      : before === null
-        ? "installed"
-        : before === after
-          ? "already set up, nothing changed"
-          : "updated";
+    const result = error ? `failed: ${error}` : installOutcome(before, after);
     outcomes.push({ surface: p.surface, result, failed: error !== null });
   }
   const anyFailed = outcomes.some((o) => o.failed);
