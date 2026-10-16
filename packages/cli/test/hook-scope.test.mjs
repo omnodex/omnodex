@@ -120,7 +120,7 @@ test("install --everywhere writes each agent's user-level file and keeps what el
   await fs.writeFile(path.join(m.home, ".gemini", "config", "hooks.json"), JSON.stringify({ linter: { Stop: [] } }));
 
   for (const target of ["claude-code", "codex", "antigravity"]) {
-    const r = await run(["install", target, m.project, "--everywhere", "--no-connect"], m.env);
+    const r = await run(["install", "--hooks", target, m.project, "--everywhere", "--no-connect"], m.env);
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /now records every project/);
   }
@@ -153,12 +153,12 @@ test("install --everywhere writes each agent's user-level file and keeps what el
 
 test("without a terminal or flags a one-agent install stays in the project; --yes records every project", async (t) => {
   const m = await machine(t);
-  const plain = await run(["install", "codex", m.project, "--no-connect"], m.env);
+  const plain = await run(["install", "--hooks", "codex", m.project, "--no-connect"], m.env);
   assert.equal(plain.code, 0, plain.out);
   assert.ok(existsSync(path.join(m.project, ".codex", "hooks.json")));
   assert.ok(!existsSync(path.join(m.home, ".codex", "hooks.json")));
 
-  const yes = await run(["install", "codex", m.project, "--yes", "--no-connect"], m.env);
+  const yes = await run(["install", "--hooks", "codex", m.project, "--yes", "--no-connect"], m.env);
   assert.equal(yes.code, 0, yes.out);
   assert.ok(existsSync(path.join(m.home, ".codex", "hooks.json")));
   assert.match(yes.out, /this project also has its own Codex hooks; they step aside/);
@@ -166,7 +166,7 @@ test("without a terminal or flags a one-agent install stays in the project; --ye
 
 test("--everywhere and --legacy-shim together are refused", async (t) => {
   const m = await machine(t);
-  const r = await run(["install", "codex", m.project, "--everywhere", "--legacy-shim", "--no-connect"], m.env);
+  const r = await run(["install", "--hooks", "codex", m.project, "--everywhere", "--legacy-shim", "--no-connect"], m.env);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /cannot be combined with --legacy-shim/);
   assert.ok(!existsSync(path.join(m.home, ".codex", "hooks.json")));
@@ -174,7 +174,7 @@ test("--everywhere and --legacy-shim together are refused", async (t) => {
 
 test("uninstall in a project leaves it out, status says so, and install records it again", async (t) => {
   const m = await machine(t);
-  assert.equal((await run(["install", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
+  assert.equal((await run(["install", "--hooks", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
 
   const out = await run(["uninstall", "codex", m.project, "--confirm"], m.env);
   assert.equal(out.code, 0, out.out);
@@ -195,7 +195,7 @@ test("uninstall in a project leaves it out, status says so, and install records 
   assert.match(all.out, new RegExp(`left out: ${m.project.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")} \\(Codex\\)`, "i"));
 
   // Without a flag, an agent that records every project keeps doing so.
-  const back = await run(["install", "codex", m.project, "--no-connect"], m.env);
+  const back = await run(["install", "--hooks", "codex", m.project, "--no-connect"], m.env);
   assert.equal(back.code, 0, back.out);
   assert.match(back.out, /had been left out; Codex records it again/);
   assert.equal(exclusionFor(await readHookScope(m.omnodexHome), "codex", m.project), null);
@@ -208,7 +208,7 @@ test("uninstall --everywhere removes only Omnodex's user-level hooks and stops e
   await fs.writeFile(path.join(m.home, ".codex", "hooks.json"), JSON.stringify({
     hooks: { Stop: [{ hooks: [{ type: "command", command: "notify" }] }] },
   }));
-  assert.equal((await run(["install", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
+  assert.equal((await run(["install", "--hooks", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
   await run(["uninstall", "codex", m.other, "--confirm"], m.env);
 
   const r = await run(["uninstall", "codex", "--everywhere", "--confirm"], m.env);
@@ -224,7 +224,7 @@ test("uninstall --everywhere removes only Omnodex's user-level hooks and stops e
 test("uninstall with no target and nothing in the project leaves the project out for every recording agent", async (t) => {
   const m = await machine(t);
   for (const target of ["claude-code", "codex"]) {
-    assert.equal((await run(["install", target, m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
+    assert.equal((await run(["install", "--hooks", target, m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
   }
   const r = await run(["uninstall", m.other, "--confirm"], m.env);
   assert.equal(r.code, 0, r.out);
@@ -319,7 +319,7 @@ test("launcher: without a payload project the working directory decides", async 
 test("in the home folder, the user-level files are not mistaken for project hooks", async (t) => {
   const m = await machine(t);
   for (const target of ["claude-code", "codex"]) {
-    assert.equal((await run(["install", target, m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
+    assert.equal((await run(["install", "--hooks", target, m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
   }
   const status = await run(["status", m.home], m.env);
   assert.doesNotMatch(status.out, /installed\n/);
