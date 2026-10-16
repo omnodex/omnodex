@@ -61,8 +61,9 @@ test("install agy and install antigravity write the same hooks and registry entr
   assert.equal(viaAlias.result.code, 0, viaAlias.result.out);
   assert.equal(viaName.result.code, 0, viaName.result.out);
 
-  // Same hook file once each run's own paths are factored out.
-  const strip = (r) => r.hooks.split(r.home).join("<home>").split(r.project).join("<project>");
+  // Same hook file once each run's own scratch root is factored out. The
+  // hooks file is JSON, so on Windows the root appears with escaped backslashes.
+  const strip = (r) => [JSON.stringify(r.root).slice(1, -1), r.root].reduce((s, p) => s.split(p).join("<root>"), r.hooks);
   assert.equal(strip(viaAlias), strip(viaName));
 
   const [aliasEntry] = viaAlias.registry.installations;

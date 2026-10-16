@@ -36,15 +36,23 @@ test("detectSurfaces finds surfaces by command on PATH, home directory or macOS 
   const home = path.join(root, "home");
   const bin = path.join(root, "bin");
   const apps = path.join(root, "Applications");
-  await fakeCommand(bin, "claude");
+  // PATH lookup uses the real platform's separator and extensions.
+  await fakeCommand(bin, process.platform === "win32" ? "claude.cmd" : "claude");
   await fs.mkdir(path.join(home, ".codex"), { recursive: true });
   await fs.mkdir(path.join(apps, "Antigravity.app"), { recursive: true });
 
-  const found = detectSurfaces({ home, platform: "darwin", env: { PATH: bin }, applicationsDir: apps });
-  assert.deepEqual(found, [
+  const env = { PATH: bin, PATHEXT: ".EXE;.CMD" };
+  assert.deepEqual(detectSurfaces({ home, platform: process.platform, env, applicationsDir: apps }).slice(0, 2), [
     { surface: "claude-code", evidence: "claude on PATH" },
     { surface: "codex", evidence: "~/.codex" },
+  ]);
+  // App bundles count only on macOS.
+  assert.deepEqual(detectSurfaces({ home, platform: "darwin", env: { PATH: "" }, applicationsDir: apps }), [
+    { surface: "codex", evidence: "~/.codex" },
     { surface: "antigravity", evidence: "Antigravity.app" },
+  ]);
+  assert.deepEqual(detectSurfaces({ home, platform: "linux", env: { PATH: "" }, applicationsDir: apps }), [
+    { surface: "codex", evidence: "~/.codex" },
   ]);
 });
 
@@ -78,7 +86,11 @@ test("isWsl reads WSL_DISTRO_NAME or /proc/version, and only on Linux", () => {
   assert.equal(isWsl({ platform: "darwin", env: { WSL_DISTRO_NAME: "x" }, procVersion: null, mountRoot: "/mnt" }), false);
 });
 
-test("under WSL, Windows-side surfaces produce a PowerShell note and a Windows project path", async (t) => {
+// WSL detection runs only on Linux and works on POSIX paths, which a Windows
+// runner's scratch directory is not.
+const posixOnly = { skip: process.platform === "win32" && "WSL paths are POSIX" };
+
+test("under WSL, Windows-side surfaces produce a PowerShell note and a Windows project path", posixOnly, async (t) => {
   const root = await tempRoot(t);
   const mountRoot = path.join(root, "mnt");
   await fs.mkdir(path.join(mountRoot, "c", "Users", "case", ".codex"), { recursive: true });
@@ -100,7 +112,7 @@ test("under WSL, Windows-side surfaces produce a PowerShell note and a Windows p
   assert.doesNotMatch(wslNote(inLinuxHome).join("\n"), /one host only/);
 });
 
-test("no WSL note outside WSL or when Windows has no surfaces", async (t) => {
+test("no WSL note outside WSL or when Windows has no surfaces", posixOnly, async (t) => {
   const root = await tempRoot(t);
   const mountRoot = path.join(root, "mnt");
   await fs.mkdir(path.join(mountRoot, "c", "Users", "case"), { recursive: true });
