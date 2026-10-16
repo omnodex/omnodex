@@ -405,6 +405,15 @@ collisions and to make the `mcp_server` field in every TraceEvent unambiguous. T
 separator is `__` because MCP clients only accept letters, digits, `_` and `-` in tool
 names.
 
+Some hosts add their own prefix and drop any tool whose full name passes 64
+characters. Antigravity names a plugin's tools `mcp_<plugin>_<server>_<tool>`, so with
+`--platform antigravity` the proxy keeps each name to 32 characters: a longer one keeps
+its upstream prefix and as much of the tool name as fits, followed by `_` and a short
+hash of the full name (`filesystem__list_director_fbe497`). The hash is deterministic,
+so the name is the same on every run, and calls are routed to the upstream's own tool
+name. Events record the full name (`filesystem__list_directory_with_sizes`) on every
+platform. `OMNODEX_TOOL_NAME_MAX` sets a different limit (16 or more).
+
 Tool definitions are otherwise passed through unchanged, with one normalization: a
 `$schema` declaration naming a JSON Schema dialect other than 2020-12 (commonly
 draft-07) is removed from `inputSchema` and `outputSchema`, because clients validate

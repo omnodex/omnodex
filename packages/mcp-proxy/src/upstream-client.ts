@@ -49,7 +49,7 @@ import {
   resolveUpstreamEnv,
   toolNamePrefix,
 } from "./config.js";
-import { prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
+import { prefixedToolName, prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
 import type { ToolListCache } from "./tool-cache.js";
 
 // ---------------------------------------------------------------------------
@@ -61,8 +61,13 @@ import type { ToolListCache } from "./tool-cache.js";
  * what the agent sees; originalName is what the upstream server expects.
  */
 export interface PrefixedTool {
-  /** Name exposed to the agent, e.g. "filesystem__read_file" */
+  /**
+   * Name exposed to the agent, e.g. "filesystem__read_file". Shortened when
+   * the platform limits tool name length (see core/tool-routing).
+   */
   prefixedName: string;
+  /** The prefixed name before any shortening, recorded in events. */
+  fullName: string;
   /** Original name on the upstream server, e.g. "read_file" */
   originalName: string;
   /** Logical name of the upstream server that owns this tool */
@@ -133,12 +138,14 @@ class UpstreamConnection {
   readonly server: UpstreamServer;
   private readonly client: Client;
   private readonly prefix: string;
+  private readonly toolNameLimit: number | undefined;
   private readonly toolMap = new Map<string, Tool>(); // originalName -> Tool
 
-  constructor(server: UpstreamServer, client: Client) {
+  constructor(server: UpstreamServer, client: Client, toolNameLimit?: number) {
     this.server = server;
     this.client = client;
     this.prefix = toolNamePrefix(server);
+    this.toolNameLimit = toolNameLimit;
   }
 
   /** The upstream's tools as it listed them, unprefixed. */
@@ -156,7 +163,7 @@ class UpstreamConnection {
 
     for (const tool of result.tools) {
       this.toolMap.set(tool.name, tool);
-      prefixed.push(toPrefixedTool(this.server, this.prefix, tool));
+      prefixed.push(toPrefixedTool(this.server, this.prefix, tool, this.toolNameLimit));
     }
 
     return prefixed;
@@ -191,11 +198,22 @@ class UpstreamConnection {
   }
 }
 
-function toPrefixedTool(server: UpstreamServer, prefix: string, tool: Tool): PrefixedTool {
+function toPrefixedTool(
+  server: UpstreamServer,
+  prefix: string,
+  tool: Tool,
+  toolNameLimit: number | undefined
+): PrefixedTool {
   // The definition carries the agent-visible name, so the inbound server can
   // pass it through verbatim without re-deriving the prefix.
-  const definition = prefixToolDefinition(prefix, tool);
-  return { prefixedName: definition.name, originalName: tool.name, serverName: server.name, definition };
+  const definition = prefixToolDefinition(prefix, tool, toolNameLimit);
+  return {
+    prefixedName: definition.name,
+    fullName: prefixedToolName(prefix, tool.name),
+    originalName: tool.name,
+    serverName: server.name,
+    definition,
+  };
 }
 
 /** Mutable per-upstream bookkeeping behind UpstreamStatus. */
@@ -249,13 +267,21 @@ interface UpstreamEntry {
 export interface UpstreamClientPoolOptions {
   /** Where upstream tool lists are remembered between runs. None by default. */
   toolCache?: ToolListCache;
+  /**
+   * Longest agent-visible tool name; longer names are shortened (see
+   * core/tool-routing). No limit by default.
+   */
+  toolNameLimit?: number;
 }
 
 export class UpstreamClientPool {
   private readonly toolCache: ToolListCache | undefined;
+  private readonly toolNameLimit: number | undefined;
   private readonly entries: UpstreamEntry[] = [];
   /** prefixedName -> connection that owns it */
   private toolIndex = new Map<string, UpstreamConnection>();
+  /** prefixedName -> the tool it names, for the upstream's own name */
+  private toolsByName = new Map<string, PrefixedTool>();
   private cachedTools: PrefixedTool[] = [];
   private readonly warnedCollisions = new Set<string>();
   private settings: UpstreamConnectionSettings = ProxyConfigSchema.parse({ version: 1 })
@@ -268,6 +294,7 @@ export class UpstreamClientPool {
 
   constructor(options?: UpstreamClientPoolOptions) {
     this.toolCache = options?.toolCache;
+    this.toolNameLimit = options?.toolNameLimit;
   }
 
   /**
@@ -289,7 +316,7 @@ export class UpstreamClientPool {
         state: "connecting",
         connection: undefined,
         tools: [],
-        knownTools: cached.map((tool) => toPrefixedTool(server, prefix, tool)),
+        knownTools: cached.map((tool) => toPrefixedTool(server, prefix, tool, this.toolNameLimit)),
         knownToolsJson: cached.length > 0 ? JSON.stringify(cached) : null,
         knownFromCache: cached.length > 0,
         firstAttempt: Promise.resolve(),
@@ -401,6 +428,14 @@ export class UpstreamClientPool {
     return this.toolIndex.get(prefixedName)?.server.name;
   }
 
+  /**
+   * Returns the unshortened prefixed name for an agent-visible tool name, so
+   * events name the tool the same way whatever the platform's length limit.
+   */
+  getFullToolName(prefixedName: string): string | undefined {
+    return this.toolsByName.get(prefixedName)?.fullName;
+  }
+
   /** Returns names of the currently connected upstream servers. */
   getServerNames(): string[] {
     return this.entries.filter((e) => e.state === "connected").map((e) => e.server.name);
@@ -463,9 +498,10 @@ export class UpstreamClientPool {
       );
     }
 
-    // Derive original name: strip the prefix and the separator.
-    const prefix = toolNamePrefix(conn.server);
-    const originalName = prefixedName.slice(prefix.length + TOOL_NAME_SEPARATOR.length);
+    // The upstream's own name; a shortened name cannot be derived by slicing.
+    const originalName =
+      this.toolsByName.get(prefixedName)?.originalName ??
+      prefixedName.slice(toolNamePrefix(conn.server).length + TOOL_NAME_SEPARATOR.length);
     const requestOptions: RequestOptions = {
       timeout: (entry.server.tool_timeout_sec ?? DEFAULT_TOOL_TIMEOUT_MS / 1000) * 1000,
       ...(options?.signal ? { signal: options.signal } : {}),
@@ -508,6 +544,7 @@ export class UpstreamClientPool {
     await Promise.allSettled(connections.map((c) => c.close()));
     this.entries.length = 0;
     this.toolIndex.clear();
+    this.toolsByName.clear();
     this.cachedTools = [];
   }
 
@@ -537,7 +574,7 @@ export class UpstreamClientPool {
 
     try {
       await client.connect(this.createTransport(entry), options);
-      const connection = new UpstreamConnection(entry.server, client);
+      const connection = new UpstreamConnection(entry.server, client, this.toolNameLimit);
       client.onclose = () => this.handleDisconnect(entry, connection);
       const tools = await connection.discoverTools(options);
 
@@ -695,6 +732,7 @@ export class UpstreamClientPool {
   /** Rebuilds the tool list from connected upstreams, in config order. */
   private rebuildToolIndex(): void {
     const index = new Map<string, UpstreamConnection>();
+    const byName = new Map<string, PrefixedTool>();
     const tools: PrefixedTool[] = [];
     for (const entry of this.entries) {
       if (!entry.connection) continue;
@@ -709,10 +747,12 @@ export class UpstreamClientPool {
           );
         }
         index.set(tool.prefixedName, entry.connection);
+        byName.set(tool.prefixedName, tool);
         tools.push(tool);
       }
     }
     this.toolIndex = index;
+    this.toolsByName = byName;
     this.cachedTools = tools;
     for (const listener of this.toolsChangedListeners) listener();
   }
