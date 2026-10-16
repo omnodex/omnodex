@@ -49,10 +49,14 @@
  * compared always and the values only when neither side was redacted. This
  * is the part that separates two calls to the same tool in the same window.
  *
- * **The time.** The hook fires first, necessarily: PreToolUse runs before the
- * call reaches the proxy. So a candidate proxy call must start at or after
- * the hook's, within a window. The window is generous because the hook's
- * clock is a subprocess's; a measured pair on a WSL checkout was 1.4s apart.
+ * **The time.** A hook that fires before the call (Claude Code's and Codex's
+ * PreToolUse) fires first, necessarily: it runs before the call reaches the
+ * proxy. So a candidate proxy call must start at or after the hook's, within
+ * a window. Antigravity's hooks observe only after the call (PostToolUse),
+ * so its hook row is stamped when the call has finished, and the proxy call
+ * must start at or before it instead, within the same window. The window is
+ * generous because the hook's clock is a subprocess's; a measured pair on a
+ * WSL checkout was 1.4s apart.
  *
  * ## What it does not do
  *
@@ -72,6 +76,9 @@ import {
   type CodexNameMatch,
 } from "./codex-tool-name.js";
 import type { SessionRow, ToolCallRow } from "./read-model.js";
+
+/** Interceptors whose hooks observe a tool call only after it has run. */
+const AFTER_CALL_HOOKS: ReadonlySet<string> = new Set(["antigravity-hook"]);
 
 /**
  * How long after a hook's tool.invoked a proxy tool.invoked may start and
@@ -180,6 +187,7 @@ export function correlateToolCalls(
 
     const hookStart = Date.parse(hook.started_at);
     if (Number.isNaN(hookStart)) continue;
+    const afterCall = AFTER_CALL_HOOKS.has(hookInterceptor);
 
     const matches: Array<{
       proxy: ToolCallRow;
@@ -190,10 +198,17 @@ export function correlateToolCalls(
 
       const proxyStart = Date.parse(proxy.started_at);
       if (Number.isNaN(proxyStart)) continue;
-      // The hook necessarily fires first, so a proxy call that started before
-      // it belongs to some earlier hook call, not this one.
-      if (proxyStart < hookStart) continue;
-      if (proxyStart - hookStart > windowMs) break; // sorted: later ones too
+      if (afterCall) {
+        // The hook fired once the call was done, so the proxy call started
+        // at or before it; one that started later is some later call.
+        if (proxyStart > hookStart) break; // sorted: later ones too
+        if (hookStart - proxyStart > windowMs) continue;
+      } else {
+        // The hook necessarily fires first, so a proxy call that started
+        // before it belongs to some earlier hook call, not this one.
+        if (proxyStart < hookStart) continue;
+        if (proxyStart - hookStart > windowMs) break; // sorted: later ones too
+      }
 
       if (!parametersMatch(hook.parameters_json, proxy.parameters_json)) continue;
       const tier = nameMatch(hookInterceptor, hook.tool_name, proxy.tool_name);

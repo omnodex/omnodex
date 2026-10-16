@@ -181,15 +181,16 @@ export function mapAntigravityPayload(
 
     case "PreToolUse": {
       const p = payload as AntigravityPreToolUsePayload;
-      const toolName = p.toolCall?.name ?? "unknown";
+      const mcp = mcpCallOf(p.toolCall?.name, p.toolCall?.args);
+      const toolName = mcp?.toolName ?? p.toolCall?.name ?? "unknown";
       const event: ToolInvokedEvent = {
         ...base,
         event_id: options.newEventId(),
         event_type: "tool.invoked",
         tool_call_id: antigravityToolCallId(sessionId, p.stepIdx),
         tool_name: toolName,
-        mcp_server: mcpServerFor(toolName),
-        parameters: p.toolCall?.args ?? {},
+        mcp_server: mcp?.server ?? mcpServerFor(toolName),
+        parameters: mcp?.parameters ?? p.toolCall?.args ?? {},
         cwd: p.workspacePaths?.[0] ?? "",
       };
       return [event];
@@ -235,6 +236,33 @@ export function mapAntigravityPayload(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The built-in tool through which Antigravity's agent calls every MCP tool. */
+const CALL_MCP_TOOL = "call_mcp_tool";
+
+/**
+ * An MCP call as the other platforms record it. Antigravity's hooks report
+ * every MCP call as the built-in `call_mcp_tool`, with the server, the tool
+ * and the tool's own arguments inside its args (next to agy's toolAction
+ * and toolSummary). Naming it `mcp__<server>__<tool>` with the tool's
+ * arguments lets dashboards show the real server and lets correlation pair
+ * it with the proxy's record of the same call. Null for any other tool.
+ */
+function mcpCallOf(
+  name: string | undefined,
+  args: Record<string, unknown> | undefined,
+): { toolName: string; server: string; parameters: Record<string, unknown> } | null {
+  if (name !== CALL_MCP_TOOL || !args) return null;
+  const server = args.ServerName;
+  const tool = args.ToolName;
+  if (typeof server !== "string" || !server || typeof tool !== "string" || !tool) return null;
+  const inner = args.Arguments;
+  const parameters =
+    inner !== null && typeof inner === "object" && !Array.isArray(inner)
+      ? (inner as Record<string, unknown>)
+      : {};
+  return { toolName: `mcp__${server}__${tool}`, server, parameters };
+}
 
 function mcpServerFor(toolName: string): string {
   return splitMcpToolName(toolName)?.mcpServer ?? "builtin";
