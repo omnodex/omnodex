@@ -99,7 +99,7 @@ import {
   resolveCredentials,
   readStreamConfig,
 } from "./stream-config.js";
-import { createClaim, platformFromTarget } from "./connect.js";
+import { canonicalTarget, createClaim, platformFromTarget } from "./connect.js";
 import {
   writeLauncher,
   launcherPath,
@@ -111,6 +111,7 @@ import {
   LAUNCHER_PLATFORMS,
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
+import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
 import { addInstallation, removeInstallation, listInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
@@ -867,7 +868,8 @@ async function cmdConnect(args: string[]): Promise<void> {
   const flagToken = readFlagValue(args, "--token");
   const flagPassphrase = readFlagValue(args, "--secret") ?? readFlagValue(args, "--passphrase");
   const flagApiUrl = readFlagValue(args, "--api");
-  const flagPlatform = readFlagValue(args, "--platform");
+  const rawPlatform = readFlagValue(args, "--platform");
+  const flagPlatform = rawPlatform === undefined ? undefined : canonicalTarget(rawPlatform);
 
   // Resolve or generate credentials
   let creds = await resolveCredentials(paths.home, {
@@ -1008,14 +1010,18 @@ async function cmdConnect(args: string[]): Promise<void> {
 const VALID_TARGETS = ["claude-code", "codex", "antigravity"] as const;
 type InstallTarget = typeof VALID_TARGETS[number];
 
+function isTargetName(arg: string): boolean {
+  return VALID_TARGETS.includes(canonicalTarget(arg) as InstallTarget);
+}
+
 function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] } | null {
   const targetArg = args.find((a) => !a.startsWith("--"));
-  if (!targetArg || !VALID_TARGETS.includes(targetArg as InstallTarget)) {
+  if (!targetArg || !isTargetName(targetArg)) {
     const validList = VALID_TARGETS.join(", ");
     console.error(
       targetArg
         ? `[omnodex] unknown target '${targetArg}'. Valid targets: ${validList}`
-        : `[omnodex] target required. Valid targets: ${validList}`,
+        : `[omnodex] target required. Valid targets: ${validList} (agy also works for antigravity)`,
     );
     console.error(`\n  omnodex install <target> [project]`);
     console.error(`  omnodex uninstall [target] [project]\n`);
@@ -1023,12 +1029,19 @@ function resolveTarget(args: string[]): { target: InstallTarget; rest: string[] 
     return null;
   }
   return {
-    target: targetArg as InstallTarget,
+    target: canonicalTarget(targetArg) as InstallTarget,
     rest: args.filter((a) => a !== targetArg),
   };
 }
 
 async function cmdInstall(args: string[]): Promise<void> {
+  // No target, or a project folder in its place: set up every surface found.
+  const positional = args.find((a) => !a.startsWith("-"));
+  if (positional === undefined || (!isTargetName(positional) && await isDirectory(positional))) {
+    await installAllSurfaces(args);
+    return;
+  }
+
   const parsed = resolveTarget(args);
   if (!parsed) return;
   const { target, rest } = parsed;
@@ -1043,6 +1056,144 @@ async function cmdInstall(args: string[]): Promise<void> {
     case "antigravity":
       await installAntigravity(rest);
       return;
+  }
+}
+
+async function isDirectory(p: string): Promise<boolean> {
+  try {
+    return (await fs.stat(p)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function readOrNull(file: string): Promise<string | null> {
+  try {
+    return await fs.readFile(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** The project file each surface's hooks are written to. */
+function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: string, args: readonly string[]): string {
+  switch (surface) {
+    case "claude-code":
+      return new ClaudeCodeInterceptor({
+        projectPath,
+        shimPath: CLAUDE_HOOK_SHIM_PATH,
+        omnodexHome,
+        settingsFile: args.includes("--project-settings") ? "settings.json" : "settings.local.json",
+      }).settingsFilePath();
+    case "codex":
+      return new CodexInterceptor({ projectPath, shimPath: CODEX_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
+    case "antigravity":
+      return new AntigravityInterceptor({ projectPath, shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
+  }
+}
+
+const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
+  "claude-code": (args) => installClaudeCode(args),
+  codex: (args) => installCodex(args),
+  antigravity: (args) => installAntigravity(args),
+};
+
+/**
+ * `omnodex install` with no target: find every supported surface on this
+ * host, show what will be written, confirm once, install each, and sign in
+ * to the dashboard once at the end.
+ */
+async function installAllSurfaces(args: string[]): Promise<void> {
+  const positional = args.find((a) => !a.startsWith("-"));
+  const projectPath = path.resolve(positional ?? process.cwd());
+  const flags = args.filter((a) => a.startsWith("-") && a !== "--yes" && a !== "-y");
+  const paths = resolvePaths();
+
+  const detected = detectSurfaces({ home: os.homedir(), platform: process.platform, env: process.env });
+  const note = wslNote(detectWsl(defaultWslProbe(process.env), projectPath));
+  const printNote = () => {
+    if (note.length === 0) return;
+    console.log("");
+    for (const line of note) console.log(line ? `[install] ${line}` : "");
+  };
+
+  if (detected.length === 0) {
+    console.error(`[install] no supported agent surfaces found on this host (looked for ${Object.values(SURFACE_LABELS).join(", ")}).`);
+    console.error(`[install] install one first, or name a target: omnodex install <target>`);
+    printNote();
+    process.exitCode = 1;
+    return;
+  }
+
+  const plan = detected.map((d) => ({ ...d, file: surfaceHooksFile(d.surface, projectPath, paths.home, flags) }));
+  const width = Math.max(...plan.map((p) => SURFACE_LABELS[p.surface].length));
+  console.log(`[install] Omnodex will set up ${plan.length === 1 ? "this agent surface" : "these agent surfaces"} for ${projectPath}:`);
+  console.log("");
+  for (const p of plan) {
+    console.log(`  ${SURFACE_LABELS[p.surface].padEnd(width)}  (found: ${p.evidence})`);
+    const shown = p.file.startsWith(projectPath + path.sep) ? path.relative(projectPath, p.file) : p.file;
+    console.log(`  ${"".padEnd(width)}  hooks: ${shown}`);
+  }
+  printNote();
+  console.log("");
+
+  if (!args.includes("--yes") && !args.includes("-y")) {
+    if (!process.stdin.isTTY) {
+      console.error(`[install] not running in a terminal, so nothing was installed. Re-run with --yes to install.`);
+      process.exitCode = 1;
+      return;
+    }
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const answer = (await rl.question("Install? (Y/n) ")).trim().toLowerCase();
+    rl.close();
+    if (answer !== "" && answer !== "y" && answer !== "yes") {
+      console.log("[install] cancelled");
+      return;
+    }
+  }
+
+  // Each surface skips the sign-in; it runs once below for the whole install.
+  const surfaceArgs = [projectPath, ...flags.filter((f) => f !== "--no-connect"), "--no-connect"];
+  const outcomes: { surface: Surface; result: string; failed: boolean }[] = [];
+  const priorExitCode = process.exitCode;
+  for (const p of plan) {
+    console.log("");
+    console.log(`[install] ${SURFACE_LABELS[p.surface]}:`);
+    const before = await readOrNull(p.file);
+    process.exitCode = undefined;
+    let error: string | null = null;
+    try {
+      await SURFACE_INSTALLERS[p.surface](surfaceArgs);
+      if (process.exitCode) error = "install reported an error (see above)";
+    } catch (err) {
+      error = (err as Error).message;
+      console.error(`[install] ${SURFACE_LABELS[p.surface]} failed: ${error}`);
+    }
+    const after = await readOrNull(p.file);
+    const result = error
+      ? `failed: ${error}`
+      : before === null
+        ? "installed"
+        : before === after
+          ? "already set up, nothing changed"
+          : "updated";
+    outcomes.push({ surface: p.surface, result, failed: error !== null });
+  }
+  const anyFailed = outcomes.some((o) => o.failed);
+  process.exitCode = anyFailed ? 1 : priorExitCode;
+
+  console.log("");
+  console.log(`[install] summary:`);
+  for (const o of outcomes) console.log(`  ${SURFACE_LABELS[o.surface].padEnd(width)}  ${o.result}`);
+  if (outcomes.every((o) => o.result === "already set up, nothing changed")) {
+    console.log(`[install] nothing to change; Omnodex is already set up here`);
+  }
+  if (outcomes.some((o) => !o.failed)) {
+    await connectAfterInstall(paths.home, {
+      args,
+      platform: detected.length === 1 ? platformFromTarget(detected[0].surface) : undefined,
+      projectLabel: path.basename(projectPath),
+    });
   }
 }
 
@@ -1120,6 +1271,8 @@ async function installClaudeCode(args: string[]): Promise<void> {
   // Record in the installation registry
   await addInstallation({
     target: "claude-code",
+    component: "hooks",
+    scope: "project",
     projectPath,
     settingsFile: targetFile,
     installedAt: new Date().toISOString(),
@@ -1179,6 +1332,8 @@ async function installCodex(args: string[]): Promise<void> {
   // Record in the installation registry
   await addInstallation({
     target: "codex",
+    component: "hooks",
+    scope: "project",
     projectPath,
     settingsFile: "hooks.json",
     installedAt: new Date().toISOString(),
@@ -1237,24 +1392,40 @@ async function installAntigravity(args: string[]): Promise<void> {
     console.log(`[install] hooks apply to all Antigravity surfaces (CLI, Desktop, IDE)`);
   }
 
-  if (doMcp) {
-    await installAntigravityMcp(projectPath, paths.home, nodePath);
-  }
+  const mcpWritten = doMcp ? await installAntigravityMcp(projectPath, paths.home, nodePath) : false;
 
   console.log(
     `[install] run \`omnodex uninstall antigravity ${projectPath}\` to remove`,
   );
 
-  // Record in the installation registry
-  await addInstallation({
-    target: "antigravity",
-    projectPath,
-    settingsFile: doHooks ? "hooks.json" : "mcp_config.json",
-    installedAt: new Date().toISOString(),
-    installedVersion: getInstalledVersion(),
-    usesLauncher: !useLegacy,
-    launcherPath: useLegacy ? undefined : shimPath,
-  });
+  // Record in the installation registry, one entry per component
+  const installedAt = new Date().toISOString();
+  if (doHooks) {
+    await addInstallation({
+      target: "antigravity",
+      component: "hooks",
+      scope: "project",
+      projectPath,
+      settingsFile: "hooks.json",
+      installedAt,
+      installedVersion: getInstalledVersion(),
+      usesLauncher: !useLegacy,
+      launcherPath: useLegacy ? undefined : shimPath,
+    });
+  }
+  if (mcpWritten) {
+    await addInstallation({
+      target: "antigravity",
+      component: "mcp",
+      scope: "project",
+      projectPath,
+      settingsFile: "mcp_config.json",
+      installedAt,
+      installedVersion: getInstalledVersion(),
+      usesLauncher: !useLegacy,
+      launcherPath: useLegacy ? undefined : shimPath,
+    });
+  }
 
   // Connect to dashboard (device code flow if no token, claim link if token exists)
   await connectAfterInstall(paths.home, {
@@ -1276,7 +1447,7 @@ async function installAntigravityMcp(
   projectPath: string,
   omnodexHome: string,
   nodePath: string,
-): Promise<void> {
+): Promise<boolean> {
   // Locate launch-proxy.js: check plugin install dirs, then fall back
   // to the omnodex-plugins source tree.
   const candidates = [
@@ -1300,7 +1471,7 @@ async function installAntigravityMcp(
     console.warn(`[install]          Install the plugin first: unzip omnodex-antigravity.plugin,`);
     console.warn(`[install]          then \`agy plugin install <dir>\``);
     console.warn(`[install]          After installing, re-run with --mcp to configure the proxy.`);
-    return;
+    return false;
   }
 
   const mcpConfigPath = path.join(projectPath, ".agents", "mcp_config.json");
@@ -1332,17 +1503,19 @@ async function installAntigravityMcp(
   console.log(`[install] wrote MCP proxy config to`);
   console.log(`          ${mcpConfigPath}`);
   console.log(`[install] proxy launcher: ${launchProxyPath}`);
+  return true;
 }
 
 async function cmdUninstall(args: string[]): Promise<void> {
   const projectPath = path.resolve(
-    args.find((a) => !a.startsWith("--") && !VALID_TARGETS.includes(a as InstallTarget)) ?? process.cwd(),
+    args.find((a) => !a.startsWith("--") && !isTargetName(a)) ?? process.cwd(),
   );
   const paths = resolvePaths();
   const confirmed = args.includes("--confirm");
 
   // Determine which targets to uninstall
-  const targetArg = args.find((a) => VALID_TARGETS.includes(a as InstallTarget)) as InstallTarget | undefined;
+  const targetName = args.find((a) => isTargetName(a));
+  const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
 
   interface InstalledHook {
     target: InstallTarget;
@@ -1444,7 +1617,7 @@ async function cmdUninstall(args: string[]): Promise<void> {
 
   for (const hook of toRemove) {
     await hook.uninstall();
-    await removeInstallation(hook.target as LauncherPlatform, projectPath);
+    await removeInstallation(hook.target as LauncherPlatform, projectPath, "hooks");
     console.log(`[uninstall] removed ${hook.label} hooks from ${hook.path}`);
   }
 }
@@ -1486,9 +1659,16 @@ async function cmdStatus(_args: string[]): Promise<void> {
     console.log(`  Registered installations (${allInstalls.length}):\n`);
     for (const inst of allInstalls) {
       const launcherTag = inst.usesLauncher ? "launcher" : "legacy";
-      console.log(`  ${inst.target} — ${inst.projectPath}`);
+      const where = inst.scope === "user" ? "user-wide" : inst.projectPath;
+      console.log(`  ${inst.target} ${inst.component} (${inst.scope}) — ${where}`);
       console.log(`    installed: ${inst.installedAt}  v${inst.installedVersion}  (${launcherTag})`);
-      console.log(`    settings: ${inst.settingsFile}`);
+      if (inst.component === "plugin") {
+        const version = inst.pluginVersion ? ` v${inst.pluginVersion}` : "";
+        const override = inst.pluginOverride ? " (version override)" : "";
+        console.log(`    plugin: ${inst.pluginPath ?? inst.settingsFile}${version}${override}`);
+      } else {
+        console.log(`    settings: ${inst.settingsFile}`);
+      }
     }
 
     // Warn about stale (legacy) installations
@@ -2313,11 +2493,16 @@ commands:
                      Flags:
                        --check               dry run — show available update
                        --refresh-launchers   just refresh launcher scripts
-  install <target> [project]
+  install [target] [project]
                      install Omnodex hooks for an AI agent platform.
-                     Targets: claude-code, codex, antigravity
+                     Targets: claude-code, codex, antigravity (or agy)
+                     Without a target, finds every supported agent on
+                     this machine, shows what it will write, asks once,
+                     and installs them all.
                      Defaults to cwd if project is omitted.
                      Flags:
+                       --yes, -y             install without asking (needed
+                                             when not in a terminal)
                        --debug               verbose shim logging
                        --no-connect          skip the dashboard sign-in
                                              (also skipped without a terminal)
