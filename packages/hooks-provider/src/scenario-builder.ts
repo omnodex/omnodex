@@ -77,7 +77,12 @@ export function buildScenarios(options: ScenarioOptions = {}): TraceEvent[] {
     const rawCalls = fixture?.calls ?? (s === pairHook || s === pairProxy
       ? [{ tool: s === pairHook ? "mcp__omnodex__filesystem__read_text_file" : "filesystem__read_text_file", server: s === pairHook ? "omnodex" : "filesystem", parameters: { path: "/home/case/repo/src/paired.ts" } }]
       : [read(`${project}/src/index.ts`), write(`${project}/out/result.json`, '{"ok":true}'), bash("node --version")]);
-    const calls = rawCalls.map(call => platform === "cowork" && !call.server
+    // Vary the ordinary work as well as timing while keeping coverage anchors
+    // and caller-supplied chain sequences intact for every seed.
+    const variedCalls = s > pairProxy
+      ? [...rawCalls, ...Array.from({ length: Math.floor(random() * 6) }, () => read(`${project}/src/component-${Math.floor(random() * 1000)}.ts`))]
+      : rawCalls;
+    const calls = variedCalls.map(call => platform === "cowork" && !call.server
       ? { ...call, tool: `local-tools__${call.tool}`, server: "local-tools" }
       : call);
     let tick = s === pairHook || s === pairProxy ? Date.parse(now) - 1_200_000 + (s - pairHook) * 1000 : Date.parse(now) - (count - s) * 600_000 - Math.floor(random() * 60_000);

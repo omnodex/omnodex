@@ -67,6 +67,8 @@ test("stable bytes, different seeds, and append-safe identifiers", () => {
   const first = buildScenarios({ seed: 0 });
   assert.equal(JSON.stringify(first), JSON.stringify(buildScenarios({ seed: 0 })));
   assert.notEqual(JSON.stringify(first), JSON.stringify(buildScenarios({ seed: 1 })));
+  const callCounts = [0, 1, 2, 3, 4].map(seed => buildScenarios({ seed }).filter(e => e.event_type === "tool.invoked").length);
+  assert.ok(new Set(callCounts).size > 1, "seeds vary the work, not just identifiers and timestamps");
   const second = buildScenarios({ seed: 0, existingSessionIds: first.map(e => e.session_id) });
   const third = buildScenarios({ seed: 0, existingSessionIds: [...first, ...second].map(e => e.session_id) });
   const all = [...first, ...second, ...third];
