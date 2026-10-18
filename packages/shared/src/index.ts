@@ -303,6 +303,70 @@ export interface FileWrittenEvent extends BaseEvent {
   bytes: number;
 }
 
+/**
+ * What a call contributed to a finding that spans several calls: where the
+ * data came from, an intermediate step such as archiving or encoding it,
+ * the call that sent it, or context that explains the others.
+ */
+export type EvidenceRole = "source" | "staging" | "sink" | "context";
+
+export interface EvidenceStep {
+  /** tool_call_id of the call, as in related_event_ids. */
+  tool_call_id: string;
+  role: EvidenceRole;
+  /**
+   * One line on what the call did, built from what it reads, writes and
+   * reaches ("Read ~/.aws/credentials"). Never the command text, which can
+   * hold the credential itself.
+   */
+  summary: string;
+  /** What matched on this call, such as the label of a sensitive path. */
+  labels?: string[];
+  /** The interceptor that recorded the call. */
+  interceptor?: InterceptorKind;
+}
+
+export interface EvidenceDestination {
+  /** Lowercased host name or IP literal. */
+  host: string;
+  scheme?: string;
+  port?: number;
+  ip_class?: "loopback" | "private" | "link-local" | "metadata" | "public";
+  /** The call names an IP address rather than a host name. */
+  raw_ip?: boolean;
+}
+
+export interface EvidenceCredential {
+  /** The kind of credential, as the rule labels it ("AWS credentials"). */
+  class: string;
+  /** Seen as a file the agent read, or as a pattern in a call's parameters. */
+  source: "file-read" | "param-pattern";
+  /** How the sink used it: as authentication, in a body, a URL, and so on. */
+  role?: "auth-header" | "body" | "url" | "env" | "argument" | "content";
+}
+
+/**
+ * The calls behind a finding and how they connect. Carried on findings from
+ * rules that match a sequence of calls. It names credentials by kind only:
+ * a credential's value is never part of it.
+ */
+export interface FindingEvidence {
+  /** The calls in order, ending with the one the finding is anchored on. */
+  steps: EvidenceStep[];
+  /** Where the sink call went, when it reached an external host. */
+  destination?: EvidenceDestination;
+  credential?: EvidenceCredential;
+  /** The destination had not been reached from this machine before. */
+  first_seen_destination?: boolean;
+  /** A routine reason the same calls can happen, from the rule. */
+  benign_note?: string;
+  /**
+   * When the finding was made: as the last call was recorded ("capture"),
+   * or by a later pass over the log ("background").
+   */
+  found_at?: "capture" | "background";
+}
+
 export interface RiskDetectedEvent extends BaseEvent {
   event_type: "risk.detected";
   severity: RiskSeverity;
@@ -328,6 +392,13 @@ export interface RiskDetectedEvent extends BaseEvent {
    * single-event findings.
    */
   related_event_ids?: string[];
+  /**
+   * For rules that match a sequence of events: the role each call played,
+   * with destination and credential kind. Its steps name the same calls as
+   * related_event_ids. Absent for single-event findings and on findings
+   * recorded before it was added.
+   */
+  evidence?: FindingEvidence;
 }
 
 

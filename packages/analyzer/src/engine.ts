@@ -55,6 +55,7 @@ import {
   type RateThresholdState,
   createRateThresholdState,
 } from "./conditions/rate-threshold.js";
+import { buildEvidence } from "./evidence.js";
 
 // ---------------------------------------------------------------------------
 // Condition dispatch
@@ -266,7 +267,10 @@ export class RuleEngine {
           rule_id: rule.rule_id,
           tier: rule.tier,
         };
-        if (ctx.related_event_ids?.length) finding.related_event_ids = ctx.related_event_ids;
+        if (ctx.sequence_steps?.length) {
+          finding.related_event_ids = ctx.sequence_steps.map((s) => s.event.tool_call_id);
+          finding.evidence = buildEvidence(rule, event, ctx);
+        }
         findings.push(finding);
       }
     }

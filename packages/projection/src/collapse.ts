@@ -160,8 +160,8 @@ export function collapseCorrelatedToolCalls(snapshot: ReadModelSnapshot): ReadMo
  * A finding two hosts raised on one routed call appears once, with its call
  * in the agent's session, repointed at the call that survived. A finding
  * only one host raised moves with its call. A sequence finding's pattern
- * (related_event_ids) is repointed the same way, so it names calls a reader
- * can still find. Session risk scores are recomputed for the sessions that
+ * (related_event_ids, and the steps of its evidence) is repointed the same
+ * way, so it names calls a reader can still find. Session risk scores are recomputed for the sessions that
  * gained or lost findings.
  */
 export function collapseCorrelatedFindings(snapshot: ReadModelSnapshot): ReadModelSnapshot {
@@ -188,7 +188,14 @@ export function collapseCorrelatedFindings(snapshot: ReadModelSnapshot): ReadMod
   const repointPattern = (row: RiskEventRow): RiskEventRow => {
     if (!row.related_event_ids?.some((id) => keptId.has(id) && keptId.get(id) !== id)) return row;
     changedPattern = true;
-    return { ...row, related_event_ids: row.related_event_ids.map((id) => keptId.get(id) ?? id) };
+    const repoint = (id: string): string => keptId.get(id) ?? id;
+    return {
+      ...row,
+      related_event_ids: row.related_event_ids.map(repoint),
+      ...(row.evidence
+        ? { evidence: { ...row.evidence, steps: row.evidence.steps.map((s) => ({ ...s, tool_call_id: repoint(s.tool_call_id) })) } }
+        : {}),
+    };
   };
   let changedPattern = false;
 

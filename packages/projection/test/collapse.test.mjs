@@ -154,11 +154,20 @@ test("a sequence finding's pattern names the calls that were kept", () => {
   snap.risk_events.proxy.push(finding("proxy", "tc-proxy", "rule_sequence", {
     rule_tier: "advanced",
     related_event_ids: ["tc-earlier", "tc-proxy"],
+    evidence: {
+      steps: [
+        { tool_call_id: "tc-earlier", role: "source", summary: "Read /home/case/.env" },
+        { tool_call_id: "tc-proxy", role: "sink", summary: "Network call to paste.example.net" },
+      ],
+      destination: { host: "paste.example.net" },
+    },
   }));
   const out = collapseCorrelated(snap);
   const seq = out.risk_events.hook.find((r) => r.rule_id === "rule_sequence");
   assert.equal(seq.related_event_id, "tc-hook");
   assert.deepEqual(seq.related_event_ids, ["tc-earlier", "tc-hook"], "the proxy's id for the routed call is repointed");
+  assert.deepEqual(seq.evidence.steps.map((s) => s.tool_call_id), ["tc-earlier", "tc-hook"], "and so are the evidence steps");
+  assert.equal(seq.evidence.destination.host, "paste.example.net");
   assert.equal(seq.rule_tier, "advanced");
 });
 

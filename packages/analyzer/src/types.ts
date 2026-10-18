@@ -96,6 +96,12 @@ export interface RuleDefinition {
    * a registry override in .npmrc, set it equal to `severity`.
    */
   staged_severity?: RiskSeverity;
+  /**
+   * A routine reason the matched calls can happen ("deploy scripts upload
+   * configuration"). Carried in the evidence of findings on a sequence, so
+   * the reader sees why the finding might be fine beside why it fired.
+   */
+  benign_note?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -439,8 +445,15 @@ export interface MatchContext {
   matched_destination?: string;
   /** Populated by staged credential_match: the file the content was written to. */
   staged_path?: string;
-  /** Populated by sequence conditions: tool_call_ids of the earlier events. */
-  related_event_ids?: string[];
+  /** Populated by sequence conditions: the earlier events that matched, oldest first. */
+  sequence_steps?: SequenceStepMatch[];
+}
+
+/** An earlier event a sequence condition matched, and what matched on it. */
+export interface SequenceStepMatch {
+  event: import("@omnodex/shared").ToolInvokedEvent;
+  role: import("@omnodex/shared").EvidenceRole;
+  context: Partial<MatchContext>;
 }
 
 /** A single detection result produced by the rule engine. */
@@ -454,6 +467,8 @@ export interface RiskFinding {
   tier: "community" | "advanced";
   /** Earlier events a sequence rule matched, in addition to the current one. */
   related_event_ids?: string[];
+  /** For a sequence rule: every matched call with its role, ending with the current one. */
+  evidence?: import("@omnodex/shared").FindingEvidence;
 }
 
 /** Return value of detectRisks(). */

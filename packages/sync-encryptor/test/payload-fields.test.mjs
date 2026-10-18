@@ -19,6 +19,9 @@ import { serializeReadModel, PAYLOAD_FIELDS } from "../dist/index.js";
  *   3. A session's platform survives projection, SQLite and serialization,
  *      including a session whose platform arrives only after it was created.
  *   4. A database from before the platform column migrates and reads null.
+ *   5. A finding's tier, sequence and evidence survive projection, SQLite
+ *      and serialization: hosted gates advanced findings and groups
+ *      findings into investigations from them.
  */
 
 const AT = "2026-09-29T12:00:00.000Z";
@@ -63,6 +66,14 @@ const RISK = event({
   rule_id: "rule_sensitive_path",
   rule_tier: "advanced",
   related_event_ids: ["tc_0", "tc_1"],
+  evidence: {
+    steps: [
+      { tool_call_id: "tc_0", role: "source", summary: "Read /home/case/.aws/credentials", labels: ["AWS credentials"], interceptor: "claude-code-hook" },
+      { tool_call_id: "tc_1", role: "sink", summary: "Network call to paste.example.net", interceptor: "claude-code-hook" },
+    ],
+    destination: { host: "paste.example.net", scheme: "https" },
+    found_at: "background",
+  },
 });
 
 /**
@@ -103,6 +114,7 @@ test("the payload allowlist is exactly these fields", () => {
     risk_events: [
       "event_id", "session_id", "related_event_id", "severity", "category",
       "description", "rule_id", "detected_at", "correlation_id",
+      "rule_tier", "related_event_ids", "evidence",
     ],
     prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
     subagents: [
@@ -132,11 +144,9 @@ test("a read-model field that is not listed stays out of the payload", async () 
     }
   }
   assert.equal(payload.sessions[0].local_only, undefined);
-  assert.equal(payload.risk_events.sess_fields[0].rule_tier, undefined);
-  assert.equal(payload.risk_events.sess_fields[0].related_event_ids, undefined);
 });
 
-test("metadata the read model keeps for the local dashboard stays out of the payload", async () => {
+test("transports the read model keeps for the local dashboard stay out of the payload", async () => {
   const transports = [{ name: "filesystem", transport: "stdio" }];
   const store = await project(new InMemoryReadModelStore(), [
     { ...START, mcp_server_transports: transports },
@@ -145,15 +155,25 @@ test("metadata the read model keeps for the local dashboard stays out of the pay
   ]);
   // The read model has them...
   assert.deepEqual((await store.getSession("sess_fields")).mcp_server_transports, transports);
-  const [row] = await store.listRiskEvents("sess_fields");
-  assert.equal(row.rule_tier, "advanced");
-  assert.deepEqual(row.related_event_ids, ["tc_0", "tc_1"]);
 
   // ...and the payload does not.
   const payload = await serializeReadModel(store);
   assert.ok(!("mcp_server_transports" in payload.sessions[0]));
-  assert.ok(!("rule_tier" in payload.risk_events.sess_fields[0]));
-  assert.ok(!("related_event_ids" in payload.risk_events.sess_fields[0]));
+});
+
+test("a finding's tier, sequence and evidence survive projection, SQLite and serialization", async (t) => {
+  const store = await project(await sqliteStore(t), [START, INVOKED, RISK]);
+  const [row] = (await serializeReadModel(store)).risk_events.sess_fields;
+  assert.equal(row.rule_tier, "advanced");
+  assert.deepEqual(row.related_event_ids, ["tc_0", "tc_1"]);
+  assert.deepEqual(row.evidence, RISK.evidence);
+});
+
+test("a single-call finding carries no sequence or evidence in the payload", async () => {
+  const { rule_tier: _t, related_event_ids: _r, evidence: _e, ...plain } = RISK;
+  const store = await project(new InMemoryReadModelStore(), [START, INVOKED, plain]);
+  const [row] = (await serializeReadModel(store)).risk_events.sess_fields;
+  assert.ok(!("rule_tier" in row) && !("related_event_ids" in row) && !("evidence" in row));
 });
 
 test("platform survives projection, SQLite and serialization", async (t) => {

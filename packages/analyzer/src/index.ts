@@ -146,3 +146,7 @@ export type {
   StagingStep,
   CredentialRole,
 } from "./action.js";
+
+// Evidence for findings on a sequence of calls: each call's role, a summary
+// of what it did, and where the last one went.
+export { buildEvidence, summarizeCall, evidenceDestination } from "./evidence.js";

@@ -301,6 +301,9 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     if (finding.related_event_ids?.length) {
       risk.related_event_ids = [...finding.related_event_ids, event.tool_call_id];
     }
+    if (finding.evidence) {
+      risk.evidence = { ...finding.evidence, found_at: opts.host === "proxy" ? "capture" : "background" };
+    }
 
     stats.findings++;
     stats.byRule[finding.rule_id] = (stats.byRule[finding.rule_id] ?? 0) + 1;

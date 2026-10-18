@@ -11,7 +11,8 @@
  * the condition's bounds, satisfied every one of the condition's "prior"
  * conditions. The rule's other conditions apply to the current event, so a
  * rule reads as "this event, after that one". Yields one context citing the
- * most recent qualifying earlier event, so the finding can name both.
+ * most recent qualifying earlier event as the chain's source, so the
+ * finding can name both.
  *
  * The window of earlier events is kept by the engine and supplied here.
  * Prior conditions must be stateless (checked when rules are classified),
@@ -44,9 +45,27 @@ export function evaluateSequence(
       const age = (now - Date.parse(prior.occurred_at)) / 1000;
       if (!(age <= condition.within_seconds)) break;
     }
-    if (condition.prior.every((c) => evaluate(c, prior).length > 0)) {
-      return [{ related_event_ids: [prior.tool_call_id] }];
-    }
+    const context = matchAll(condition.prior, prior, evaluate);
+    if (context) return [{ sequence_steps: [{ event: prior, role: "source", context }] }];
   }
   return [];
+}
+
+/**
+ * The first context of each condition merged, when every condition matches
+ * the event; null otherwise. Kept so the evidence can say what matched on
+ * the earlier call (the sensitive path's label, say).
+ */
+function matchAll(
+  conditions: readonly Condition[],
+  event: ToolInvokedEvent,
+  evaluate: StatelessConditionFn,
+): Partial<MatchContext> | null {
+  let merged: Partial<MatchContext> = {};
+  for (const c of conditions) {
+    const hit = evaluate(c, event);
+    if (hit.length === 0) return null;
+    merged = { ...merged, ...hit[0] };
+  }
+  return merged;
 }

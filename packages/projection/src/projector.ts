@@ -320,6 +320,7 @@ export class Projector {
       detected_at: event.occurred_at,
       ...(event.rule_tier ? { rule_tier: event.rule_tier } : {}),
       ...(event.related_event_ids?.length ? { related_event_ids: event.related_event_ids } : {}),
+      ...(event.evidence ? { evidence: event.evidence } : {}),
     });
     if (!inserted) return;
     const score = riskScoreFor(event.severity);
