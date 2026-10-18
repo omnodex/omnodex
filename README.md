@@ -222,7 +222,11 @@ omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       status    inspect the current config
                                       start     start the proxy server
 
-omnodex spike [name]                run a simulated session through the full pipeline
+omnodex spike [name]                generate synthetic sessions and real community findings
+                                      --seed <integer>  reproduce a dataset (default 1)
+                                      --random          pick and print a fresh seed
+                                      --now <ISO>       fixed clock with timezone
+                                      --sessions <N>    12-1000 sessions (default 12)
 omnodex detect [session]            scan event log for risks (all sessions if omitted).
                                       Hooks and the MCP proxy also run detection in the
                                       background, with or without a connected dashboard:
@@ -248,6 +252,13 @@ omnodex license [clear]             show license tier, or clear the cached licen
 ---
 
 ## Architecture
+
+To try synthetic data in an isolated home, run
+`OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 omnodex spike --seed 42 --now 2026-10-18T12:00:00Z`,
+then start `omnodex dashboard` with the same environment. No scenario commands
+or requests execute. With no flags, the clock is fixed at
+`2026-10-01T12:00:00.000Z`; repeated runs append sessions with distinct IDs.
+See the [coverage manifest](packages/hooks-provider/SCENARIOS.md).
 
 1. **Event-log-first storage.** The source of truth is an append-only JSONL event log under `$OMNODEX_HOME/event-log/sessions/`. SQLite is a derived read model rebuilt by replaying the log. The dashboard supports tailing multiple roots simultaneously for multi-source aggregation.
 2. **Async by design.** Interceptors append to the event log and exit. They never block the agent's execution path. The projector and analyzer run asynchronously and are allowed to lag.

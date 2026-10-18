@@ -14,8 +14,8 @@ Full documentation: [docs.omnodex.com](https://docs.omnodex.com/)
 npm install
 npm run build
 
-# Run the full mock pipeline (25 events, SQLite read model, risk detection)
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js spike
+# Generate 12 synthetic sessions, real community findings and a SQLite read model
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js spike --seed 42 --now 2026-10-18T12:00:00Z
 
 # Scan for risk patterns and append risk.detected events (idempotent)
 OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js detect
@@ -60,6 +60,14 @@ OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/inde
 `npm run build` runs `npx tsc -b` and then builds the local dashboard page. The page is a React app in `packages/cli/src/dashboard/`, with its view logic (labels, formatting, the credential ledger) in `packages/cli/src/dashboard-model/` so `node:test` can cover it. `packages/cli/build-dashboard.mjs` bundles it with esbuild into one self-contained file, `packages/cli/dist/dashboard.html`, which `omnodex dashboard` serves; React is bundled into that file and never becomes a runtime dependency. `npm install` builds the page too (the root `prepare` script), so a checkout built with `npm install` and `npx tsc -b` has it. After editing the page, run `npm run build:dashboard -w @omnodex/cli` and reload; `npm run typecheck:dashboard -w @omnodex/cli` typechecks it, and CI runs both.
 
 ## Platforms
+
+`spike [name]` accepts `--seed <integer>` (including zero), `--random`
+(prints the selected seed), `--now <ISO timestamp with timezone>` and
+`--sessions <N>` (12-1000). No flags uses seed 1 and a fixed clock of
+`2026-10-01T12:00:00.000Z`. Named and unnamed repeated runs append new IDs.
+The [scenario manifest](packages/hooks-provider/SCENARIOS.md) maps fixtures
+to their real analyzer and projection assertions. MockInterceptor remains
+available for existing interceptor tests; spike uses `buildScenarios`.
 
 The CLI, the dashboard and the tests run on Linux, macOS, native Windows and WSL. CI runs the suite on Ubuntu, Windows and macOS. Package scripts use Node only (`scripts/rm.mjs` stands in for `rm -rf`), because npm runs scripts through cmd.exe on Windows. In code, turn a module URL into a path with `fileURLToPath`, never `URL.pathname`, which keeps a `/` before a Windows drive letter and leaves spaces percent-encoded.
 

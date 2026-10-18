@@ -39,8 +39,10 @@ import {
 import {
   CLAUDE_HOOK_SHIM_PATH,
   ClaudeCodeInterceptor,
-  MockInterceptor,
+  buildScenarios,
+  DEFAULT_SCENARIO_SEED,
 } from "@omnodex/hooks-provider";
+import { parseSpikeOptions } from "./spike-options.js";
 import {
   CODEX_HOOK_SHIM_PATH,
   CodexInterceptor,
@@ -297,36 +299,38 @@ function primaryPathsFor(primary: string): Paths {
 }
 
 async function cmdSpike(args: string[]): Promise<void> {
+  const options = parseSpikeOptions(args);
   const paths = resolvePaths();
-
-  // Optional session name: `omnodex spike my-test` → sess_my-test
-  // If omitted, MockInterceptor generates a unique timestamp-based ID.
-  const rawName = args.find((a) => !a.startsWith("--"));
-  const sessionId = rawName ? `sess_${rawName}` : undefined;
-
   console.log(`[spike] OMNODEX_HOME=${paths.home}`);
+  console.log(`[spike] seed: ${options.seed ?? DEFAULT_SCENARIO_SEED}`);
   const log = new EventLog({ root: paths.eventLogRoot });
   await log.init();
-
-  const interceptor = new MockInterceptor({ sessionId });
-  const events = interceptor.buildSessionEvents();
-  const usedSessionId = events[0]?.session_id ?? "unknown";
-  console.log(`[spike] session ID: ${usedSessionId}`);
-  console.log(`[spike] mock interceptor emitted ${events.length} events`);
-  for (const event of events) {
-    await log.append(event);
+  try {
+    const events = buildScenarios({ ...options, existingSessionIds: await log.listSessions() });
+    await log.appendMany(events);
+    // Use the same community batch evaluator as captured traffic. Its output
+    // timestamps are pinned to the triggering event for reproducible fixtures.
+    const sessions = [...new Set(events.map(e => e.session_id))];
+    for (const id of sessions) {
+      const source = events.filter(e => e.session_id === id);
+      let finding = 0;
+      const result = detectRisks(source, () => `${id}_finding_${finding++}`);
+      for (const risk of result.newEvents) {
+        const call = source.find(e => e.event_type === "tool.invoked" && e.tool_call_id === risk.related_event_id);
+        risk.occurred_at = call?.occurred_at ?? source[0].occurred_at;
+        risk.recorded_at = risk.occurred_at;
+      }
+      await log.appendMany(result.newEvents);
+    }
+    console.log(`[spike] appended ${events.length} raw events in ${sessions.length} sessions`);
+    const store = await openStore(paths);
+    try {
+      await rebuildReadModel(store, [{ rootPath: paths.home, log }]);
+      await printReport(store);
+    } finally { await store.close(); }
+  } finally {
+    await log.close();
   }
-  await log.close();
-  console.log(
-    `[spike] appended ${events.length} events to ${log.sessionFilePath(usedSessionId)}`,
-  );
-
-  console.log(`[spike] building read model ...`);
-  const store = await openStore(paths);
-  const projector = new Projector(store);
-  await projector.replay(iterateLog(log));
-  await printReport(store);
-  await store.close();
   console.log(`[spike] done`);
 }
 
@@ -3063,10 +3067,12 @@ commands:
                      push the next event at once.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
-  spike [name]       run a simulated session through the full pipeline.
-                     Optional name sets the session ID (sess_<name>); if
-                     omitted a unique timestamp-based ID is generated so
-                     successive runs each create a distinct session.
+  spike [name]       build synthetic sessions through the real pipeline.
+                     --seed <integer>  reproducible variation (default 1)
+                     --random          pick and print a fresh seed
+                     --now <ISO>       fixed clock with timezone
+                     --sessions <N>    session count, minimum/default 12
+                     Names prefix session IDs; repeated runs append new IDs.
   detect [session]   scan event logs for risk patterns and append
                      risk.detected events. Runs on all sessions if no
                      session id is given, across every configured root.
