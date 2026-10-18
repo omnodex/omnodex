@@ -27,8 +27,7 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { CwdBoundaryCondition, EvaluationContext, MatchContext } from "../types.js";
-import { extractPaths } from "./path-match.js";
-import { extractWriteTargets } from "./write-targets.js";
+import { normalizeAction } from "../action.js";
 
 /**
  * Normalize a path for prefix comparison: lowercase on Windows-style
@@ -70,7 +69,8 @@ export function evaluateCwdBoundary(
   // Return empty (condition does not match) rather than false positive.
   if (!event.cwd) return [];
 
-  const paths = condition.access === "write" ? extractWriteTargets(event) : extractPaths(event);
+  const action = normalizeAction(event);
+  const paths = condition.access === "write" ? action.writes : action.paths;
   if (paths.length === 0) return [];
 
   const roots = context.workspaceRoots?.length ? context.workspaceRoots : [event.cwd];

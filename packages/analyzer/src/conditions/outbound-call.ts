@@ -8,8 +8,9 @@
  * outbound_call condition evaluator.
  *
  * Detects whether a tool.invoked event represents an outbound HTTP call to
- * an external host. Acts as a boolean guard: returns one empty MatchContext
- * when the event looks outbound, or nothing when it does not.
+ * an external host. Acts as a guard: returns one MatchContext when the event
+ * looks outbound (naming its destination when known), or nothing when it
+ * does not. The parsing lives in the normalized action (../action.ts).
  *
  * Detection logic:
  *   1. If URL parameters are present, use them exclusively:
@@ -25,66 +26,28 @@
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
+import { normalizeAction } from "../action.js";
 import type { MatchContext } from "../types.js";
-import { extractExecText, isWriteTool, stripFileHeredocs } from "./scope.js";
-
-const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
-
-const URL_RE = /https?:\/\/([^/\s"'\\]+)/g;
-
-function extractUrls(paramStr: string): string[] {
-  const hosts: string[] = [];
-  let m: RegExpExecArray | null;
-  URL_RE.lastIndex = 0;
-  while ((m = URL_RE.exec(paramStr)) !== null) {
-    const host = m[1]?.toLowerCase().split(":")[0] ?? "";
-    hosts.push(host);
-  }
-  return hosts;
-}
 
 /**
  * Returns true if the event looks like an outbound HTTP call to an external host.
  */
 export function isOutboundCall(event: ToolInvokedEvent): boolean {
-  const name = event.tool_name.toLowerCase();
-  const fetchLike = name.includes("fetch") || name.includes("http") || name.includes("request");
-
-  // A file being written is not a call being made. Writing a document, a
-  // test or a config that happens to contain a URL used to read as outbound,
-  // which put credential-exfiltration findings on ordinary edits.
-  if (isWriteTool(event) && !fetchLike) return false;
-
-  // For a shell command, only what runs: a file saved through a heredoc may
-  // mention URLs and curl without calling anything.
-  const exec = extractExecText(event);
-  const command = exec === null ? null : stripFileHeredocs(exec);
-  const paramStr = command ?? JSON.stringify(event.parameters);
-  const urlHosts = extractUrls(paramStr);
-
-  // If URL parameters are present, let the URL decide.
-  // Outbound only if at least one URL targets a non-localhost host.
-  if (urlHosts.length > 0) {
-    return urlHosts.some((host) => !LOCALHOST_HOSTS.has(host));
-  }
-
-  // No URL parameters — fall back to tool name and bash command heuristics.
-  if (fetchLike) return true;
-
-  if (command !== null && /\b(curl|wget|httpie?)\b/.test(command)) return true;
-
-  return false;
+  return normalizeAction(event).outbound;
 }
 
 /**
  * Evaluate an outbound_call condition against a tool.invoked event.
  *
- * Returns a single empty partial context when the call is outbound (so
- * the engine treats this as "condition matched, no additional template
- * variables contributed"), or an empty array when it is not.
+ * Returns a single partial context when the call is outbound, naming the
+ * destination when one can be read from the call ({{matched_destination}}),
+ * or an empty array when it is not.
  */
 export function evaluateOutboundCall(
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
-  return isOutboundCall(event) ? [{}] : [];
+  const action = normalizeAction(event);
+  if (!action.outbound) return [];
+  const external = action.destinations.find((d) => d.ipClass !== "loopback");
+  return [external ? { matched_destination: external.host } : {}];
 }

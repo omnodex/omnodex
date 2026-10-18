@@ -19,8 +19,8 @@
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { CredentialMatchCondition, MatchContext } from "../types.js";
 import { compiled } from "./regex-cache.js";
-import { extractExecText, extractStagedContent } from "./scope.js";
-import { extractPaths } from "./path-match.js";
+import { normalizeAction } from "../action.js";
+import { extractStagedContent } from "./scope.js";
 
 /**
  * Scan a string for credential patterns and return the unique set of
@@ -162,14 +162,14 @@ export function evaluateCredentialMatch(
   }
 
   if (scope.includes("exec")) {
-    const command = extractExecText(event);
+    const command = normalizeAction(event).command;
     if (command !== null) {
       const types = findCredentialTypes(command, condition.patterns);
       if (types.length > 0) return [{ credential_types: types }];
     }
   }
   if (scope.includes("target")) {
-    const types = findCredentialTypes(extractPaths(event).join("\n"), condition.patterns);
+    const types = findCredentialTypes(normalizeAction(event).paths.join("\n"), condition.patterns);
     if (types.length > 0) return [{ credential_types: types }];
   }
   if (scope.includes("staged")) {

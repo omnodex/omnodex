@@ -127,3 +127,22 @@ export {
   isOutboundCall,
 } from "./conditions/index.js";
 export type { CredentialSighting } from "./conditions/index.js";
+
+// What a tool call does: paths, writes, the command that runs, destinations,
+// staging steps, and how a credential in it is used.
+export {
+  normalizeAction,
+  classifyHost,
+  credentialRole,
+  isCredentialProvider,
+  CREDENTIAL_PROVIDERS,
+} from "./action.js";
+export type {
+  NormalizedAction,
+  ActionKind,
+  Destination,
+  IpClass,
+  StagingOp,
+  StagingStep,
+  CredentialRole,
+} from "./action.js";
