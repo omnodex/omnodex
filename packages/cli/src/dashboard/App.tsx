@@ -19,6 +19,7 @@ import {
 } from "../dashboard-model/index.js";
 import type { SessionRow } from "../dashboard-model/view.js";
 import { useSnapshot } from "./useSnapshot.js";
+import { feedbackMailto } from "../dashboard-model/feedback.js";
 import { Logo } from "./components/Logo.js";
 import { DetailPanel, RiskEvents, SessionDetails, StatsRow, Timeline, type Detail } from "./components/Panels.js";
 import { ConnectionTree, CredentialLedger, FileEventsPanel, FilterBar, ToolCallsPanel } from "./components/Views.js";
@@ -77,6 +78,23 @@ function useTheme(mode: ThemeMode): void {
   }, [mode]);
 }
 
+/** The CLI version from the server, for the feedback link; null until it answers or if it cannot. */
+function useCliVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/api/info")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((info: { version?: unknown } | null) => { if (typeof info?.version === "string") setVersion(info.version); })
+      .catch(() => {});
+  }, []);
+  return version;
+}
+
+function browserPlatform(): string | null {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return nav.userAgentData?.platform || nav.platform || null;
+}
+
 function sessionOptionLabel(s: SessionRow): string {
   const prefix = s.status === "in_progress" ? "● " : "";
   const source = s.interceptor ? `[${runtimeLabel(s)}] ` : "";
@@ -113,6 +131,7 @@ function Header({ utc, setUtc, live, theme, setTheme }: {
 
 export function App(): React.JSX.Element {
   const { snapshot, loading, error, live, newCallIds } = useSnapshot();
+  const version = useCliVersion();
   const [utc, setUtcState] = useState(() => readStored(TZ_KEY) === "utc");
   const [theme, setThemeState] = useState<ThemeMode>(readTheme);
   const [filters, setFilters] = useState<DashboardFilters>(() => ({ ...NO_FILTERS, hidden: readHidden() }));
@@ -222,7 +241,12 @@ export function App(): React.JSX.Element {
         <Header utc={utc} setUtc={setUtc} live={live} theme={theme} setTheme={setTheme} />
         {main}
       </div>
-      <footer className="page-footer">© 2026 Omnodex, LLC. All rights reserved.</footer>
+      <footer className="page-footer">
+        <span>© 2026 Omnodex, LLC. All rights reserved.</span>
+        <span className="footer-links">
+          <a href={feedbackMailto(version, browserPlatform())}>Send feedback</a>
+        </span>
+      </footer>
     </>
   );
 }
