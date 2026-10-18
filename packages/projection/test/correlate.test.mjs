@@ -12,6 +12,7 @@ import {
   upstreamSuffix,
   findingKey,
 } from "../dist/index.js";
+import { fitToolName } from "@omnodex/shared";
 
 /**
  * A routed MCP call is observed twice: by the platform hook before it leaves
@@ -812,4 +813,102 @@ test("a pre-call hook still does not pair with a proxy call that started before 
     routedCallEvents({ proxy: { at: "2026-09-18T14:57:40.000Z" } }),
   );
   assert.equal(result.length, 0);
+});
+
+function completed({ eventId, toolCallId, at, durationMs }) {
+  return {
+    schema_version: 1,
+    event_id: eventId,
+    session_id: PROXY_SESSION,
+    occurred_at: at,
+    recorded_at: at,
+    interceptor: "mcp-proxy",
+    event_type: "tool.completed",
+    tool_call_id: toolCallId,
+    duration_ms: durationMs,
+    status: "success",
+    response_bytes: 10,
+  };
+}
+
+test("pairs an Antigravity hook with a proxy call that ran longer than the window", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyProxy({ at: "2026-09-18T14:57:00.000Z" }),
+    completed({ eventId: "c1", toolCallId: "agy-proxy-1", at: "2026-09-18T14:57:40.000Z", durationMs: 40_000 }),
+    agyHook({ at: "2026-09-18T14:57:41.000Z" }),
+  ]);
+  assert.equal(result.length, 1, "the window runs from when the call ended");
+  assert.equal(result[0].proxy_tool_call_id, "agy-proxy-1");
+});
+
+test("does not pair an Antigravity hook with a long call that ended well before it", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    agyProxy({ at: "2026-09-18T14:56:00.000Z" }),
+    completed({ eventId: "c1", toolCallId: "agy-proxy-1", at: "2026-09-18T14:57:00.000Z", durationMs: 60_000 }),
+    agyHook({ at: "2026-09-18T14:57:41.000Z" }),
+  ]);
+  assert.equal(result.length, 0);
+});
+
+// The proxy shortens long names for Antigravity and records the full name.
+const LONG_UPSTREAM = "filesystem__list_directory_with_sizes";
+const SHORT_UPSTREAM = fitToolName("filesystem", "list_directory_with_sizes", 32);
+
+test("pairs an Antigravity hook carrying a shortened name with the full proxy name", async () => {
+  assert.notEqual(SHORT_UPSTREAM, LONG_UPSTREAM, "the fixture name must be shortened");
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    invoked({
+      eventId: "e-agy-proxy",
+      sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy",
+      toolCallId: "agy-proxy-1",
+      toolName: LONG_UPSTREAM,
+      mcpServer: "filesystem",
+      at: "2026-09-18T14:57:41.000Z",
+    }),
+    invoked({
+      eventId: "e-agy",
+      sessionId: AGY_SESSION,
+      interceptor: "antigravity-hook",
+      toolCallId: "agy-step-1",
+      toolName: `mcp__omnodex-antigravity_omnodex__${SHORT_UPSTREAM}`,
+      mcpServer: "omnodex-antigravity_omnodex",
+      at: "2026-09-18T14:57:42.000Z",
+    }),
+  ]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].proxy_tool_call_id, "agy-proxy-1");
+  assert.equal(result[0].upstream_mcp_server, "filesystem");
+});
+
+test("a shortened name does not pair with a different tool that starts the same way", async () => {
+  const result = await correlateEvents([
+    sessionEvent(AGY_SESSION, "antigravity-hook", HOOK_AT),
+    sessionEvent(PROXY_SESSION, "mcp-proxy", HOOK_AT),
+    invoked({
+      eventId: "e-agy-proxy",
+      sessionId: PROXY_SESSION,
+      interceptor: "mcp-proxy",
+      toolCallId: "agy-proxy-1",
+      toolName: "filesystem__list_directory_with_types",
+      mcpServer: "filesystem",
+      at: "2026-09-18T14:57:41.000Z",
+    }),
+    invoked({
+      eventId: "e-agy",
+      sessionId: AGY_SESSION,
+      interceptor: "antigravity-hook",
+      toolCallId: "agy-step-1",
+      toolName: `mcp__omnodex-antigravity_omnodex__${SHORT_UPSTREAM}`,
+      mcpServer: "omnodex-antigravity_omnodex",
+      at: "2026-09-18T14:57:42.000Z",
+    }),
+  ]);
+  assert.equal(result.length, 0, "the hash names one full name");
 });

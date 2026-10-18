@@ -73,6 +73,9 @@ export interface RuleDefinition {
    *                           was crossed (rate_threshold condition)
    *   {{rate_window}}      -- window size in seconds (rate_threshold condition)
    *   {{matched_domain}}   -- hostname that matched (domain_match condition)
+   *   {{matched_destination}} -- external host an outbound call reaches
+   *                           (outbound_call condition); "an external endpoint"
+   *                           when the call names none that can be read
    */
   description_template: string;
   /**
@@ -431,6 +434,8 @@ export interface MatchContext {
   rate_window?: number;
   /** Populated by domain_match conditions: the matched hostname. */
   matched_domain?: string;
+  /** Populated by outbound_call conditions: the external host the call reaches, when known. */
+  matched_destination?: string;
   /** Populated by staged credential_match: the file the content was written to. */
   staged_path?: string;
   /** Populated by sequence conditions: tool_call_ids of the earlier events. */

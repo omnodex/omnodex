@@ -18,8 +18,8 @@
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext, PathMatchCondition } from "../types.js";
+import { normalizeAction } from "../action.js";
 import { compiled } from "./regex-cache.js";
-import { extractWriteTargets } from "./write-targets.js";
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -34,7 +34,6 @@ import { extractWriteTargets } from "./write-targets.js";
  *
  * NOTE: Grep/Glob invocations expose the pattern string, not the individual
  * files read. Counting them as path references is a known approximation.
- * Accurate per-file read counting requires host-level syscall interception.
  * Accurate per-file read counting requires host-level syscall interception.
  */
 export function extractPaths(event: ToolInvokedEvent): string[] {
@@ -87,7 +86,8 @@ export function evaluatePathMatch(
   condition: PathMatchCondition,
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
-  const paths = condition.access === "write" ? extractWriteTargets(event) : extractPaths(event);
+  const action = normalizeAction(event);
+  const paths = condition.access === "write" ? action.writes : action.paths;
   const matched: Partial<MatchContext>[] = [];
 
   for (const p of paths) {

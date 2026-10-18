@@ -12,9 +12,11 @@
  * subdomain matching: "chase.com" matches both "chase.com" and any subdomain
  * ("online.chase.com", "secure.chase.com", etc.).
  *
- * URL extraction covers:
- *   - All string values in event.parameters (JSON-serialized)
- *   - Bash command strings: curl, wget, and http(ie) invocations
+ * Hosts come from the call's destinations (../action.ts): URLs in a command
+ * that runs or in a non-writing tool's parameters, and the arguments of
+ * network programs. A URL in content written to a script or config file
+ * (a staged target) still matches, reported as written rather than run, one
+ * severity lower: code that will call the host later is worth knowing about.
  *
  * For in_list: yields one MatchContext per hostname that matches a listed domain.
  * For not_in_list: yields one MatchContext per external hostname that does NOT
@@ -22,42 +24,39 @@
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
+import { normalizeAction, urlDestinations } from "../action.js";
 import type { DomainMatchCondition, MatchContext } from "../types.js";
+import { extractStagedContent } from "./scope.js";
 
 // ---------------------------------------------------------------------------
 // Domain extraction
 // ---------------------------------------------------------------------------
 
-const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+const LOCALHOST_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 
 /**
- * Regex to extract http/https URLs from a string.
- * Capture group 1 is the host (and optional port).
- */
-const URL_RE = /https?:\/\/([^/\s"'\\]+)/g;
-
-/**
- * Extract unique external hostnames from a tool.invoked event.
+ * Unique external hostnames a tool.invoked event reaches.
  *
- * Returns lowercase hostnames with port stripped (e.g. "online.chase.com").
- * Localhost addresses are excluded. Order reflects first-seen in serialized params.
+ * Returns lowercase hostnames without port (e.g. "online.chase.com").
+ * Localhost addresses are excluded. Order reflects first appearance.
  */
 export function extractDomains(event: ToolInvokedEvent): string[] {
-  const paramStr = JSON.stringify(event.parameters);
-  const seen = new Set<string>();
   const domains: string[] = [];
+  for (const d of normalizeAction(event).destinations) {
+    if (!LOCALHOST_HOSTS.has(d.host) && !domains.includes(d.host)) domains.push(d.host);
+  }
+  return domains;
+}
 
-  URL_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = URL_RE.exec(paramStr)) !== null) {
-    const host = (m[1] ?? "").toLowerCase().split(":")[0];
-    if (host && !LOCALHOST_HOSTS.has(host) && !seen.has(host)) {
-      seen.add(host);
-      domains.push(host);
+/** External hostnames in URLs written into script and config files, by file. */
+function stagedDomains(event: ToolInvokedEvent): { host: string; path: string }[] {
+  const out: { host: string; path: string }[] = [];
+  for (const { path, text } of extractStagedContent(event)) {
+    for (const d of urlDestinations(text)) {
+      if (!LOCALHOST_HOSTS.has(d.host) && !out.some((o) => o.host === d.host)) out.push({ host: d.host, path });
     }
   }
-
-  return domains;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,17 +104,21 @@ export function evaluateDomainMatch(
   condition: DomainMatchCondition,
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
-  const hosts = extractDomains(event);
-  const matched: Partial<MatchContext>[] = [];
-
-  for (const host of hosts) {
+  const select = (host: string): boolean => {
     const inList = isInDomainList(host, condition.domains);
-    if (condition.match === "in_list" && inList) {
-      matched.push({ matched_domain: host });
-    } else if (condition.match === "not_in_list" && !inList) {
-      matched.push({ matched_domain: host });
+    return condition.match === "in_list" ? inList : !inList;
+  };
+
+  const matched: Partial<MatchContext>[] = [];
+  for (const host of extractDomains(event)) {
+    if (select(host)) matched.push({ matched_domain: host });
+  }
+  // Only for in_list: "a host not in the list" is about where a call goes,
+  // and a URL written into a file goes nowhere yet.
+  if (matched.length === 0 && condition.match === "in_list") {
+    for (const { host, path } of stagedDomains(event)) {
+      if (select(host)) matched.push({ matched_domain: host, staged_path: path });
     }
   }
-
   return matched;
 }

@@ -18,11 +18,15 @@
  *                          data exfiltration, or attacker-controlled host.
  *                          Yields HIGH-severity findings.
  *
- * IP extraction covers URL hostnames (http://1.2.3.4/...) and bare IP
- * arguments to curl/wget in bash command parameters.
+ * Only what the call reaches counts: IPv4 hosts among the call's
+ * destinations (URLs, and the arguments of network programs), and bare IPv4
+ * literals in a command that runs. An address in content written to a file,
+ * or in a search pattern, is not a destination. Loopback addresses are
+ * never outbound.
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
+import { classifyHost, normalizeAction } from "../action.js";
 import type { IpDestinationCondition, MatchContext } from "../types.js";
 
 // ---------------------------------------------------------------------------
@@ -67,19 +71,26 @@ const SKIP_IPS = new Set([
 ]);
 
 /**
- * Extract raw IPv4 addresses from the JSON-serialized event parameters.
- * Covers URL hostnames, curl/wget arguments, and any bare IP string.
+ * The raw IPv4 addresses a tool call reaches: IPv4 destinations of the
+ * normalized action, plus bare IPv4 literals in a command that runs.
  * Returns a deduplicated list.
  */
 export function extractRawIps(event: ToolInvokedEvent): string[] {
-  const paramStr = JSON.stringify(event.parameters);
+  const action = normalizeAction(event);
   const seen = new Set<string>();
-  IPV4_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = IPV4_RE.exec(paramStr)) !== null) {
-    const ip = m[1]!;
-    if (!SKIP_IPS.has(ip) && !seen.has(ip)) {
-      seen.add(ip);
+  const add = (ip: string): void => {
+    if (SKIP_IPS.has(ip) || classifyHost(ip) === "loopback") return;
+    seen.add(ip);
+  };
+  for (const d of action.destinations) {
+    if (d.ip === 4) add(d.host);
+  }
+  if (action.exec !== null) {
+    IPV4_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = IPV4_RE.exec(action.exec)) !== null) {
+      const ip = m[1]!;
+      if (ip.split(".").every((o) => Number(o) <= 255)) add(ip);
     }
   }
   return [...seen];

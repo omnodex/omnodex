@@ -143,7 +143,8 @@ function renderTemplate(template: string, ctx: MatchContext): string {
     .replace(/\{\{ip_classification\}\}/g, ctx.ip_classification ?? "")
     .replace(/\{\{rate_count\}\}/g, String(ctx.rate_count ?? ""))
     .replace(/\{\{rate_window\}\}/g, String(ctx.rate_window ?? ""))
-    .replace(/\{\{matched_domain\}\}/g, ctx.matched_domain ?? "");
+    .replace(/\{\{matched_domain\}\}/g, ctx.matched_domain ?? "")
+    .replace(/\{\{matched_destination\}\}/g, ctx.matched_destination ?? "an external endpoint");
 }
 
 // ---------------------------------------------------------------------------
