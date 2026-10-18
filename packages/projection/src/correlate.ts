@@ -38,7 +38,10 @@
  * sanitizes punctuation, hashes collisions and truncates long names, so its
  * matcher reproduces that deterministic mapping. Exact matches outrank
  * derived matches, and derived matches outrank conservative loose fallbacks.
- * Ambiguous loose matches are left unpaired. The captured evidence for both
+ * Ambiguous loose matches are left unpaired. On a host that limits name
+ * length (Antigravity), the proxy offers a shortened name ending in a hash of
+ * the full one but records the full name, so the hook's name is checked
+ * against that hash. The captured evidence for both
  * platforms lives in `hooks-provider/test/fixtures/tool-name-mapping.json`.
  *
  * **The arguments.** The proxy forwards the agent's arguments unchanged, so
@@ -54,9 +57,10 @@
  * proxy. So a candidate proxy call must start at or after the hook's, within
  * a window. Antigravity's hooks observe only after the call (PostToolUse),
  * so its hook row is stamped when the call has finished, and the proxy call
- * must start at or before it instead, within the same window. The window is
- * generous because the hook's clock is a subprocess's; a measured pair on a
- * WSL checkout was 1.4s apart.
+ * must start at or before it instead, and the window is measured from when
+ * the proxy call ended, so a slow call still pairs. The window is generous
+ * because the hook's clock is a subprocess's; a measured pair on a WSL
+ * checkout was 1.4s apart.
  *
  * ## What it does not do
  *
@@ -69,7 +73,7 @@
 
 // Runtime-neutral: no Node-only imports, so correlation can also run in a
 // browser or a Worker.
-import { splitMcpToolName } from "@omnodex/shared";
+import { isShortenedToolName, splitMcpToolName } from "@omnodex/shared";
 import {
   matchCodexToolName,
   sanitizeCodexToolNamePart,
@@ -82,9 +86,10 @@ const AFTER_CALL_HOOKS: ReadonlySet<string> = new Set(["antigravity-hook"]);
 
 /**
  * How long after a hook's tool.invoked a proxy tool.invoked may start and
- * still be considered the same call. Wide on purpose: the hook timestamp
- * comes from the shim subprocess, so this covers process startup, not just
- * the hop to the proxy.
+ * still be considered the same call, or for an after-call hook, how long
+ * after the proxy call ended the hook may fire. Wide on purpose: the hook
+ * timestamp comes from the shim subprocess, so this covers process startup,
+ * not just the hop to the proxy.
  */
 export const DEFAULT_WINDOW_MS = 10_000;
 
@@ -201,8 +206,11 @@ export function correlateToolCalls(
       if (afterCall) {
         // The hook fired once the call was done, so the proxy call started
         // at or before it; one that started later is some later call.
+        // Measure from its end, so a call that ran long still pairs.
         if (proxyStart > hookStart) break; // sorted: later ones too
-        if (hookStart - proxyStart > windowMs) continue;
+        const proxyEnd = proxy.ended_at ? Date.parse(proxy.ended_at) : NaN;
+        const reference = Number.isNaN(proxyEnd) ? proxyStart : proxyEnd;
+        if (hookStart - reference > windowMs) continue;
       } else {
         // The hook necessarily fires first, so a proxy call that started
         // before it belongs to some earlier hook call, not this one.
@@ -262,6 +270,9 @@ function addToIndex(
   else index.set(key, [row]);
 }
 
+/** The hash ending of a tool name the proxy shortened. */
+const SHORTENED_NAME = /_[0-9a-f]{6}$/;
+
 function candidatesForHook(
   hook: ToolCallRow,
   interceptor: string,
@@ -271,7 +282,14 @@ function candidatesForHook(
   bySanitizedToolName: Map<string, ToolCallRow[]>,
 ): ToolCallRow[] {
   if (interceptor !== "codex-hook") {
-    return byToolName.get(suffix) ?? [];
+    const exact = byToolName.get(suffix);
+    if (exact) return exact;
+    // A name the proxy shortened ends in "_" and six hex digits; it can only
+    // be recognized against each full name, so scan for those.
+    if (!SHORTENED_NAME.test(suffix)) return [];
+    return proxyRows
+      .filter((row) => isShortenedToolName(suffix, row.tool_name))
+      .sort((a, b) => a.started_at.localeCompare(b.started_at));
   }
 
   const withoutHash = suffix.replace(/_[0-9a-f]{12}$/, "");
@@ -300,7 +318,10 @@ function nameMatch(
   if (interceptor === "codex-hook") {
     return matchCodexToolName(hookToolName, proxyToolName);
   }
-  return upstreamSuffix(hookToolName) === proxyToolName ? "exact" : null;
+  const suffix = upstreamSuffix(hookToolName);
+  if (suffix === proxyToolName) return "exact";
+  if (suffix !== null && isShortenedToolName(suffix, proxyToolName)) return "derived";
+  return null;
 }
 
 function bestUnambiguousMatch(

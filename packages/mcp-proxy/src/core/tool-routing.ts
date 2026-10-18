@@ -15,16 +15,11 @@
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { TOOL_NAME_SEPARATOR, fitToolName } from "@omnodex/shared";
 
-/**
- * Joins the upstream prefix and the upstream tool name in the name the agent
- * sees. Clients restrict tool names to letters, digits, "_" and "-" (the
- * Claude API enforces ^[a-zA-Z0-9_-]{1,64}$), so the separator must stay
- * inside that set. A "/" separator gets rewritten by some clients, which
- * breaks per-tool approval because the approved name no longer matches the
- * called name.
- */
-export const TOOL_NAME_SEPARATOR = "__";
+// Naming and shortening live in @omnodex/shared, so the projection can
+// recognize a shortened name when it pairs hook and proxy observations.
+export { TOOL_NAME_SEPARATOR, fitToolName };
 
 /**
  * JSON Schema dialect that MCP clients validate tool schemas against. Schemas
@@ -73,9 +68,6 @@ const PLATFORM_TOOL_NAME_LIMITS: Readonly<Record<string, number>> = {
 /** The shortest limit accepted, so a shortened name keeps some of its prefix. */
 const MIN_TOOL_NAME_LIMIT = 16;
 
-/** Separator and hex digits appended to a shortened name. */
-const SHORT_NAME_HASH_LENGTH = 6;
-
 /**
  * The tool name limit for this proxy: OMNODEX_TOOL_NAME_MAX when it is a
  * whole number of at least 16, otherwise the platform's limit, otherwise
@@ -87,35 +79,6 @@ export function toolNameLimit(platform: string | undefined, override?: string): 
     if (Number.isInteger(parsed) && parsed >= MIN_TOOL_NAME_LIMIT) return parsed;
   }
   return platform ? PLATFORM_TOOL_NAME_LIMITS[platform] : undefined;
-}
-
-/** FNV-1a, so the same name shortens the same way on every runtime. */
-function shortHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i++) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, SHORT_NAME_HASH_LENGTH);
-}
-
-/**
- * The agent-visible name for an upstream tool within a length limit. A name
- * that fits is the plain prefixed name. A longer one keeps the prefix and
- * separator, so it still resolves to its upstream, and as much of the tool
- * name as fits, then "_" and a hash of the full name so two long names that
- * start alike stay distinct. Only when the prefix itself leaves no room is
- * the whole name cut.
- */
-export function fitToolName(prefix: string, toolName: string, limit?: number): string {
-  const full = prefixedToolName(prefix, toolName);
-  if (limit === undefined || full.length <= limit) return full;
-  const suffix = `_${shortHash(full)}`;
-  const room = limit - prefix.length - TOOL_NAME_SEPARATOR.length - suffix.length;
-  if (room >= 4) {
-    return `${prefix}${TOOL_NAME_SEPARATOR}${toolName.slice(0, room).replace(/[_-]+$/, "")}${suffix}`;
-  }
-  return `${full.slice(0, limit - suffix.length).replace(/[_-]+$/, "")}${suffix}`;
 }
 
 /**
