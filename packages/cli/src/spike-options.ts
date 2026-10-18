@@ -5,7 +5,7 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 import { randomInt } from "node:crypto";
-import { buildScenarios, type ScenarioOptions } from "@omnodex/hooks-provider";
+import { buildScenarios, MOVEMENT_SCENARIOS, type ScenarioOptions } from "@omnodex/hooks-provider";
 
 export function parseSpikeOptions(args: readonly string[], freshSeed = () => randomInt(0, 0x100000000)): ScenarioOptions {
   const options: ScenarioOptions = {};
@@ -13,13 +13,16 @@ export function parseSpikeOptions(args: readonly string[], freshSeed = () => ran
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith("-")) {
-      if (!["--seed", "--random", "--now", "--sessions"].includes(arg)) throw new Error(`unknown spike option: ${arg}`);
+      if (!["--seed", "--random", "--now", "--sessions", "--scenario-set"].includes(arg)) throw new Error(`unknown spike option: ${arg}`);
       if (seen.has(arg)) throw new Error(`duplicate spike option: ${arg}`);
       seen.add(arg);
       if (arg === "--random") continue;
       const value = args[++i];
       if (value === undefined || value.startsWith("--")) throw new Error(`${arg} requires a value`);
-      if (arg === "--now") options.now = value;
+      if (arg === "--scenario-set") {
+        if (value !== "movement") throw new Error("--scenario-set supports movement");
+        options.additionalScenarios = MOVEMENT_SCENARIOS;
+      } else if (arg === "--now") options.now = value;
       else {
         if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error(`${arg} requires a safe integer`);
         if (arg === "--seed") options.seed = Number(value);

@@ -69,6 +69,11 @@ The [scenario manifest](packages/hooks-provider/SCENARIOS.md) maps fixtures
 to their real analyzer and projection assertions. MockInterceptor remains
 available for existing interceptor tests; spike uses `buildScenarios`.
 
+`--scenario-set movement` adds ten inert loopback-only movement chains and
+routine counterparts (22 sessions minimum/default). They are exported as
+`MOVEMENT_SCENARIOS` and `buildMovementScenarios` for downstream demo builders.
+They verify fixture shape and destination safety, not paid rule behavior.
+
 The CLI, the dashboard and the tests run on Linux, macOS, native Windows and WSL. CI runs the suite on Ubuntu, Windows and macOS. Package scripts use Node only (`scripts/rm.mjs` stands in for `rm -rf`), because npm runs scripts through cmd.exe on Windows. In code, turn a module URL into a path with `fileURLToPath`, never `URL.pathname`, which keeps a `/` before a Windows drive letter and leaves spaces percent-encoded.
 
 WSL has no CI runner. Before a release that touches the dashboard or file paths, check it by hand from a WSL shell:

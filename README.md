@@ -227,6 +227,7 @@ omnodex spike [name]                generate synthetic sessions and real communi
                                       --random          pick and print a fresh seed
                                       --now <ISO>       fixed clock with timezone
                                       --sessions <N>    12-1000 sessions (default 12)
+                                      --scenario-set movement  add loopback chain fixtures
 omnodex detect [session]            scan event log for risks (all sessions if omitted).
                                       Hooks and the MCP proxy also run detection in the
                                       background, with or without a connected dashboard:

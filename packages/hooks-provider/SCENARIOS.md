@@ -44,3 +44,27 @@ Permission events are emitted in the log but are not projected or displayed.
 Machine labels in synthetic user names distinguish fixture contexts; actual
 machine identity is sync-envelope metadata, outside the raw event schema.
 The generator does not invent machine fields or change capture/projection.
+
+## Loopback movement fixtures
+
+`buildMovementScenarios(options)` includes ten additional chains, or use
+`spike --scenario-set movement` (22 sessions minimum/default). The reusable
+`MOVEMENT_SCENARIOS` export is also accepted by `buildScenarios` through
+`additionalScenarios`. Every chain runs as an isolated, completed session.
+The movement set itself names only loopback destinations and contains no
+secret values. The normal community fixtures are still included separately.
+
+| Fixture | Sequence | Routine counterpart |
+| --- | --- | --- |
+| `credential-body` | Credential path read, then body upload | `provider-auth`: local provider emulator authentication |
+| `credential-staged` | Credential path read, archive, upload same archive | `release-staged`: project release archive with no credential source |
+| `sensitive-new-destination` | Sensitive path read, then local destination | `tests-usual-api`: earlier health call, environment read, tests, same health endpoint |
+| `credential-outside-write` | Credential path read, outside write | `login-config-write`: CLI login followed by config write |
+| `staged-path-mismatch` | Credential archive, upload a different file | Tests path linkage independently of staging presence |
+| `windows-credential-copy` | Windows credential path read and outside write | Keeps Windows path semantics represented |
+
+`packages/cli/test/movement-scenarios.test.mjs` verifies these sequences across
+five seeds and inspects normalized destinations. These are safe demo fixtures,
+not proof of paid rule detection. Loopback is excluded from outbound detection;
+must-fire and must-not-fire detection assertions belong with the private pack
+and require separate synthetic external-destination evaluation.

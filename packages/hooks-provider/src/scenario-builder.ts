@@ -14,6 +14,8 @@ export interface ScenarioOptions {
   now?: string;
   sessions?: number;
   name?: string;
+  /** Append caller-owned raw scenarios without importing detection rules. */
+  additionalScenarios?: readonly ScenarioDefinition[];
   /** Existing session IDs reserve namespaces when appending a repeated run. */
   existingSessionIds?: readonly string[];
 }
@@ -22,6 +24,10 @@ export interface ScenarioCall {
   server?: string;
   parameters: Record<string, unknown>;
   file?: "read" | "written";
+}
+export interface ScenarioDefinition {
+  id: string;
+  calls: readonly ScenarioCall[];
 }
 const bash = (command: string): ScenarioCall => ({ tool: "Bash", parameters: { command } });
 const write = (path: string, content: string): ScenarioCall => ({ tool: "Write", parameters: { file_path: path, content }, file: "written" });
@@ -44,12 +50,16 @@ export const MIN_SCENARIO_SESSIONS = COMMUNITY_SCENARIOS.length + 4;
 export function buildScenarios(options: ScenarioOptions = {}): TraceEvent[] {
   const seed = options.seed ?? DEFAULT_SCENARIO_SEED;
   const now = options.now ?? DEFAULT_SCENARIO_NOW;
-  const count = options.sessions ?? MIN_SCENARIO_SESSIONS;
+  const fixtures = [...COMMUNITY_SCENARIOS, ...(options.additionalScenarios ?? [])];
+  const minimum = fixtures.length + 4;
+  const pairHook = fixtures.length;
+  const pairProxy = pairHook + 1;
+  const count = options.sessions ?? minimum;
   if (!Number.isSafeInteger(seed)) throw new Error("seed must be a safe integer");
-  if (!Number.isInteger(count) || count < MIN_SCENARIO_SESSIONS || count > 1000) throw new Error(`sessions must be between ${MIN_SCENARIO_SESSIONS} and 1000 for full coverage`);
+  if (!Number.isInteger(count) || count < minimum || count > 1000) throw new Error(`sessions must be between ${minimum} and 1000 for full coverage`);
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?(?:Z|[+-]\d\d:\d\d)$/.test(now) || !Number.isFinite(Date.parse(now))) throw new Error("now must be an ISO timestamp with a timezone");
   if (options.name !== undefined && !/^[a-zA-Z0-9_-]{1,64}$/.test(options.name)) throw new Error("name must contain 1-64 letters, digits, underscores or hyphens");
-  const identity = createHash("sha256").update(JSON.stringify([seed, new Date(now).toISOString(), options.name ?? "demo"])).digest("hex").slice(0, 24);
+  const identity = createHash("sha256").update(JSON.stringify([seed, new Date(now).toISOString(), options.name ?? "demo", options.additionalScenarios ?? []])).digest("hex").slice(0, 24);
   const prefix = `sess_${options.name ?? "demo"}_${identity}`;
   const existing = new Set(options.existingSessionIds ?? []);
   let run = 0;
@@ -59,15 +69,18 @@ export function buildScenarios(options: ScenarioOptions = {}): TraceEvent[] {
   const events: TraceEvent[] = [];
   const platforms: PlatformKind[] = ["claude-code", "codex", "antigravity", "cowork"];
   for (let s = 0; s < count; s++) {
-    const fixture = COMMUNITY_SCENARIOS[s];
+    const fixture = fixtures[s];
     const sessionId = `${prefix}_${run}_${s}`;
-    const platform = s === 9 ? "claude-code" : platforms[s % platforms.length];
-    const interceptor: InterceptorKind = s === 9 || platform === "cowork" ? "mcp-proxy" : platform === "codex" ? "codex-hook" : platform === "antigravity" ? "antigravity-hook" : "claude-code-hook";
-    const project = s === 9 || s % 2 === 0 ? "/home/case/repo" : "C:\\Users\\case\\projects\\demo";
-    const calls = fixture?.calls ?? (s === 8 || s === 9
-      ? [{ tool: s === 8 ? "mcp__omnodex__filesystem__read_text_file" : "filesystem__read_text_file", server: s === 8 ? "omnodex" : "filesystem", parameters: { path: "/home/case/repo/src/paired.ts" } }]
+    const platform = s === pairHook || s === pairProxy ? "claude-code" : platforms[s % platforms.length];
+    const interceptor: InterceptorKind = s === pairProxy || platform === "cowork" ? "mcp-proxy" : platform === "codex" ? "codex-hook" : platform === "antigravity" ? "antigravity-hook" : "claude-code-hook";
+    const project = s === pairHook || s === pairProxy || s % 2 === 0 ? "/home/case/repo" : "C:\\Users\\case\\projects\\demo";
+    const rawCalls = fixture?.calls ?? (s === pairHook || s === pairProxy
+      ? [{ tool: s === pairHook ? "mcp__omnodex__filesystem__read_text_file" : "filesystem__read_text_file", server: s === pairHook ? "omnodex" : "filesystem", parameters: { path: "/home/case/repo/src/paired.ts" } }]
       : [read(`${project}/src/index.ts`), write(`${project}/out/result.json`, '{"ok":true}'), bash("node --version")]);
-    let tick = s === 8 || s === 9 ? Date.parse(now) - 1_200_000 + (s - 8) * 1000 : Date.parse(now) - (count - s) * 600_000 - Math.floor(random() * 60_000);
+    const calls = rawCalls.map(call => platform === "cowork" && !call.server
+      ? { ...call, tool: `local-tools__${call.tool}`, server: "local-tools" }
+      : call);
+    let tick = s === pairHook || s === pairProxy ? Date.parse(now) - 1_200_000 + (s - pairHook) * 1000 : Date.parse(now) - (count - s) * 600_000 - Math.floor(random() * 60_000);
     let seq = 0;
     const base = () => { const at = new Date(tick += 100 + Math.floor(random() * 100)).toISOString(); return { schema_version: SCHEMA_VERSION, event_id: `${sessionId}_event_${seq++}`, session_id: sessionId, occurred_at: at, recorded_at: at, interceptor, platform }; };
     const start = tick;
@@ -80,11 +93,14 @@ export function buildScenarios(options: ScenarioOptions = {}): TraceEvent[] {
       const call = calls[c];
       const id = `${sessionId}_call_${c}`;
       const attribution = s === 0 ? { agent_id: agentId } : {};
-      events.push({ ...base(), ...attribution, event_type: "tool.invoked", tool_call_id: id, tool_name: call.tool, mcp_server: call.server ?? "builtin", parameters: { ...call.parameters }, cwd: project });
+      events.push({ ...base(), ...attribution, event_type: "tool.invoked", tool_call_id: id, tool_name: call.tool, mcp_server: call.server ?? "builtin", parameters: structuredClone(call.parameters), cwd: project });
+      const invokedAt = tick;
       // Leave one genuinely active call, and exercise a tool failure.
       if (s === count - 1 && c === calls.length - 1) continue;
-      events.push({ ...base(), ...attribution, event_type: "tool.completed", tool_call_id: id, duration_ms: 100, status: s === count - 2 && c === 0 ? "error" : "success", response_bytes: 128, ...(s === count - 2 && c === 0 ? { error_message: "Synthetic tool error" } : {}) });
-      if (call.file) events.push({ ...base(), ...attribution, event_type: call.file === "read" ? "file.read" : "file.written", path: String(call.parameters.file_path ?? call.parameters.path), bytes: 128 });
+      const completed = base();
+      const failed = s === count - 2 && c === 0;
+      events.push({ ...completed, ...attribution, event_type: "tool.completed", tool_call_id: id, duration_ms: tick - invokedAt, status: failed ? "error" : "success", response_bytes: failed ? 0 : 128, ...(failed ? { error_message: "Synthetic tool error" } : {}) });
+      if (call.file && !failed) events.push({ ...base(), ...attribution, event_type: call.file === "read" ? "file.read" : "file.written", path: String(call.parameters.file_path ?? call.parameters.path), bytes: 128 });
     }
     if (s === 0) {
       events.push({ ...base(), event_type: "subagent.stopped", agent_id: agentId, status: "completed", response_bytes: 128 });

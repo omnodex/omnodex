@@ -3072,6 +3072,7 @@ commands:
                      --random          pick and print a fresh seed
                      --now <ISO>       fixed clock with timezone
                      --sessions <N>    session count, minimum/default 12
+                     --scenario-set movement  include loopback chain fixtures
                      Names prefix session IDs; repeated runs append new IDs.
   detect [session]   scan event logs for risk patterns and append
                      risk.detected events. Runs on all sessions if no

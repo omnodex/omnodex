@@ -51,6 +51,7 @@ for (const seed of [0, 1, 42, -1, 2147483647]) {
     assert.ok(rows.some(r => r.risk_score === 0));
     assert.deepEqual([...new Set(events.map(e => e.platform))].sort(), ["antigravity", "claude-code", "codex", "cowork"]);
     assert.ok(events.filter(e => e.platform === "cowork").every(e => e.interceptor === "mcp-proxy"));
+    assert.ok(events.filter(e => e.platform === "cowork" && e.event_type === "tool.invoked").every(e => e.mcp_server !== "builtin"));
     for (const type of ["permission.requested", "permission.denied", "subagent.started", "subagent.stopped", "session.renamed"]) assert.ok(events.some(e => e.event_type === type), type);
     assert.ok(events.some(e => e.event_type === "prompt.submitted" && e.prompt_id));
     assert.ok(events.some(e => e.event_type === "prompt.submitted" && !e.prompt_id));
