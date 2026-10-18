@@ -53,6 +53,7 @@ import {
 } from "@omnodex/antigravity-provider";
 import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
+import { advancedEntitled, advancedFindingText } from "./advanced-findings.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
 import {
@@ -486,9 +487,12 @@ async function printReport(store: ReadModelStore): Promise<void> {
     const risks = await store.listRiskEvents(session.session_id);
     if (risks.length > 0) {
       console.log(`  risk_events:`);
+      const entitled = advancedEntitled(resolvePaths().home);
       for (const risk of risks) {
         console.log(
-          `    [${risk.severity}] ${risk.category}: ${risk.description} (rule ${risk.rule_id})`,
+          risk.rule_tier === "advanced"
+            ? `    [${risk.severity}] ${advancedFindingText(entitled)}`
+            : `    [${risk.severity}] ${risk.category}: ${risk.description} (rule ${risk.rule_id})`,
         );
       }
     }
@@ -525,8 +529,13 @@ async function cmdDetect(args: string[]): Promise<void> {
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
         console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);
+        const entitled = advancedEntitled(resolvePaths().home);
         for (const re of newEvents) {
-          console.log(`  [${re.severity}] ${re.category}: ${re.description}`);
+          console.log(
+            re.rule_tier === "advanced"
+              ? `  [${re.severity}] ${advancedFindingText(entitled)}`
+              : `  [${re.severity}] ${re.category}: ${re.description}`,
+          );
         }
       } else {
         console.log(`[detect] ${sessionId}: no new risks`);
@@ -615,7 +624,10 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // Capture pauses live in their own session file in each root's log.
   const pauses = async () =>
     pauseRows((await Promise.all(logs.map(({ log }) => log.readSession(CAPTURE_CONTROL_SESSION_ID)))).flat());
-  const server = new DashboardServer({ store, port, assetsDir, pauses, version: getInstalledVersion() });
+  const server = new DashboardServer({
+    store, port, assetsDir, pauses, version: getInstalledVersion(),
+    advancedEntitled: () => advancedEntitled(resolvePaths().home),
+  });
   try {
     await server.ready;
   } catch (err) {
