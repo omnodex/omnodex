@@ -42,6 +42,61 @@ export function splitMcpToolName(
   };
 }
 
+/**
+ * Joins a proxy's upstream prefix and the upstream tool name in the name the
+ * agent sees. Clients restrict tool names to letters, digits, "_" and "-"
+ * (the Claude API enforces ^[a-zA-Z0-9_-]{1,64}$), so the separator must stay
+ * inside that set. A "/" separator gets rewritten by some clients, which
+ * breaks per-tool approval because the approved name no longer matches the
+ * called name.
+ */
+export const TOOL_NAME_SEPARATOR = "__";
+
+/** Hex digits of the hash appended to a shortened tool name. */
+const SHORT_NAME_HASH_LENGTH = 6;
+
+/** FNV-1a, so the same name shortens the same way on every runtime. */
+function shortHash(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0").slice(0, SHORT_NAME_HASH_LENGTH);
+}
+
+/**
+ * The agent-visible name for an upstream tool within a length limit. A name
+ * that fits is the plain prefixed name. A longer one keeps the prefix and
+ * separator, so it still resolves to its upstream, and as much of the tool
+ * name as fits, then "_" and a hash of the full name so two long names that
+ * start alike stay distinct. Only when the prefix itself leaves no room is
+ * the whole name cut.
+ */
+export function fitToolName(prefix: string, toolName: string, limit?: number): string {
+  const full = `${prefix}${TOOL_NAME_SEPARATOR}${toolName}`;
+  if (limit === undefined || full.length <= limit) return full;
+  const suffix = `_${shortHash(full)}`;
+  const room = limit - prefix.length - TOOL_NAME_SEPARATOR.length - suffix.length;
+  if (room >= 4) {
+    return `${prefix}${TOOL_NAME_SEPARATOR}${toolName.slice(0, room).replace(/[_-]+$/, "")}${suffix}`;
+  }
+  return `${full.slice(0, limit - suffix.length).replace(/[_-]+$/, "")}${suffix}`;
+}
+
+/**
+ * Whether `shortName` is what fitToolName made of the prefixed name
+ * `fullName` under some limit: it ends in "_" and the full name's hash, and
+ * what comes before that starts the full name. Needs no limit, so it holds
+ * whatever limit the proxy ran with.
+ */
+export function isShortenedToolName(shortName: string, fullName: string): boolean {
+  const suffix = `_${shortHash(fullName)}`;
+  if (shortName === fullName || !shortName.endsWith(suffix)) return false;
+  const stem = shortName.slice(0, -suffix.length);
+  return stem.length > 0 && fullName.startsWith(stem);
+}
+
 /** Severity levels used for risk events. */
 export type RiskSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
