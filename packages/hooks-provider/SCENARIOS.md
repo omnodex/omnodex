@@ -64,7 +64,6 @@ secret values. The normal community fixtures are still included separately.
 | `windows-credential-copy` | Windows credential path read and outside write | Keeps Windows path semantics represented |
 
 `packages/cli/test/movement-scenarios.test.mjs` verifies these sequences across
-five seeds and inspects normalized destinations. These are safe demo fixtures,
-not proof of paid rule detection. Loopback is excluded from outbound detection;
-must-fire and must-not-fire detection assertions belong with the private pack
-and require separate synthetic external-destination evaluation.
+five seeds and inspects normalized destinations. Outbound detection skips
+loopback, so these chains add no outbound findings of their own; they are
+inert demo fixtures, not detection tests.

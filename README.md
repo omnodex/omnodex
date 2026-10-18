@@ -139,7 +139,7 @@ To use the hosted dashboard at `dashboard.omnodex.com`, run `omnodex connect` on
 
 ---
 
-## Quick start (mock pipeline)
+## Quick start (synthetic data)
 
 To explore Omnodex without connecting to a live agent:
 
@@ -147,16 +147,15 @@ To explore Omnodex without connecting to a live agent:
 npm install
 npx tsc -b
 
-# Run a simulated session through the full pipeline
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js spike
-
-# Detect risks in the captured events
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js detect
+# Generate synthetic sessions and run them through the real pipeline
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js spike --seed 42
 
 # Launch the dashboard
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js dashboard
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js dashboard
 # open http://localhost:7890
 ```
+
+`spike` writes raw events only and runs nothing: no scenario command or request executes. The same seed and `--now` give the same sessions; repeated runs append sessions with new IDs. The [coverage manifest](packages/hooks-provider/SCENARIOS.md) lists what the dataset covers.
 
 All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `dashboard` also read and add findings to `~/.omnodex` when `OMNODEX_HOME` points elsewhere; set `OMNODEX_SINGLE_ROOT=1` to keep a run inside `OMNODEX_HOME`.
 
@@ -253,13 +252,6 @@ omnodex license [clear]             show license tier, or clear the cached licen
 ---
 
 ## Architecture
-
-To try synthetic data in an isolated home, run
-`OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 omnodex spike --seed 42 --now 2026-10-18T12:00:00Z`,
-then start `omnodex dashboard` with the same environment. No scenario commands
-or requests execute. With no flags, the clock is fixed at
-`2026-10-01T12:00:00.000Z`; repeated runs append sessions with distinct IDs.
-See the [coverage manifest](packages/hooks-provider/SCENARIOS.md).
 
 1. **Event-log-first storage.** The source of truth is an append-only JSONL event log under `$OMNODEX_HOME/event-log/sessions/`. SQLite is a derived read model rebuilt by replaying the log. The dashboard supports tailing multiple roots simultaneously for multi-source aggregation.
 2. **Async by design.** Interceptors append to the event log and exit. They never block the agent's execution path. The projector and analyzer run asynchronously and are allowed to lag.

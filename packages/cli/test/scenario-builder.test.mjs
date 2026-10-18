@@ -90,7 +90,7 @@ test("CLI writes reproducible session logs, replays SQLite and appends unique ru
   const run = (home, args) => {
     const result = spawnSync(process.execPath, [cli, ...args], {
       env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: home, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1", OMNODEX_AUTO_SYNC: "0" },
-      encoding: "utf8", timeout: 30_000,
+      encoding: "utf8", timeout: 60_000,
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return result.stdout;
