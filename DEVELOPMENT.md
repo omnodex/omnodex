@@ -192,6 +192,14 @@ Input validation:
 
 The detector writes `risk.detected` events back into the event log. The `dashboard` command auto-runs detection before replaying.
 
+SQL injection detection scans raw statement values in `sql`, `query`,
+`statement`, `sql_query`, `query_text`, `statements` and `queries` parameters
+on database MCP servers. Statement arrays are scanned separately. Documentation,
+metadata and bound parameter values are excluded. Database names are matched
+without regard to case. Ordinary SQL whitespace, SQL Server delay literals and
+Oracle package member calls are supported; encoded and comment-split signatures
+remain outside community coverage.
+
 ## Known limitations
 
 - **Grep and Glob file read counts** are invocation counts, not individual file counts. The hook layer cannot observe how many files a Grep actually opened.

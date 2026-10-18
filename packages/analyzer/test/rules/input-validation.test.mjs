@@ -203,23 +203,45 @@ for (const query of [
   });
 }
 
-// Keep bypass cases executable without changing the rule in this test-only task.
-// TODO assertions describe desired behavior; the separate detection fix owns them.
+// Ordinary SQL whitespace and database-native syntax are community coverage.
 for (const query of [
   "UNION\tSELECT secret FROM users", "UNION\nSELECT secret FROM users",
+  "WAITFOR DELAY '00:00:05'", "UTL_HTTP.REQUEST('https://example.com')",
+]) {
+  test(`SQL_INJECTION MUST_FIRE: ordinary syntax ${JSON.stringify(query)}`, () => {
+    assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 1);
+  });
+}
+// Obfuscation and encoding remain separate advanced coverage.
+for (const query of [
   "UNION/**/SELECT secret FROM users", "OR/**/1=1",
   "UNION%20SELECT%20secret%20FROM%20users", "OR%201%3D1",
-  "WAITFOR DELAY '00:00:05'", "UTL_HTTP.REQUEST('https://example.com')",
 ]) {
   test(`SQL_INJECTION MUST_FIRE known gap: ${JSON.stringify(query)}`, { todo: "normalization or signature coverage requires a separate rule change" }, () => {
     assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 1);
   });
 }
-test("SQL_INJECTION MUST_NOT_FIRE known gap: documentation field on database server", { todo: "all-field scope also scans documentation text" }, () => {
+test("SQL_INJECTION MUST_NOT_FIRE: documentation field on database server", () => {
   assert.equal(sqlEngine.evaluate(makeDbEvent("describe_schema", "postgres", {
     documentation: "Prevent SQL injection such as UNION SELECT and OR 1=1.",
   })).length, 0);
 });
-test("SQL_INJECTION MUST_FIRE known gap: uppercase database server", { todo: "server regex lacks case-insensitive matching" }, () => {
+test("SQL_INJECTION MUST_FIRE: uppercase database server", () => {
   assert.equal(sqlEngine.evaluate(makeDbEvent("query", "POSTGRES", { query: "UNION SELECT secret FROM users" })).length, 1);
+});
+
+test("SQL_INJECTION: scans only SQL fields, without combining statements or bindings", () => {
+  for (const parameters of [
+    { query: "SELECT $1", params: ["UNION SELECT secret"] },
+    { query: "SELECT 1", documentation: "UNION SELECT secret" },
+    { sql: "UNION", query: "SELECT secret" },
+    { statements: ["UNION", "SELECT secret"] },
+    { query: { documentation: "UNION SELECT secret" } },
+  ]) assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", parameters)).length, 0);
+  for (const parameters of [
+    { sql: "UNION\r\nSELECT secret" },
+    { query_text: "UNION\tALL\nSELECT secret" },
+    { sql_query: "WAITFOR\tDELAY '00:00:05.100'" },
+    { statements: ["SELECT 1", "UTL_HTTP.REQUEST('http://127.0.0.1')"] },
+  ]) assert.equal(sqlEngine.evaluate(makeDbEvent("execute", "PoStGrEs", parameters)).length, 1);
 });

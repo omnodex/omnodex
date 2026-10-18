@@ -160,12 +160,13 @@ export interface CredentialMatchCondition {
    * narrows command patterns to what matters: "exec" is the command a shell
    * tool runs, "staged" is content written into a script or config file
    * (reported one severity lower unless the rule sets staged_severity), and
-   * "target" is the file paths the call reads or writes.
+   * "target" is the file paths the call reads or writes. "sql" scans only
+   * SQL statement parameters as raw strings, before JSON escaping.
    */
   scope?: CredentialScope;
 }
 
-export type CredentialScope = "all" | ReadonlyArray<"exec" | "staged" | "target">;
+export type CredentialScope = "all" | ReadonlyArray<"exec" | "staged" | "target" | "sql">;
 
 export interface CredentialPattern {
   /**
