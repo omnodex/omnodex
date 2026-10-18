@@ -611,7 +611,7 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // Capture pauses live in their own session file in each root's log.
   const pauses = async () =>
     pauseRows((await Promise.all(logs.map(({ log }) => log.readSession(CAPTURE_CONTROL_SESSION_ID)))).flat());
-  const server = new DashboardServer({ store, port, assetsDir, pauses });
+  const server = new DashboardServer({ store, port, assetsDir, pauses, version: getInstalledVersion() });
   try {
     await server.ready;
   } catch (err) {

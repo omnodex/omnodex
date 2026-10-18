@@ -766,7 +766,14 @@ header {
   font-size: 11px;
   border-top: 1px solid var(--navy-border);
   margin-top: 40px;
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
 }
+.footer-links { display: inline-flex; gap: 16px; }
+.footer-links a { color: var(--slate); text-decoration: none; }
+.footer-links a:hover { color: var(--cyan); text-decoration: underline; }
 
 /* Light theme: the same tokens as the hosted dashboard's. */
 [data-theme="light"] {

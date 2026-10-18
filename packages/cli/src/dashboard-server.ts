@@ -42,6 +42,8 @@ export interface DashboardServerOptions {
   assetsDir: string;
   /** Capture pauses to show on the timeline, read from the event logs. */
   pauses?: () => Promise<PauseRow[]>;
+  /** The CLI version, shown in the page's feedback link. */
+  version?: string;
 }
 
 /**
@@ -202,6 +204,7 @@ export class DashboardServer {
   private readonly store: ReadModelStore;
   private readonly assetsDir: string;
   private readonly pauses: (() => Promise<PauseRow[]>) | null;
+  private readonly version: string | null;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -217,6 +220,7 @@ export class DashboardServer {
     this.store = options.store;
     this.assetsDir = options.assetsDir;
     this.pauses = options.pauses ?? null;
+    this.version = options.version ?? null;
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -344,6 +348,11 @@ export class DashboardServer {
       const snapshot = collapseCorrelated(await readSnapshot(this.store));
       const pauses = this.pauses ? await this.pauses().catch(() => []) : [];
       return sendJson(res, { ...snapshot, pauses });
+    }
+
+    // The CLI version, for the page's feedback link.
+    if (pathname === "/api/info") {
+      return sendJson(res, { version: this.version });
     }
 
     if (pathname === "/api/sessions") {
