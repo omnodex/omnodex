@@ -119,7 +119,8 @@ export type Condition =
   | DomainMatchCondition
   | CwdBoundaryCondition
   | SequenceCondition
-  | StagingCondition;
+  | StagingCondition
+  | DestinationFirstSeenCondition;
 
 /**
  * Matches when at least one file path extracted from the event matches at
@@ -468,6 +469,16 @@ export interface SequenceStep {
 }
 
 /**
+ * Matches when the call reaches an external host no call from this machine
+ * had reached before (see machine-state.ts). Needs the host's machine
+ * state, so only hosts that keep one run it; without one it never matches.
+ * Yields one context naming the new host as {{matched_destination}}.
+ */
+export interface DestinationFirstSeenCondition {
+  type: "destination_first_seen";
+}
+
+/**
  * Matches when the call archives, encodes, encrypts or copies data to the
  * clipboard (see the normalized action's staging steps). Yields one context
  * naming the staged output when the command names one.
@@ -507,6 +518,8 @@ export interface MatchContext {
   path_credential_type?: string;
   /** Populated by staging conditions: the file the staging step wrote. */
   staging_output?: string;
+  /** Populated by destination_first_seen: the destination is new to this machine. */
+  first_seen_destination?: boolean;
   /** Populated by ip_destination conditions. */
   matched_ip?: string;
   /** Populated by ip_destination conditions ("cloud provider" or "unknown host"). */

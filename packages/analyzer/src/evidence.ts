@@ -86,6 +86,7 @@ function labelsOf(context: Partial<MatchContext>): string[] | undefined {
     context.matched_label,
     ...(context.credential_types ?? []),
     context.matched_domain,
+    context.first_seen_destination ? "first time this machine reached this host" : undefined,
   ].filter((l): l is string => !!l);
   return labels.length ? [...new Set(labels)] : undefined;
 }
@@ -121,6 +122,7 @@ export function buildEvidence(
     ],
     ...(destination ? { destination } : {}),
     ...(credential ? { credential } : {}),
+    ...(own.first_seen_destination ? { first_seen_destination: true } : {}),
     ...(rule.benign_note ? { benign_note: rule.benign_note } : {}),
   };
 }

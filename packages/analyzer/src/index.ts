@@ -82,7 +82,7 @@ export {
 } from "./capture.js";
 export type { JudgeCapturedOptions } from "./capture.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
-export { openMachineState, memoryMachineState, KNOWN_MCP_SERVERS_FILE } from "./machine-state.js";
+export { openMachineState, memoryMachineState, reachedHosts, KNOWN_MCP_SERVERS_FILE, KNOWN_DESTINATIONS_FILE } from "./machine-state.js";
 export type { MachineState, SeenResult } from "./machine-state.js";
 export type { WorkspaceRootsFn } from "./workspace.js";
 export type {

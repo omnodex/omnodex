@@ -51,6 +51,7 @@ import {
   evaluateCwdBoundary,
   evaluateSequence,
   evaluateStaging,
+  evaluateDestinationFirstSeen,
 } from "./conditions/index.js";
 import {
   type RateThresholdState,
@@ -70,6 +71,7 @@ export const STATEFUL_CONDITION_TYPES: ReadonlySet<Condition["type"]> = new Set(
   "session_first_seen",
   "rate_threshold",
   "sequence",
+  "destination_first_seen",
 ]);
 
 /** A stateless condition against one event; used for sequence priors. */
@@ -115,6 +117,8 @@ function evaluateCondition(
       return evaluateSequence(condition, event, window, evaluateStateless, context.home);
     case "staging":
       return evaluateStaging(condition, event);
+    case "destination_first_seen":
+      return evaluateDestinationFirstSeen(event, context);
     case "rate_threshold":
       // Handled specially in the rule loop (needs rule_id for state key).
       // This case should not be reached; it exists for exhaustive switch.

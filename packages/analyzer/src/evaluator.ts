@@ -41,7 +41,7 @@ import { RuleRegistry } from "./registry.js";
 import { COMMUNITY_RULES } from "./rules/index.js";
 import type { Condition, EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
-import type { MachineState } from "./machine-state.js";
+import { reachedHosts, type MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
 import { CAPTURE_HOSTS } from "./capture.js";
 import { loadAdvancedRules } from "./bundle.js";
@@ -99,6 +99,7 @@ const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
   cwd_boundary: true,
   sequence: true,
   staging: true,
+  destination_first_seen: true,
 };
 
 const EVIDENCE_ROLES = new Set(["source", "staging", "sink", "context"]);
@@ -159,6 +160,9 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
         break;
       case "session_first_seen":
         raise(condition.scope === "machine" ? "machine" : "session");
+        break;
+      case "destination_first_seen":
+        raise("machine");
         break;
       default:
         break;
@@ -365,6 +369,15 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     return risk;
   }
 
+  // After every rule has judged a call, so the call that first reaches a
+  // host reads as new to all of them, and whether or not any rule looked.
+  const tracksDestinations = rules.some((r) => r.conditions.some((c) => c.type === "destination_first_seen"));
+  function noteReached(event: ToolInvokedEvent): void {
+    if (!tracksDestinations || !opts.machineState) return;
+    const hosts = reachedHosts(event);
+    if (hosts.length) opts.machineState.noteDestinations(hosts, event.occurred_at);
+  }
+
   function endSession(sessionId: string): void {
     transports.delete(sessionId);
     startDirs.delete(sessionId);
@@ -394,6 +407,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
             ...(!wanted || wanted.has("event") ? eventEngine.evaluate(event, context) : []),
             ...statefulEngine.evaluate(event, context),
           ].filter((f) => !wanted || wanted.has(ruleClass.get(f.rule_id) ?? "event"));
+          noteReached(event);
           // Registry order, as a single engine would have produced them.
           findings.sort((a, b) => (order.get(a.rule_id) ?? 0) - (order.get(b.rule_id) ?? 0));
           const out: RiskDetectedEvent[] = [];
@@ -411,7 +425,10 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     observe(event: TraceEvent): void {
       noteSession(event);
       if (event.event_type === "risk.detected") seed(event);
-      else if (event.event_type === "tool.invoked") statefulEngine.evaluate(event, contextFor(event));
+      else if (event.event_type === "tool.invoked") {
+        statefulEngine.evaluate(event, contextFor(event));
+        noteReached(event);
+      }
     },
 
     endSession,
