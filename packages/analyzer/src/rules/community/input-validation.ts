@@ -42,13 +42,16 @@ import type { RuleDefinition } from "../../types.js";
  * are worse than false positives here because SQL injection in a DB context
  * is always high severity.
  */
-const DB_SERVER_PATTERN =
+// tool_name_match is case-sensitive by default. Expand only this pattern,
+// keeping the matching behavior of other rules unchanged.
+const DB_SERVER_PATTERN = (
   "(?:db|sql|database|postgres|pg|mysql|sqlite|mariadb|doris|pinot|rds|" +
-  "bigquery|snowflake|mongo|athena|redshift|clickhouse|duckdb|supabase|neon)";
+  "bigquery|snowflake|mongo|athena|redshift|clickhouse|duckdb|supabase|neon)"
+).replace(/[a-z]/g, letter => `[${letter}${letter.toUpperCase()}]`);
 
 export const RULE_INPUT_VALIDATION_SQL_INJECTION: RuleDefinition = {
   rule_id: "RULE_INPUT_VALIDATION_SQL_INJECTION",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -66,11 +69,11 @@ export const RULE_INPUT_VALIDATION_SQL_INJECTION: RuleDefinition = {
     },
     {
       // At least one of these SQL injection signatures must appear in the
-      // JSON-serialized event parameters. The credential_match condition
+      // executed SQL statement parameters. The credential_match condition
       // applies flags "gi" (global, case-insensitive).
       type: "credential_match",
-      // Secrets and payloads: a match in any field is the risk.
-      scope: "all",
+      // Raw SQL preserves tabs/newlines and excludes documentation fields.
+      scope: ["sql"],
       patterns: [
         {
           // UNION-based injection: extracts data from other tables.
@@ -97,12 +100,12 @@ export const RULE_INPUT_VALIDATION_SQL_INJECTION: RuleDefinition = {
         },
         {
           // Time-based blind injection: SLEEP(), BENCHMARK(), PG_SLEEP().
-          regex: "\\b(?:SLEEP|BENCHMARK|WAITFOR\\s+DELAY|PG_SLEEP)\\s*\\(",
+          regex: "\\b(?:(?:SLEEP|BENCHMARK|PG_SLEEP)\\s*\\(|WAITFOR\\s+DELAY\\s*(?:\\(|'[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?'))",
           type: "sql-time-based-inject",
         },
         {
           // Out-of-band exfiltration via database-native HTTP/file functions.
-          regex: "\\b(?:LOAD_FILE|UTL_HTTP|UTL_INADDR|UTL_FILE)\\s*\\(",
+          regex: "\\b(?:LOAD_FILE|(?:UTL_HTTP|UTL_INADDR|UTL_FILE)(?:\\s*\\.\\s*[A-Z_]+)?)\\s*\\(",
           type: "sql-oob-exfil",
         },
       ],

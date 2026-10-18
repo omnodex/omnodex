@@ -161,6 +161,21 @@ export function evaluateCredentialMatch(
     return types.length > 0 ? [{ credential_types: types }] : [];
   }
 
+  if (scope.includes("sql")) {
+    // Inspect statement values individually. Joining fields could invent a
+    // signature across two unrelated statements. Never scan documentation,
+    // bindings, labels or metadata, even if they contain SQL examples.
+    const types = new Set<string>();
+    for (const key of ["sql", "query", "statement", "sql_query", "query_text", "statements", "queries"]) {
+      const value = event.parameters[key];
+      const statements = typeof value === "string" ? [value] : Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+      for (const text of statements) {
+        for (const type of findCredentialTypes(text, condition.patterns)) types.add(type);
+      }
+    }
+    if (types.size > 0) return [{ credential_types: [...types] }];
+  }
+
   if (scope.includes("exec")) {
     const command = normalizeAction(event).command;
     if (command !== null) {

@@ -5,6 +5,8 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 export * from "./mock-interceptor.js";
+export * from "./scenario-builder.js";
+export * from "./movement-scenarios.js";
 export * from "./claude-code-interceptor.js";
 export * from "./claude-code-payload.js";
 export * from "./shim-path.js";

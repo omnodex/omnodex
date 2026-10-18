@@ -139,7 +139,7 @@ To use the hosted dashboard at `dashboard.omnodex.com`, run `omnodex connect` on
 
 ---
 
-## Quick start (mock pipeline)
+## Quick start (synthetic data)
 
 To explore Omnodex without connecting to a live agent:
 
@@ -147,16 +147,15 @@ To explore Omnodex without connecting to a live agent:
 npm install
 npx tsc -b
 
-# Run a simulated session through the full pipeline
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js spike
-
-# Detect risks in the captured events
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js detect
+# Generate synthetic sessions and run them through the real pipeline
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js spike --seed 42
 
 # Launch the dashboard
-OMNODEX_HOME=/tmp/omnodex-demo node packages/cli/dist/index.js dashboard
+OMNODEX_HOME=/tmp/omnodex-demo OMNODEX_SINGLE_ROOT=1 node packages/cli/dist/index.js dashboard
 # open http://localhost:7890
 ```
+
+`spike` writes raw events only and runs nothing: no scenario command or request executes. The same seed and `--now` give the same sessions; repeated runs append sessions with new IDs. The [coverage manifest](packages/hooks-provider/SCENARIOS.md) lists what the dataset covers.
 
 All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `dashboard` also read and add findings to `~/.omnodex` when `OMNODEX_HOME` points elsewhere; set `OMNODEX_SINGLE_ROOT=1` to keep a run inside `OMNODEX_HOME`.
 
@@ -222,7 +221,12 @@ omnodex mcp-proxy <subcommand>      manage the MCP proxy interceptor
                                       status    inspect the current config
                                       start     start the proxy server
 
-omnodex spike [name]                run a simulated session through the full pipeline
+omnodex spike [name]                generate synthetic sessions and real community findings
+                                      --seed <integer>  reproduce a dataset (default 1)
+                                      --random          pick and print a fresh seed
+                                      --now <ISO>       fixed clock with timezone
+                                      --sessions <N>    12-1000 sessions (default 12)
+                                      --scenario-set movement  add loopback chain fixtures
 omnodex detect [session]            scan event log for risks (all sessions if omitted).
                                       Hooks and the MCP proxy also run detection in the
                                       background, with or without a connected dashboard:
