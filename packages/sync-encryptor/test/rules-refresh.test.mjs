@@ -12,6 +12,7 @@ import * as path from "node:path";
 
 import { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_STATE_FILE } from "../dist/rules-refresh.js";
 import { runAutoSync } from "../dist/auto-sync.js";
+import { RULE_FORMAT_VERSION } from "../../shared/dist/index.js";
 
 let home;
 beforeEach(async () => {
@@ -77,7 +78,7 @@ test("a Pro install with no bundle fetches and installs one, authenticated", asy
   const c = cloud({ version: "1.0.0", licensed: "1.0.0" });
   assert.equal(await refreshRuleBundle(home, c), "updated");
   assert.equal(await installed(), "1.0.0");
-  assert.equal(c.calls.fetch[0].url, "https://api.example.test/api/v1/rules/update");
+  assert.equal(c.calls.fetch[0].url, `https://api.example.test/api/v1/rules/update?format=${RULE_FORMAT_VERSION}`);
   assert.equal(c.calls.fetch[0].auth, "Bearer omx_case");
   // The cached key already matches, so no second licence check.
   assert.equal(c.calls.validate.length, 1);
@@ -88,7 +89,7 @@ test("a current install sends its version and changes nothing on a 304", async (
   await setup({ installed: "1.0.0" });
   const c = cloud({ status: 304, licensed: "1.0.0" });
   assert.equal(await refreshRuleBundle(home, c), "current");
-  assert.match(c.calls.fetch[0].url, /\?since=1\.0\.0$/);
+  assert.match(c.calls.fetch[0].url, /\?format=\d+&since=1\.0\.0$/);
   assert.equal(await installed(), "1.0.0");
   assert.equal(c.calls.validate.length, 1);
 });

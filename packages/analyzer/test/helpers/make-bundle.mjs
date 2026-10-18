@@ -12,7 +12,10 @@ export const ADVANCED_RULE = {
   severity: "HIGH",
   category: "exfiltration",
   tier: "advanced",
-  conditions: [{ type: "path_match", patterns: ["**/.ssh/**"] }],
+  version: "1.0.0",
+  event_types: ["tool.invoked"],
+  conditions: [{ type: "path_match", patterns: [{ regex: "[/\\\\]\\.ssh[/\\\\]", label: "ssh" }] }],
+  description_template: "Read of {{matched_label}} via {{tool_name}}.",
 };
 
 /**

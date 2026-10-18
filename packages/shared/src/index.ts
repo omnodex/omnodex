@@ -304,6 +304,14 @@ export interface FileWrittenEvent extends BaseEvent {
 }
 
 /**
+ * The version of the rule format this release's analyzer reads. Version 2
+ * added the ordered `steps` form of sequence conditions and the staging
+ * condition. A host that fetches rules says which version it reads, so
+ * rules in a newer format can be held back from it.
+ */
+export const RULE_FORMAT_VERSION = 2;
+
+/**
  * What a call contributed to a finding that spans several calls: where the
  * data came from, an intermediate step such as archiving or encoding it,
  * the call that sent it, or context that explains the others.

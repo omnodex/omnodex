@@ -34,11 +34,12 @@
 
 import type { RiskDetectedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
+export { RULE_FORMAT_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
 import * as os from "node:os";
 import { RuleRegistry } from "./registry.js";
 import { COMMUNITY_RULES } from "./rules/index.js";
-import type { EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
+import type { Condition, EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
 import type { MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
@@ -85,12 +86,65 @@ export function classesLeftAfterCapture(event: TraceEvent, host: EvaluatorHost):
   return HOST_CLASSES[host].filter((c) => !done.has(c));
 }
 
+/** Every condition type this analyzer evaluates. */
+const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
+  path_match: true,
+  credential_match: true,
+  outbound_call: true,
+  ip_destination: true,
+  tool_name_match: true,
+  session_first_seen: true,
+  rate_threshold: true,
+  domain_match: true,
+  cwd_boundary: true,
+  sequence: true,
+  staging: true,
+};
+
+const EVIDENCE_ROLES = new Set(["source", "staging", "sink", "context"]);
+
 /**
- * The state a rule needs, derived from its conditions. Throws for a
- * sequence condition whose prior steps are themselves stateful, which the
- * engine cannot re-evaluate against events that have already passed.
+ * Why this analyzer cannot run a rule, or null when it can: a condition
+ * type it does not know, a sequence with neither form, or a sequence step
+ * whose conditions keep state, which the engine cannot re-evaluate against
+ * events that have already passed. A rule from a newer rule format reads
+ * as one of these, and is skipped rather than stopping every other rule.
+ */
+export function ruleProblem(rule: RuleDefinition): string | null {
+  if (!Array.isArray(rule.conditions) || !Array.isArray(rule.event_types)) return "no conditions or event types";
+  const check = (conditions: unknown, nested: boolean): string | null => {
+    if (!Array.isArray(conditions)) return "conditions are not a list";
+    for (const c of conditions as Condition[]) {
+      if (!c || !Object.hasOwn(CONDITION_TYPES, c.type)) return `unknown condition type ${String(c?.type)}`;
+      if (nested && STATEFUL_CONDITION_TYPES.has(c.type)) {
+        return `sequence step conditions must be stateless, got ${c.type}`;
+      }
+      if (c.type !== "sequence") continue;
+      if (nested) return "a sequence cannot be nested";
+      if (c.steps !== undefined) {
+        if (!Array.isArray(c.steps) || c.steps.length < 2) return "a sequence needs at least two steps";
+        for (const step of c.steps) {
+          if (!step || !EVIDENCE_ROLES.has(step.as)) return `unknown sequence step role ${String(step?.as)}`;
+          const problem = check(step.match, true);
+          if (problem) return problem;
+        }
+      } else {
+        const problem = check(c.prior, true);
+        if (problem) return problem.replace("step conditions", "prior conditions");
+      }
+    }
+    return null;
+  };
+  return check(rule.conditions, false);
+}
+
+/**
+ * The state a rule needs, derived from its conditions. Throws for a rule
+ * this analyzer cannot run (see ruleProblem).
  */
 export function classifyRule(rule: RuleDefinition): EvaluationClass {
+  const problem = ruleProblem(rule);
+  if (problem) throw new Error(`${rule.rule_id}: ${problem}`);
   let cls: EvaluationClass = "event";
   const raise = (to: EvaluationClass): void => {
     if (CLASS_ORDER.indexOf(to) > CLASS_ORDER.indexOf(cls)) cls = to;
@@ -98,13 +152,6 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
   for (const condition of rule.conditions) {
     switch (condition.type) {
       case "sequence":
-        for (const prior of condition.prior) {
-          if (STATEFUL_CONDITION_TYPES.has(prior.type)) {
-            throw new Error(
-              `${rule.rule_id}: sequence prior conditions must be stateless, got ${prior.type}`,
-            );
-          }
-        }
         raise("session");
         break;
       case "rate_threshold":
@@ -186,6 +233,8 @@ export interface EvaluatorStats {
   byRule: Record<string, number>;
   /** Emitted findings per rule tier. */
   byTier: Record<string, number>;
+  /** Rules this analyzer cannot run, left out of the set, with the reason. */
+  unreadableRules: { rule_id: string; reason: string }[];
 }
 
 export interface EvaluateOptions {
@@ -219,8 +268,13 @@ export interface Evaluator {
 
 export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const allowed = new Set(HOST_CLASSES[opts.host]);
-  const all = (opts.registry ?? registryForHost(opts.host, opts.home)).getRules();
-  const rules = all.filter((r) => allowed.has(classifyRule(r)));
+  const unreadableRules: EvaluatorStats["unreadableRules"] = [];
+  const readable = (opts.registry ?? registryForHost(opts.host, opts.home)).getRules().filter((r) => {
+    const reason = ruleProblem(r);
+    if (reason) unreadableRules.push({ rule_id: String(r?.rule_id), reason });
+    return !reason;
+  });
+  const rules = readable.filter((r) => allowed.has(classifyRule(r)));
   const order = new Map(rules.map((r, i) => [r.rule_id, i]));
 
   // Stateless and stateful rules run in separate engines so observe() can
@@ -268,7 +322,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   };
 
   const recorded = new Set<string>();
-  const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {} };
+  const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {}, unreadableRules };
 
   function seed(event: RiskDetectedEvent): void {
     recorded.add(`${event.rule_id}::${event.related_event_id}`);
@@ -367,6 +421,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
         ...stats,
         byRule: { ...stats.byRule },
         byTier: { ...stats.byTier },
+        unreadableRules: [...stats.unreadableRules],
       };
     },
   };

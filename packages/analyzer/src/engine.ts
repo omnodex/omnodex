@@ -50,6 +50,7 @@ import {
   evaluateDomainMatch,
   evaluateCwdBoundary,
   evaluateSequence,
+  evaluateStaging,
 } from "./conditions/index.js";
 import {
   type RateThresholdState,
@@ -111,7 +112,9 @@ function evaluateCondition(
     case "cwd_boundary":
       return evaluateCwdBoundary(condition, event, context);
     case "sequence":
-      return evaluateSequence(condition, event, window, evaluateStateless);
+      return evaluateSequence(condition, event, window, evaluateStateless, context.home);
+    case "staging":
+      return evaluateStaging(condition, event);
     case "rate_threshold":
       // Handled specially in the rule loop (needs rule_id for state key).
       // This case should not be reached; it exists for exhaustive switch.

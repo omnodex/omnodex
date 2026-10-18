@@ -12,8 +12,13 @@
  *
  * Two authenticated requests, kept separate on purpose:
  *
- *   GET  /api/v1/rules/update?since=<installed>   the sealed bundle, or 304
- *   POST /api/v1/license/validate                 the key that opens it
+ *   GET  /api/v1/rules/update?format=<n>&since=<installed>
+ *                                  the sealed bundle, or 304
+ *   POST /api/v1/license/validate  the key that opens it
+ *
+ * `format` is the rule format this analyzer reads (RULE_FORMAT_VERSION), so
+ * a bundle in a newer format can be held back from a client that would not
+ * understand it.
  *
  * Neither is any use without the other, and both need an entitled account.
  * The key is cached with the licence (license-cache.json), next to the API
@@ -37,6 +42,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateLicense, type LicenseClientConfig, type ValidateResult } from "@omnodex/license-client";
+import { RULE_FORMAT_VERSION } from "@omnodex/shared";
 
 /** Where a home keeps its sealed bundle. Must match the analyzer's bundlePath. */
 export const RULE_BUNDLE_FILE = join("rules", "current.bundle.json");
@@ -139,7 +145,7 @@ export async function refreshRuleBundle(
     const installed = await installedVersion(home);
     const fetchFn = opts.fetchFn ?? fetch;
     const res = await fetchFn(
-      `${apiUrl}/api/v1/rules/update${installed ? `?since=${encodeURIComponent(installed)}` : ""}`,
+      `${apiUrl}/api/v1/rules/update?format=${RULE_FORMAT_VERSION}${installed ? `&since=${encodeURIComponent(installed)}` : ""}`,
       {
         headers: { Authorization: `Bearer ${apiToken}` },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

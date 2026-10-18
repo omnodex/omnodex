@@ -91,9 +91,9 @@ export function evaluatePathMatch(
   const matched: Partial<MatchContext>[] = [];
 
   for (const p of paths) {
-    for (const { regex, label } of condition.patterns) {
+    for (const { regex, label, credential_type } of condition.patterns) {
       if (compiled(regex).test(p)) {
-        matched.push({ matched_path: p, matched_label: label });
+        matched.push({ matched_path: p, matched_label: label, ...(credential_type ? { path_credential_type: credential_type } : {}) });
         break; // One finding per path -- first matching pattern wins.
       }
     }

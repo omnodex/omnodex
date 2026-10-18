@@ -112,14 +112,15 @@ export function buildEvidence(
 ): FindingEvidence | undefined {
   const earlier = context.sequence_steps;
   if (!earlier?.length) return undefined;
-  const { sequence_steps: _, ...own } = context;
+  const { sequence_steps: _, sequence_role: role = "sink", sequence_credential: credential, ...own } = context;
   const destination = evidenceDestination(event);
   return {
     steps: [
       ...earlier.map((s) => step(s.event, s.role, s.context)),
-      step(event, "sink", own),
+      step(event, role, own),
     ],
     ...(destination ? { destination } : {}),
+    ...(credential ? { credential } : {}),
     ...(rule.benign_note ? { benign_note: rule.benign_note } : {}),
   };
 }
