@@ -172,6 +172,10 @@ async function machine(t) {
     WSL_DISTRO_NAME: "",
     // /proc/version still says WSL on a WSL machine; point the Windows scan at nothing.
     OMNODEX_WSL_MOUNT_ROOT: path.join(root, "no-windows-mount"),
+    // The update check runs in a detached child that writes into OMNODEX_HOME
+    // after the command exits, which on Windows can make removing the temp
+    // directory fail with ENOTEMPTY.
+    OMNODEX_NO_UPDATE_CHECK: "1",
   };
   return { root, home, project, env };
 }
