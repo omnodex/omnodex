@@ -16,11 +16,18 @@
  * Contract (enforced by Claude Code):
  *
  *   - stdin: JSON payload (one object, one invocation)
- *   - stdout: must stay empty, otherwise Claude Code tries to interpret
- *             it as a hook decision. Use stderr for diagnostics.
+ *   - stdout: empty, except a PreToolUse decision in guardrails
+ *             enforcement mode (deny, or ask for the user's confirmation),
+ *             written before anything slow. Claude Code reads stdout as a
+ *             hook decision, so nothing else ever goes there; use stderr
+ *             for diagnostics.
  *   - exit code 0: success. Any other code is a non-blocking error
- *             except 2, which blocks the tool call. We never want to
- *             block so we always exit 0 unless we are about to crash.
+ *             except 2, which blocks the tool call. A decision goes on
+ *             stdout instead, so we always exit 0 unless we are about to
+ *             crash, and a crash lets the call run.
+ *
+ * In guardrails mode Claude Code waits for PreToolUse, so that hook writes
+ * its decision first and defers its cloud push to the next hook's push.
  *
  * Environment:
  *
@@ -39,7 +46,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
-import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
+import type { TraceEvent } from "@omnodex/shared";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
 import { TITLE_HOOKS, readTranscriptTitle } from "../session-title.js";
@@ -47,6 +56,7 @@ import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
   includesSessionEnd,
+  deferLivePush,
   pushEventsToCloud,
   runAutoSync,
   startBackgroundSync,
@@ -181,15 +191,38 @@ async function main(): Promise<number> {
     // Judge the call against the per-event rules here, so its findings are
     // written and pushed with it. Capped in time; on a timeout or error
     // the background pass judges it instead.
+    let failure: "timeout" | "error" | undefined;
+    // Judged even while recording is paused, so a pause never switches
+    // guardrails off; what a pause keeps out of the log is dropped below.
     const findings = captureDetectEnabled()
-      ? await judgeCaptured(written.filter((e) => !isPauseMarker(e)), {
+      ? await judgeCaptured(events.filter((e) => !isPauseMarker(e)), {
           newEventId,
           onError: (err) => {
+            failure = err instanceof CaptureTimeoutError ? "timeout" : "error";
             if (debug) console.error(`[omnodex-hook] rule evaluation skipped: ${(err as Error).message}`);
           },
         })
       : [];
-    const keptFindings = await applyCapturePause(findings, home);
+    const onEnforcementError = (err: unknown) => {
+      if (debug) console.error(`[omnodex-hook] enforcement skipped: ${(err as Error).message}`);
+    };
+    // PreToolUse can still act on the call: in guardrails mode, decide it
+    // and tell Claude Code before anything else. Elsewhere, record on each
+    // finding what enforcement would have done (shadow mode).
+    let deferPush = false;
+    let stamped = findings;
+    let extra: TraceEvent[] = [];
+    if (payload.hook_event_name === "PreToolUse") {
+      const result = await enforceCapturedCall(findings, events, {
+        host: "claude-code", home, newEventId, failure, onError: onEnforcementError,
+      });
+      if (result.output) process.stdout.write(JSON.stringify(result.output));
+      ({ findings: stamped, extra } = result);
+      deferPush = result.mode === "guardrails";
+    } else {
+      stamped = await stampCaptured(findings, events, { home, onError: onEnforcementError });
+    }
+    const keptFindings = await applyCapturePause([...stamped, ...extra], home);
     for (const finding of keptFindings) {
       await log.append(finding);
     }
@@ -204,7 +237,10 @@ async function main(): Promise<number> {
     // and streaming key from disk, encrypts, and POSTs with a short timeout.
     // It never throws -- errors are swallowed silently. On cache hit the
     // typical overhead is ~50-100ms; Argon2id only runs on first use.
-    await pushEventsToCloud([...written, ...keptFindings], home);
+    // The agent waits on a guardrails PreToolUse, so its events go out with
+    // the next push instead of making it wait on the network now.
+    if (deferPush) await deferLivePush([...written, ...keptFindings], home);
+    else await pushEventsToCloud([...written, ...keptFindings], home);
 
     // Refresh the hosted dashboard's sync blob in the background.
     // The same detached child runs detection first, so it also starts

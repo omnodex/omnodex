@@ -39,7 +39,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
-import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
+import type { TraceEvent } from "@omnodex/shared";
 import type { CodexHookPayload } from "../codex-payload.js";
 import { mapCodexPayload } from "../codex-payload.js";
 import { TITLE_HOOKS, readCodexThreadName } from "../session-title.js";
@@ -47,6 +49,7 @@ import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
   includesSessionEnd,
+  deferLivePush,
   pushEventsToCloud,
   runAutoSync,
   startBackgroundSync,
@@ -154,15 +157,38 @@ async function main(): Promise<number> {
     // Judge the call against the per-event rules here, so its findings are
     // written and pushed with it. Capped in time; on a timeout or error
     // the background pass judges it instead.
+    let failure: "timeout" | "error" | undefined;
+    // Judged even while recording is paused, so a pause never switches
+    // guardrails off; what a pause keeps out of the log is dropped below.
     const findings = captureDetectEnabled()
-      ? await judgeCaptured(written.filter((e) => !isPauseMarker(e)), {
+      ? await judgeCaptured(events.filter((e) => !isPauseMarker(e)), {
           newEventId,
           onError: (err) => {
+            failure = err instanceof CaptureTimeoutError ? "timeout" : "error";
             if (debug) console.error(`[omnodex-codex] rule evaluation skipped: ${(err as Error).message}`);
           },
         })
       : [];
-    const keptFindings = await applyCapturePause(findings, home);
+    const onEnforcementError = (err: unknown) => {
+      if (debug) console.error(`[omnodex-codex] enforcement skipped: ${(err as Error).message}`);
+    };
+    // PreToolUse can still act on the call: in guardrails mode, decide it.
+    // Elsewhere, record on each finding what enforcement would have done.
+    let deferPush = false;
+    let stamped = findings;
+    let extra: TraceEvent[] = [];
+    if (payload.hook_event_name === "PreToolUse") {
+      const result = await enforceCapturedCall(findings, events, {
+        host: "codex", home, newEventId, failure, onError: onEnforcementError,
+      });
+      // Codex reads the decision from stdout; nothing else goes there.
+      if (result.output) process.stdout.write(JSON.stringify(result.output));
+      ({ findings: stamped, extra } = result);
+      deferPush = result.mode === "guardrails";
+    } else {
+      stamped = await stampCaptured(findings, events, { home, onError: onEnforcementError });
+    }
+    const keptFindings = await applyCapturePause([...stamped, ...extra], home);
     for (const finding of keptFindings) {
       await log.append(finding);
     }
@@ -176,7 +202,10 @@ async function main(): Promise<number> {
 
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
     // Codex hooks are synchronous so keep the timeout short.
-    await pushEventsToCloud([...written, ...keptFindings], home, 2000);
+    // The agent waits on a guardrails PreToolUse, so its events go out with
+    // the next push instead of making it wait on the network now.
+    if (deferPush) await deferLivePush([...written, ...keptFindings], home);
+    else await pushEventsToCloud([...written, ...keptFindings], home, 2000);
 
     // Refresh the hosted dashboard's sync blob in the background. The sync
     // runs detached, so Codex's short SessionEnd timeout does not cut it off.

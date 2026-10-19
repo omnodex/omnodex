@@ -13,7 +13,7 @@
  *
  */
 
-import type { EventType, RiskSeverity } from "@omnodex/shared";
+import type { BlockingVerdict, EventType, RiskSeverity, SafeAlternative } from "@omnodex/shared";
 
 // ---------------------------------------------------------------------------
 // Rule definition
@@ -79,16 +79,24 @@ export interface RuleDefinition {
    */
   description_template: string;
   /**
-   * Intended blocking behavior when the Audit Firewall is active.
+   * What the rule would do to a matching call when enforcement acts.
    *
    * - "deny"       -- block the action outright. Recommended for CRITICAL rules.
-   * - "confirm"    -- pause execution and ask the human for confirmation. For HIGH rules.
+   * - "confirm"    -- hold the call for the human to confirm. For HIGH rules.
    * - "alert_only" -- log and alert but never block. Default for lower-severity rules.
    *
-   * Existing rules that omit this field are treated as "alert_only" until the Audit Firewall ships.
-   * No runtime behavior change in the current analyzer.
+   * A rule that omits it is "alert_only". The hint is a candidate, not a
+   * promise: shadow mode records it, but in guardrails it takes effect only
+   * once the rule carries a `safe_alternative`. User and project overrides
+   * apply either way (see resolveVerdict).
    */
-  blocking_hint?: "deny" | "confirm" | "alert_only";
+  blocking_hint?: BlockingVerdict;
+  /**
+   * What the agent should do instead when this rule blocks a call. Sent to
+   * the agent in the block reason. A rule needs one before its hint can
+   * block a call by default.
+   */
+  safe_alternative?: SafeAlternative;
   /**
    * Severity when the match was in content written to a file (a "staged"
    * credential_match scope) rather than in a command that ran. Defaults to

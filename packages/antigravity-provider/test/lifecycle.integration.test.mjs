@@ -75,20 +75,24 @@ test("capture starts when installed into an already-running conversation", async
   assert.equal((await loggedEvents(s.home)).filter(e => e.event_type === "session.started").length, 1);
 });
 
-test("legacy PreToolUse never auto-approves on success, invalid input or storage failure", async (t) => {
+// PreToolUse answers "allow" when guardrails do not hold the call: it lets
+// the call proceed under Antigravity's own permission policy and approves
+// nothing (checked live on agy 1.4.2: a shell command still asked "Run this
+// command?"). "auto_approve" is the value that approves, and is never sent.
+test("PreToolUse never auto-approves on success, invalid input or storage failure", async (t) => {
   const s = await scratch(t);
   const payloads = [null, "invalid", { ...common, stepIdx: 1, toolCall: { name: "run_command", args: {} } }];
   for (const payload of payloads) {
     const result = await runShim(shim, s, payload, { args: ["PreToolUse"] });
     assert.equal(result.code, 0);
-    assert.deepEqual(JSON.parse(result.stdout), { decision: "ask" });
+    assert.deepEqual(JSON.parse(result.stdout), { decision: "allow" });
   }
   const broken = await scratch(t);
   await mkdir(broken.home, { recursive: true });
   await writeFile(`${broken.home}/antigravity-state`, "not a directory");
   const result = await runShim(shim, broken, payloads[2], { args: ["PreToolUse"] });
   assert.equal(result.code, 0);
-  assert.deepEqual(JSON.parse(result.stdout), { decision: "ask" });
+  assert.deepEqual(JSON.parse(result.stdout), { decision: "allow" });
 });
 
 test("failed log writes do not suppress the next successful start or stop", async (t) => {

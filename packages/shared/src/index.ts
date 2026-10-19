@@ -17,6 +17,8 @@
  * import from it without pulling in transitive weight.
  */
 
+import type { FindingEnforcement } from "./enforcement.js";
+
 export const SCHEMA_VERSION = 1 as const;
 
 /**
@@ -407,6 +409,22 @@ export interface RiskDetectedEvent extends BaseEvent {
    * recorded before it was added.
    */
   evidence?: FindingEvidence;
+  /** What enforcement made of this finding when it was captured. Absent in monitor mode and on older findings. */
+  enforcement?: FindingEnforcement;
+}
+
+/**
+ * Enforcement could not judge a call in time (rules failed to load, threw,
+ * or ran past their time cap), so the call went ahead (the default) or was
+ * stopped (enforcement.on_error "block"). Written only in guardrails mode.
+ * Carries no captured content.
+ */
+export interface RiskEnforcementErrorEvent extends BaseEvent {
+  event_type: "risk.enforcement_error";
+  /** tool_call_id of the call that could not be judged. */
+  related_event_id: string;
+  reason: "timeout" | "error";
+  outcome: "allowed" | "blocked";
 }
 
 
@@ -504,6 +522,17 @@ export interface RuleBundleGrant {
   not_after: string;
 }
 
+/** The key to one guardrails module version, as the license check returns it. */
+export interface GuardrailsModuleGrant {
+  /** The module interface version it implements. */
+  interface: number;
+  module_version: string;
+  /** Base64 AES-256 key that opens that module version. */
+  content_key: string;
+  /** When clients stop accepting that module. */
+  not_after: string;
+}
+
 export interface LicenseValidateResponse {
   customer_id: string;
   tier: "free" | "hosted" | "pro" | "enterprise";
@@ -515,6 +544,12 @@ export interface LicenseValidateResponse {
    * The bundle itself is fetched separately, from /api/v1/rules/update.
    */
   rule_bundle?: RuleBundleGrant;
+  /**
+   * The key to the current guardrails module (Pro and Enterprise with an
+   * active subscription, once a module is published). The module itself is
+   * fetched separately, from /api/v1/guardrails/update.
+   */
+  guardrails_module?: GuardrailsModuleGrant;
   /** Presigned R2 URL for sync blob access (Hosted+). */
   sync_endpoint?: string;
   /** How long the caller may cache this response, in seconds. */
@@ -723,6 +758,7 @@ export type TraceEvent =
   | FileReadEvent
   | FileWrittenEvent
   | RiskDetectedEvent
+  | RiskEnforcementErrorEvent
   | PromptSubmittedEvent
   | SubagentStartedEvent
   | SubagentStoppedEvent
@@ -773,3 +809,6 @@ export function isEventOfType<T extends EventType>(
 ): event is Extract<TraceEvent, { event_type: T }> {
   return event.event_type === type;
 }
+
+// Enforcement configuration shapes (modes, verdicts, overrides).
+export * from "./enforcement.js";

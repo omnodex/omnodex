@@ -40,6 +40,7 @@ import {
   describeUnavailable,
 } from "./upstream-client.js";
 import { callToolWithEvents } from "./event-emitter.js";
+import type { ProxyGuardrails } from "./guardrails.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
 import { RESUME_TOOL, captureHome, captureStatus, handleResume } from "./capture-tool.js";
@@ -72,6 +73,8 @@ export interface ProxyServerOptions {
    * session's first request on.
    */
   onConnected?: () => void;
+  /** Guardrails: decides each call before it is forwarded. */
+  guardrails?: ProxyGuardrails;
 }
 
 /**
@@ -322,6 +325,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         toolCallId,
         sessionId,
         signal: extra.signal,
+        ...(opts.guardrails ? { decide: opts.guardrails.decide } : {}),
       });
       return {
         content: outcome.result.content as Array<{ type: string }>,

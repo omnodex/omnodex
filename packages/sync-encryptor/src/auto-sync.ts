@@ -58,6 +58,7 @@
  */
 
 import { refreshRuleBundle } from "./rules-refresh.js";
+import { refreshGuardrailsModule } from "./guardrails-refresh.js";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -65,6 +66,7 @@ import type { TraceEvent } from "@omnodex/shared";
 import { validateLicense } from "@omnodex/license-client";
 import { licenseCacheStale, readOrFetchLicense } from "./license-cache.js";
 import { addAdvancedUsage, submitAdvancedUsage, type DayCounts } from "./advanced-usage.js";
+import { collectRuleSignals, submitRuleSignals } from "./rule-signals.js";
 import { pushEventsToCloud } from "./shim-push.js";
 import { SyncBlobTooLargeError, SyncTooSoonError } from "./transport.js";
 
@@ -205,10 +207,14 @@ export interface RunAutoSyncOptions {
    * with the current bundle. Defaults to refreshRuleBundle; tests replace it.
    */
   refreshRules?: (home: string) => Promise<unknown>;
+  /** Guardrails module refresh. Defaults to refreshGuardrailsModule; tests replace it. */
+  refreshGuardrails?: (home: string) => Promise<unknown>;
   /** Stale license re-validation, run first. Defaults to refreshStaleLicense. */
   refreshLicense?: (home: string) => Promise<unknown>;
   /** Advanced usage submission, after detection. Defaults to submitUsage. */
   submitUsage?: (home: string) => Promise<unknown>;
+  /** Rule signal collection and submission. Defaults to submitSignals. */
+  submitSignals?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,11 +326,15 @@ export async function runAutoSync(
     if (opts.detect && detectionEnabled()) {
       // Pro and Enterprise only; anyone else returns before any request.
       await (opts.refreshRules ?? refreshRuleBundle)(home).catch(() => undefined);
+      await (opts.refreshGuardrails ?? refreshGuardrailsModule)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
     // Sends counted advanced usage, at most every 15 minutes; a no-op
     // without counts or credentials.
     await (opts.submitUsage ?? submitUsage)(home).catch(() => undefined);
+    // Totals the per-rule enforcement signals the capture paths logged, and
+    // sends them on the same schedule; nothing is sent without credentials.
+    await (opts.submitSignals ?? submitSignals)(home).catch(() => undefined);
 
     if (process.env.OMNODEX_AUTO_SYNC === "0") return "disabled";
     const settings = await readSyncSettings(home);
@@ -413,6 +423,20 @@ export async function submitUsage(home: string, fetchFn?: typeof fetch): Promise
   if (!apiToken) return "no-credentials";
   const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
   return submitAdvancedUsage(home, { apiUrl, apiToken, fetchFn });
+}
+
+/**
+ * Total the rule signals logged since the last pass, then submit them with
+ * this home's credentials. Without credentials the counts are kept (and age
+ * out) but never sent.
+ */
+export async function submitSignals(home: string, fetchFn?: typeof fetch): Promise<string> {
+  await collectRuleSignals(home);
+  const config = await readJson(path.join(home, "stream-config.json"));
+  const apiToken = typeof config?.api_token === "string" ? config.api_token : "";
+  if (!apiToken) return "no-credentials";
+  const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
+  return submitRuleSignals(home, { apiUrl, apiToken, fetchFn });
 }
 
 export type LicenseRefreshOutcome = "no-credentials" | "fresh" | "waiting" | "refreshed" | "failed";

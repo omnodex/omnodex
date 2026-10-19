@@ -306,3 +306,51 @@ test("missingEvents is empty when nothing is installed", async (t) => {
   await writeHandlers(projectPath, [["PreToolUse", { type: "command", command: "echo user hook" }]]);
   assert.deepEqual(await makeInterceptor(projectPath).missingEvents(), []);
 });
+
+// Guardrails: Claude Code ignores an async hook's decision, so PreToolUse
+// alone runs synchronously in that mode.
+
+test("guardrails: install registers PreToolUse synchronously and everything else async", async (t) => {
+  const projectPath = await fresh(t);
+  const home = path.join(projectPath, ".omnodex-home");
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "guardrails" } }));
+  const interceptor = makeInterceptor(projectPath);
+  await interceptor.install();
+  const { hooks } = JSON.parse(await readFile(interceptor.settingsFilePath(), "utf8"));
+  const [pre] = hooks.PreToolUse[0].hooks;
+  assert.equal(pre.async, undefined);
+  assert.equal(pre.timeout, 5);
+  assert.equal(hooks.PostToolUse[0].hooks[0].async, true);
+});
+
+test("setPreToolUseSync rewrites only Omnodex's PreToolUse handler, both ways", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = makeInterceptor(projectPath);
+  await interceptor.install();
+  const file = interceptor.settingsFilePath();
+  const settings = JSON.parse(await readFile(file, "utf8"));
+  const foreign = { type: "command", command: "echo other", async: true };
+  settings.hooks.PreToolUse.unshift({ matcher: "Bash", hooks: [foreign] });
+  settings.permissions = { allow: ["Read"] };
+  await writeFile(file, JSON.stringify(settings));
+
+  assert.equal(await interceptor.setPreToolUseSync(true), true);
+  let after = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(after.hooks.PreToolUse[0].hooks[0], foreign);
+  assert.equal(after.hooks.PreToolUse[1].hooks[0].async, undefined);
+  assert.equal(after.hooks.PostToolUse[0].hooks[0].async, true);
+  assert.deepEqual(after.permissions, { allow: ["Read"] });
+
+  assert.equal(await interceptor.setPreToolUseSync(true), false, "already synchronous");
+  assert.equal(await interceptor.setPreToolUseSync(false), true);
+  after = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(after.hooks.PreToolUse[1].hooks[0].async, true);
+  assert.equal(after.hooks.PreToolUse[1].hooks[0].timeout, 30);
+});
+
+test("setPreToolUseSync on a file with no Omnodex hooks changes nothing", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = makeInterceptor(projectPath);
+  assert.equal(await interceptor.setPreToolUseSync(true), false);
+});

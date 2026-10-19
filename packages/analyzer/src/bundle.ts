@@ -31,12 +31,12 @@
  * community rules and say so.
  */
 
-import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import type { RuleDefinition } from "./types.js";
+import { openSigned } from "./sealed.js";
 
 /** Where a home keeps the sealed bundle it last fetched. */
 export const RULES_DIR = "rules";
@@ -131,19 +131,6 @@ function trustedKeys(env: NodeJS.ProcessEnv): string[] {
   return fromEnv ? [fromEnv, ...TRUSTED_PUBLISHING_KEYS] : [...TRUSTED_PUBLISHING_KEYS];
 }
 
-function verifies(signed: Buffer, signature: Buffer, spkiBase64: string): boolean {
-  try {
-    const key = crypto.createPublicKey({
-      key: Buffer.from(spkiBase64, "base64"),
-      format: "der",
-      type: "spki",
-    });
-    return crypto.verify(null, signed, key, signature);
-  } catch {
-    return false;
-  }
-}
-
 export interface OpenBundleOptions {
   /** Raw 32-byte content key. Defaults to OMNODEX_RULES_KEY, base64. */
   key?: Buffer | null;
@@ -170,33 +157,18 @@ export function openBundle(sealed: unknown, opts: OpenBundleOptions = {}): Advan
     return skip("unreadable");
   }
 
-  const keys = trustedKeys(env);
-  const signed = canonicalManifest(bundle.manifest);
-  const signature = Buffer.from(bundle.signature, "base64");
-  if (!keys.some((k) => verifies(signed, signature, k))) return skip("untrusted_signature");
-
-  const now = opts.at ?? new Date();
-  const notAfter = Date.parse(bundle.manifest.not_after);
-  if (!Number.isFinite(notAfter) || notAfter <= now.getTime()) return skip("expired");
-
-  const payload = Buffer.from(bundle.payload, "base64");
-  const digest = crypto.createHash("sha256").update(payload).digest("hex");
-  if (digest !== bundle.manifest.payload_sha256) return skip("payload_mismatch");
-
-  const rawKey = opts.key ?? (env[RULES_KEY_ENV] ? Buffer.from(env[RULES_KEY_ENV], "base64") : null);
-  if (!rawKey || rawKey.length !== 32) return skip("no_key");
-
-  let plaintext: Buffer;
-  try {
-    const iv = payload.subarray(0, 12);
-    const tag = payload.subarray(payload.length - 16);
-    const body = payload.subarray(12, payload.length - 16);
-    const decipher = crypto.createDecipheriv("aes-256-gcm", rawKey, iv);
-    decipher.setAuthTag(tag);
-    plaintext = Buffer.concat([decipher.update(body), decipher.final()]);
-  } catch {
-    return skip("undecryptable");
-  }
+  const opened = openSigned({
+    signed: canonicalManifest(bundle.manifest),
+    signature: bundle.signature,
+    notAfter: bundle.manifest.not_after,
+    payload: bundle.payload,
+    payloadSha256: bundle.manifest.payload_sha256,
+    key: opts.key ?? (env[RULES_KEY_ENV] ? Buffer.from(env[RULES_KEY_ENV], "base64") : null),
+    trustedKeys: trustedKeys(env),
+    at: opts.at,
+  });
+  if (!opened.ok) return skip(opened.reason);
+  const plaintext = opened.plaintext;
 
   let rules: RuleDefinition[];
   try {

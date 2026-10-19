@@ -29,7 +29,11 @@
  * again; missingEvents() names what is missing, for `omnodex status`.
  *
  * All handlers are registered with `async: true` so the agent's
- * execution path is never blocked.
+ * execution path is never blocked, except PreToolUse in guardrails
+ * enforcement mode: Claude Code ignores an async hook's decision, so that
+ * one handler runs synchronously, with a short timeout after which the call
+ * proceeds. setPreToolUseSync() switches an installed file between the two
+ * when the mode changes.
  *
  * The design explicitly does NOT require Omnodex to be running as a
  * daemon. The shim is a short-lived subprocess that appends to the
@@ -38,8 +42,9 @@
  * can reasonably be.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import * as path from "node:path";
+import { parseEnforcementConfig } from "@omnodex/shared";
 import type {
   EmitFn,
   Interceptor,
@@ -57,6 +62,11 @@ export interface ClaudeCodeInterceptorOptions {
   settingsFile?: "settings.json" | "settings.local.json";
   /** Per-handler timeout in seconds. Default: 30. */
   timeoutSeconds?: number;
+  /**
+   * Register PreToolUse synchronously, so its decision is honored. Defaults
+   * to whether OMNODEX_HOME's enforcement mode is guardrails.
+   */
+  syncPreToolUse?: boolean;
   /** Enable debug logging in the shim (sets OMNODEX_DEBUG=1). */
   debug?: boolean;
   /**
@@ -116,6 +126,12 @@ interface HookHandler {
 }
 
 const OMNODEX_TAG = "omnodex-managed";
+/**
+ * Seconds Claude Code waits for a synchronous PreToolUse handler before the
+ * call proceeds without its decision. The shim caps rule evaluation well
+ * below this; it is the backstop for a process that hangs.
+ */
+export const SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS = 5;
 /**
  * Matches a command that runs the Omnodex launcher or shim script. Claude
  * Code drops keys it does not know when it rewrites a settings file, so
@@ -188,7 +204,7 @@ export class ClaudeCodeInterceptor implements Interceptor {
           hooks: (g.hooks ?? []).filter((h) => !this.isOmnodexHandler(h)),
         }))
         .filter((g) => g.hooks.length > 0);
-      filtered.push(this.makeMatcherGroup());
+      filtered.push(this.makeMatcherGroup(eventName));
       next.hooks[eventName] = filtered;
     }
 
@@ -262,19 +278,48 @@ export class ClaudeCodeInterceptor implements Interceptor {
     return command === this.shimCommand() || OMNODEX_COMMAND.test(command);
   }
 
-  private makeMatcherGroup(): HookMatcherGroup {
+  private makeMatcherGroup(eventName: string): HookMatcherGroup {
+    const sync = eventName === "PreToolUse" && (this.options.syncPreToolUse ?? guardrailsOn(this.options.omnodexHome));
     return {
       matcher: "*",
       hooks: [
         {
           type: "command",
           command: this.shimCommand(),
-          async: true,
-          timeout: this.options.timeoutSeconds,
+          ...(sync ? { timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS } : { async: true, timeout: this.options.timeoutSeconds }),
           [OMNODEX_TAG]: true,
         },
       ],
     };
+  }
+
+  /**
+   * Make the installed Omnodex PreToolUse handler synchronous (guardrails)
+   * or async (monitor, shadow). Touches nothing else in the file. Returns
+   * whether the file changed.
+   */
+  async setPreToolUseSync(sync: boolean): Promise<boolean> {
+    const settingsPath = this.settingsFilePath();
+    const existing = await this.readSettings(settingsPath);
+    const groups = existing.hooks?.PreToolUse;
+    if (!groups) return false;
+    let changed = false;
+    const next = groups.map((g) => ({
+      ...g,
+      hooks: (g.hooks ?? []).map((h) => {
+        if (!this.isOmnodexHandler(h)) return h;
+        const isSync = h.async !== true;
+        if (isSync === sync) return h;
+        changed = true;
+        const { async: _async, ...rest } = h;
+        return sync
+          ? { ...rest, timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS }
+          : { ...rest, async: true, timeout: this.options.timeoutSeconds };
+      }),
+    }));
+    if (!changed) return false;
+    await this.writeSettings(settingsPath, { ...existing, hooks: { ...existing.hooks, PreToolUse: next } });
+    return true;
   }
 
   private shimCommand(): string {
@@ -319,6 +364,16 @@ export class ClaudeCodeInterceptor implements Interceptor {
  */
 function portableCommand(homeRelativePath: string): string {
   return `node "$HOME/${homeRelativePath}"`;
+}
+
+/** Whether an OMNODEX_HOME's enforcement mode is guardrails. Unreadable means no. */
+function guardrailsOn(omnodexHome: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(path.join(omnodexHome, "omnodex-config.json"), "utf8")) as { enforcement?: unknown };
+    return parseEnforcementConfig(raw?.enforcement).mode === "guardrails";
+  } catch {
+    return false;
+  }
 }
 
 function shellQuote(value: string): string {

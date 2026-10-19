@@ -16,7 +16,8 @@
  * @omnodex/shared. No buffering, no retry logic.
  */
 
-import { type EmitFn } from "@omnodex/shared";
+import { type EmitFn, type ToolInvokedEvent } from "@omnodex/shared";
+import type { ProxyDecision } from "./guardrails.js";
 import {
   type UpstreamClientPool,
   type UpstreamCallResult,
@@ -40,6 +41,11 @@ export interface CallToolOptions {
   sessionId: string;
   /** Aborts the upstream call when the agent cancels its request. */
   signal?: AbortSignal;
+  /**
+   * Guardrails: decides the call before it is forwarded. Given the call as
+   * logged and the same call with nothing redacted.
+   */
+  decide?: (full: ToolInvokedEvent, logged: ToolInvokedEvent) => Promise<ProxyDecision>;
 }
 
 export interface CallToolOutcome {
@@ -66,7 +72,7 @@ export async function callToolWithEvents(
   emit: EmitFn,
   opts: CallToolOptions
 ): Promise<CallToolOutcome> {
-  const { prefixedName, args, toolCallId, sessionId, signal } = opts;
+  const { prefixedName, args, toolCallId, sessionId, signal, decide } = opts;
 
   const serverName = pool.getServerName(prefixedName);
   // Resolve before emitting -- if the tool doesn't exist we bail early.
@@ -95,7 +101,22 @@ export async function callToolWithEvents(
     args,
     redact,
   });
-  void emit(invokedEvent);
+  // Guardrails decide before anything is forwarded or written.
+  const fullEvent = redact
+    ? buildToolInvokedEvent({ sessionId, toolCallId, at: invokedAt, toolName: invokedEvent.tool_name, mcpServer: serverName, args, redact: false })
+    : invokedEvent;
+  const decision = decide ? await decide(fullEvent, invokedEvent) : undefined;
+
+  // Emit tool.invoked (fire-and-forget, non-blocking), then the decision's
+  // findings after it.
+  const invokedWritten = emit(invokedEvent);
+  if (decision && decision.events.length > 0) {
+    void Promise.resolve(invokedWritten).then(async () => {
+      for (const event of decision.events) await emit(event);
+    }).catch(() => undefined);
+  } else {
+    void invokedWritten;
+  }
 
   // Call upstream and measure duration.
   const startMs = Date.now();
@@ -104,10 +125,17 @@ export async function callToolWithEvents(
   let errorMessage: string | undefined;
 
   try {
-    result = await pool.callTool(prefixedName, args, signal ? { signal } : undefined);
-    if (result.isError) {
+    if (decision?.blocked) {
+      // Never forwarded: the agent gets the reason, the log the rules.
       status = "error";
-      errorMessage = extractErrorMessage(result.content);
+      errorMessage = `Blocked by Omnodex guardrails (${(decision.ruleIds ?? []).join(", ") || "could not check"})`;
+      result = { content: [{ type: "text", text: decision.reason ?? errorMessage }], isError: true };
+    } else {
+      result = await pool.callTool(prefixedName, args, signal ? { signal } : undefined);
+      if (result.isError) {
+        status = "error";
+        errorMessage = extractErrorMessage(result.content);
+      }
     }
   } catch (err) {
     // Upstream threw (network error, process crash, etc.).

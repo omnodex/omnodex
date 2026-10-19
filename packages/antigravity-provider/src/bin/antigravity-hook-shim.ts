@@ -16,10 +16,12 @@
  *
  *   - argv[2]:  event name ("PreInvocation" | "PostInvocation" | "PreToolUse" | "PostToolUse" | "Stop")
  *   - stdin:    JSON payload (one object per invocation)
- *   - stdout:   JSON response (legacy PreToolUse: ask, Stop: allow, others: {})
+ *   - stdout:   JSON response (PreToolUse: the guardrails decision, or allow,
+ *               which defers to Antigravity's own policy; Stop: allow; others: {})
  *   - stderr:   diagnostics only
  *   - exit 0:   success; Antigravity continues normally.
- *   - Installed hooks do not subscribe to PreToolUse or change permissions.
+ *   - Installed hooks subscribe to PreToolUse only in guardrails mode, and
+ *     never approve a call.
  *
  * Environment:
  *
@@ -42,7 +44,9 @@ import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
 import { applyCapturePause, EventLog, isPauseMarker, newEventId } from "@omnodex/event-log";
-import { captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
+import type { TraceEvent } from "@omnodex/shared";
 import type {
   AntigravityHookEventName,
   AntigravityHookPayload,
@@ -55,6 +59,7 @@ import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
   includesSessionEnd,
+  deferLivePush,
   pushEventsToCloud,
   runAutoSync,
   startBackgroundSync,
@@ -225,15 +230,38 @@ async function main(): Promise<number> {
     // Judge the call against the per-event rules here, so its findings are
     // written and pushed with it. Capped in time; on a timeout or error
     // the background pass judges it instead.
+    let failure: "timeout" | "error" | undefined;
+    // Judged even while recording is paused, so a pause never switches
+    // guardrails off; what a pause keeps out of the log is dropped below.
     const findings = captureDetectEnabled()
-      ? await judgeCaptured(written.filter((e) => !isPauseMarker(e)), {
+      ? await judgeCaptured(events.filter((e) => !isPauseMarker(e)), {
           newEventId,
           onError: (err) => {
+            failure = err instanceof CaptureTimeoutError ? "timeout" : "error";
             if (debug) console.error(`[omnodex-antigravity] rule evaluation skipped: ${(err as Error).message}`);
           },
         })
       : [];
-    const keptFindings = await applyCapturePause(findings, home);
+    const onEnforcementError = (err: unknown) => {
+      if (debug) console.error(`[omnodex-antigravity] enforcement skipped: ${(err as Error).message}`);
+    };
+    // PreToolUse can still act on the call: in guardrails mode, decide it.
+    // Elsewhere, record on each finding what enforcement would have done.
+    let deferPush = false;
+    let stamped = findings;
+    let extra: TraceEvent[] = [];
+    if (eventName === "PreToolUse") {
+      const result = await enforceCapturedCall(findings, events, {
+        host: "antigravity", home, newEventId, failure, onError: onEnforcementError,
+      });
+      // Written by outputResponse when the hook ends.
+      preToolUseDecision = result.output;
+      ({ findings: stamped, extra } = result);
+      deferPush = result.mode === "guardrails";
+    } else {
+      stamped = await stampCaptured(findings, events, { home, onError: onEnforcementError });
+    }
+    const keptFindings = await applyCapturePause([...stamped, ...extra], home);
     for (const finding of keptFindings) {
       await log.append(finding);
     }
@@ -248,7 +276,10 @@ async function main(): Promise<number> {
     }
 
     // Push to cloud in real time (never throws; ~50-100ms on cache hit).
-    await pushEventsToCloud([...written, ...keptFindings], home);
+    // The agent waits on a guardrails PreToolUse, so its events go out with
+    // the next push instead of making it wait on the network now.
+    if (deferPush) await deferLivePush([...written, ...keptFindings], home);
+    else await pushEventsToCloud([...written, ...keptFindings], home);
 
     // Refresh the hosted dashboard's sync blob in the background.
     // The same detached child runs detection first, so it also starts
@@ -321,11 +352,15 @@ async function consumeState(
 // stdout response (Antigravity expects JSON on stdout)
 // ---------------------------------------------------------------------------
 
+/** The guardrails decision for this PreToolUse call, once made. */
+let preToolUseDecision: Record<string, unknown> | null = null;
+
 function outputResponse(eventName?: string): void {
   if (eventName === "PreToolUse") {
-    // Compatibility for stale installations only. Reinstall removes this
-    // handler entirely. Never automatically approve an operation, even on error.
-    process.stdout.write(JSON.stringify({ decision: "ask" }));
+    // A guardrails decision, or "allow", which defers to the next hook and
+    // to Antigravity's own permission policy: it never approves anything.
+    // Installs subscribe to PreToolUse only in guardrails mode.
+    process.stdout.write(JSON.stringify(preToolUseDecision ?? { decision: "allow" }));
   } else if (eventName === "Stop") {
     // A decision is required. Anything other than continue permits stopping.
     process.stdout.write(JSON.stringify({ decision: "allow" }));
