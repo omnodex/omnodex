@@ -21,7 +21,7 @@ import type { SessionRow } from "../dashboard-model/view.js";
 import { useSnapshot } from "./useSnapshot.js";
 import { feedbackMailto } from "../dashboard-model/feedback.js";
 import { Logo } from "./components/Logo.js";
-import { DetailPanel, RiskEvents, SessionDetails, StatsRow, Timeline, type Detail } from "./components/Panels.js";
+import { DetailPanel, HeldBackNotice, RiskEvents, SessionDetails, StatsRow, Timeline, type Detail } from "./components/Panels.js";
 import { ConnectionTree, CredentialLedger, FileEventsPanel, FilterBar, ToolCallsPanel } from "./components/Views.js";
 
 // Per-browser preferences. Never sent anywhere; a page that cannot store
@@ -224,6 +224,7 @@ export function App(): React.JSX.Element {
         <StatsRow view={view} totals={totals} />
         <div className="panels">
           <ConnectionTree view={graphView} graph={filters.graph} onSelect={(graph) => updateFilters({ ...filters, graph })} />
+          <HeldBackNotice view={view} />
           <RiskEvents view={view} utc={utc} detail={detail} onSelect={setDetail} />
           <Timeline view={view} sessions={snapshot.sessions} utc={utc} detail={detail} newCallIds={newCallIds} onSelect={setDetail} />
           <CredentialLedger view={view} utc={utc} onSelect={setDetail} />

@@ -148,16 +148,20 @@ function StatCard({ label, value, tone, sub }: { label: string; value: React.Rea
   );
 }
 
+/**
+ * How many advanced findings the server held back from the view: one line,
+ * below the connection graph, never beside the findings or calls.
+ */
+export function HeldBackNotice({ view }: { view: SessionView }): React.JSX.Element | null {
+  if (view.hiddenAdvanced <= 0) return null;
+  return <div className="held-back-notice" role="note">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>;
+}
+
 export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTotals }): React.JSX.Element {
   const t = totals;
   const band = riskBandLabel(t.risk);
   const s = view.session;
   return (
-    <>
-    {/* Held-back advanced findings: one count above the summary, never beside the findings or calls. */}
-    {view.hiddenAdvanced > 0 && (
-      <div className="held-back-notice" role="note">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>
-    )}
     <div className="stats-row">
       <StatCard label="Tool Calls" value={t.toolCalls} tone="cyan" sub={`${t.mcpServers} MCP servers`} />
       <StatCard label="File Reads" value={t.fileReads} tone="mint" sub={`${t.fileWrites} writes`} />
@@ -168,7 +172,6 @@ export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTota
         <StatCard label="Sessions" value={t.sessions} tone="cyan" sub="in view" />
       )}
     </div>
-    </>
   );
 }
 
