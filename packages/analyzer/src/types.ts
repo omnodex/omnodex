@@ -139,9 +139,11 @@ export interface PathMatchCondition {
    * Which paths to test. "any" (the default) is every path the call names,
    * read or write. "write" is only what it writes to (see
    * extractWriteTargets), which is what a rule about planting something in a
-   * file needs: reading that file is not planting anything.
+   * file needs: reading that file is not planting anything. "read" is every
+   * path except those, for a rule about data leaving: writing a file is not
+   * reading what is in it.
    */
-  access?: "any" | "write";
+  access?: "any" | "write" | "read";
 }
 
 export interface PathPattern {

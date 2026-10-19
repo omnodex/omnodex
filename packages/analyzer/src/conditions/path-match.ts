@@ -87,7 +87,11 @@ export function evaluatePathMatch(
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
   const action = normalizeAction(event);
-  const paths = condition.access === "write" ? action.writes : action.paths;
+  const paths = condition.access === "write"
+    ? action.writes
+    : condition.access === "read"
+      ? action.paths.filter((p) => !action.writes.includes(p))
+      : action.paths;
   const matched: Partial<MatchContext>[] = [];
 
   for (const p of paths) {
