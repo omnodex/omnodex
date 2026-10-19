@@ -114,7 +114,7 @@ test("the payload allowlist is exactly these fields", () => {
     risk_events: [
       "event_id", "session_id", "related_event_id", "severity", "category",
       "description", "rule_id", "detected_at", "correlation_id",
-      "rule_tier", "related_event_ids", "evidence",
+      "rule_tier", "related_event_ids", "evidence", "enforcement",
     ],
     prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
     subagents: [
@@ -174,6 +174,26 @@ test("a single-call finding carries no sequence or evidence in the payload", asy
   const store = await project(new InMemoryReadModelStore(), [START, INVOKED, plain]);
   const [row] = (await serializeReadModel(store)).risk_events.sess_fields;
   assert.ok(!("rule_tier" in row) && !("related_event_ids" in row) && !("evidence" in row));
+});
+
+for (const [name, makeStore] of [
+  ["in-memory", async () => new InMemoryReadModelStore()],
+  ["sqlite", sqliteStore],
+]) {
+  test(`${name}: a finding's enforcement record survives projection and serialization`, async (t) => {
+    const enforcement = { mode: "shadow", candidate: "deny", action: "alert_only", held: false, source: "rule-hint" };
+    const store = await project(await makeStore(t), [START, INVOKED, { ...RISK, enforcement }]);
+    const [row] = await store.listRiskEvents("sess_fields");
+    assert.deepEqual(row.enforcement, enforcement);
+    const payload = await serializeReadModel(store);
+    assert.deepEqual(payload.risk_events.sess_fields[0].enforcement, enforcement);
+  });
+}
+
+test("a finding without an enforcement record has none in the payload", async () => {
+  const store = await project(new InMemoryReadModelStore(), [START, INVOKED, RISK]);
+  const payload = await serializeReadModel(store);
+  assert.ok(!("enforcement" in payload.risk_events.sess_fields[0]));
 });
 
 test("platform survives projection, SQLite and serialization", async (t) => {

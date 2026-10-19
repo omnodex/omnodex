@@ -18,6 +18,14 @@
     "./capture": {
       "import": "./dist/capture.js",
       "types": "./dist/capture.d.ts"
+    },
+    "./enforcement": {
+      "import": "./dist/enforcement/index.js",
+      "types": "./dist/enforcement/index.d.ts"
+    },
+    "./stamp": {
+      "import": "./dist/enforcement/stamp.js",
+      "types": "./dist/enforcement/stamp.d.ts"
     }
   },
   "scripts": {

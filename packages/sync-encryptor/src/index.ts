@@ -82,7 +82,7 @@ export {
 export type { VerifierState, CredentialOptions } from "./stream-credentials.js";
 export type { StreamingTransportOptions } from "./streaming-transport.js";
 
-export { pushEventsToCloud } from "./shim-push.js";
+export { pushEventsToCloud, deferLivePush, takeDeferredPush, DEFERRED_PUSH_FILE } from "./shim-push.js";
 export {
   LiveGate,
   LIVE_BACKOFF_MIN_MS,
@@ -118,7 +118,17 @@ export type { AcquireSyncLockOptions, AutoSyncState, AutoSyncDecision, AutoSyncO
 // Advanced (Pro) rule usage: counted in the background pass, submitted in batches
 export { readAdvancedUsage, ADVANCED_USAGE_FILE, MAX_AGE_DAYS as ADVANCED_USAGE_MAX_AGE_DAYS } from "./advanced-usage.js";
 export type { AdvancedUsageState } from "./advanced-usage.js";
+export { readRuleSignals, collectRuleSignals, submitRuleSignals, RULE_SIGNALS_FILE, RULE_SIGNALS_LOG } from "./rule-signals.js";
+export type { RuleSignalsState, RuleSignalCount } from "./rule-signals.js";
 
 // Advanced rule bundle refresh (background pass, Pro and Enterprise)
 export { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_ENV } from "./rules-refresh.js";
+export {
+  refreshGuardrailsModule,
+  guardrailsEntitled,
+  GUARDRAILS_MODULE_FILE,
+  GUARDRAILS_REFRESH_ENV,
+  GUARDRAILS_REFRESH_STATE_FILE,
+} from "./guardrails-refresh.js";
+export type { GuardrailsRefreshOutcome, GuardrailsRefreshOptions } from "./guardrails-refresh.js";
 export type { RulesRefreshOutcome, RulesRefreshOptions } from "./rules-refresh.js";

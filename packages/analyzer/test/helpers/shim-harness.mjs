@@ -3,7 +3,8 @@
 // capture evaluation tests.
 
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { installModule } from "./make-module.mjs";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
@@ -86,13 +87,17 @@ export const findingsIn = (events) => events.filter((e) => e.event_type === "ris
  *   checkResult    optional (result) => void, for host-specific stdout
  */
 export function captureEvaluationCases(test, assert, { shim, interceptor, sensitiveRead, harmlessCall, checkResult = () => {} }) {
-  async function run(t, call, env = {}) {
+  async function run(t, call, env = {}, config) {
     const s = await scratch(t);
+    if (config !== undefined) {
+      await mkdir(s.home, { recursive: true });
+      await writeFile(path.join(s.home, "omnodex-config.json"), typeof config === "string" ? config : JSON.stringify(config));
+    }
     const { payload, args } = call;
     const result = await runShim(shim, s, payload, { env, args });
     assert.equal(result.code, 0, `stderr: ${result.stderr}`);
     checkResult(result);
-    return { logged: await loggedEvents(s.home), pushed: await pushedEvents(s.pushLog), result };
+    return { logged: await loggedEvents(s.home), pushed: await pushedEvents(s.pushLog), result, home: s.home };
   }
 
   test("a matching call: the finding is written after the event and pushed with it", async (t) => {
@@ -137,10 +142,109 @@ export function captureEvaluationCases(test, assert, { shim, interceptor, sensit
     assert.equal(pushed.length, logged.length);
   });
 
+  test("monitor mode (the default): the finding carries no enforcement record", async (t) => {
+    const { logged } = await run(t, sensitiveRead("s-enf-monitor"));
+    assert.equal(findingsIn(logged)[0].enforcement, undefined);
+  });
+
+  test("shadow mode: the finding records what enforcement would have done, and the call is not touched", async (t) => {
+    const config = { enforcement: { mode: "shadow", rules: { RULE_SENSITIVE_PATH_READ: "deny" } } };
+    const { logged, pushed, home } = await run(t, sensitiveRead("s-enf-shadow"), {}, config);
+    const [finding] = findingsIn(logged);
+    assert.deepEqual(finding.enforcement, {
+      mode: "shadow",
+      candidate: "alert_only",
+      action: "deny",
+      held: false,
+      source: "user-rule",
+    });
+    assert.deepEqual(findingsIn(pushed)[0].enforcement, finding.enforcement, "the record is pushed with the finding");
+    const signals = (await readJsonl(path.join(home, "rule-signals.jsonl"))).map((l) => `${l.rule_id}:${l.kind}`);
+    assert.deepEqual(signals, ["RULE_SENSITIVE_PATH_READ:would_block", "RULE_SENSITIVE_PATH_READ:in_force"]);
+  });
+
+  test("shadow mode with an allow exception: no record for the allowed rule", async (t) => {
+    const config = {
+      enforcement: {
+        mode: "shadow",
+        rules: { RULE_SENSITIVE_PATH_READ: "deny" },
+        exceptions: [{ rule_id: "RULE_SENSITIVE_PATH_READ", kind: "allow" }],
+      },
+    };
+    const { logged } = await run(t, sensitiveRead("s-enf-allow"), {}, config);
+    const [finding] = findingsIn(logged);
+    assert.equal(finding.enforcement?.action ?? "alert_only", "alert_only");
+  });
+
+  test("an unreadable configuration file: the finding is still written, unstamped", async (t) => {
+    const { logged } = await run(t, sensitiveRead("s-enf-broken"), {}, "{ not json");
+    const findings = findingsIn(logged);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].enforcement, undefined);
+  });
+
   test("an evaluator that throws: no finding, the event still recorded and pushed", async (t) => {
     const { logged, pushed } = await run(t, sensitiveRead("s-cap-throw"), { OMNODEX_TEST_CAPTURE: "throw" });
     assert.ok(logged.some((e) => e.event_type === "tool.invoked"));
     assert.equal(findingsIn(logged).length, 0);
     assert.equal(pushed.length, logged.length);
+  });
+}
+
+/**
+ * The guardrails cases every shim that answers PreToolUse must pass. The
+ * decision itself comes from the guardrails module; these tests install a
+ * stand-in (helpers/make-module.mjs) and check that the shim hands it the
+ * call, writes back what it answers, and stays out of the way without it.
+ *
+ *   shim           path to the built shim
+ *   host           the host name the shim passes to the module
+ *   sensitiveRead  (sessionId) => { payload, args } for a PreToolUse that
+ *                  reads /etc/shadow (RULE_SENSITIVE_PATH_READ)
+ *   passOutput     what the shim writes when nothing holds the call: "" or a JSON string
+ */
+export function guardrailsCases(test, assert, { shim, host, sensitiveRead, passOutput = "" }) {
+  async function run(t, call, enforcement, { env = {}, module = true } = {}) {
+    const s = await scratch(t);
+    await mkdir(s.home, { recursive: true });
+    await writeFile(path.join(s.home, "omnodex-config.json"), JSON.stringify({ enforcement }));
+    const moduleEnv = module ? installModule(s.home).env : {};
+    const { payload, args } = call;
+    const result = await runShim(shim, s, payload, { env: { ...moduleEnv, ...env }, args });
+    assert.equal(result.code, 0, `stderr: ${result.stderr}`);
+    return { result, logged: await loggedEvents(s.home), pushed: await pushedEvents(s.pushLog), home: s.home };
+  }
+
+  test("guardrails: the module's decision is written back, and the finding records that it held the call", async (t) => {
+    const { result, logged, pushed, home } = await run(t, sensitiveRead("s-gc-deny"), { mode: "guardrails", rules: { RULE_SENSITIVE_PATH_READ: "deny" } });
+    assert.deepEqual(JSON.parse(result.stdout), { test_decision: "deny", host, rules: ["RULE_SENSITIVE_PATH_READ"] });
+    const finding = findingsIn(logged).find((f) => f.rule_id === "RULE_SENSITIVE_PATH_READ");
+    assert.equal(finding.enforcement.held, true);
+    assert.equal(pushed.length, 0, "the push waits for the next hook");
+    assert.ok((await readFile(path.join(home, "live-push-deferred.jsonl"), "utf8")).length > 0);
+  });
+
+  test("guardrails: a confirm verdict reaches the module as confirm", async (t) => {
+    const { result } = await run(t, sensitiveRead("s-gc-ask"), { mode: "guardrails", rules: { RULE_SENSITIVE_PATH_READ: "confirm" } });
+    assert.equal(JSON.parse(result.stdout).test_decision, "confirm");
+  });
+
+  test("guardrails: rules that fail let the call run", async (t) => {
+    const { result, logged } = await run(t, sensitiveRead("s-gc-fail"), { mode: "guardrails", rules: { RULE_SENSITIVE_PATH_READ: "deny" } }, { env: { OMNODEX_TEST_CAPTURE: "throw" } });
+    assert.equal(result.stdout, passOutput);
+    assert.equal(logged.find((e) => e.event_type === "risk.enforcement_error").outcome, "allowed");
+  });
+
+  test("guardrails without a module (no subscription): nothing is stopped, findings recorded as shadow", async (t) => {
+    const { result, logged } = await run(t, sensitiveRead("s-gc-nomod"), { mode: "guardrails", rules: { RULE_SENSITIVE_PATH_READ: "deny" } }, { module: false });
+    assert.equal(result.stdout, passOutput);
+    const finding = findingsIn(logged).find((f) => f.rule_id === "RULE_SENSITIVE_PATH_READ");
+    assert.equal(finding.enforcement.mode, "shadow");
+    assert.equal(finding.enforcement.held, false);
+  });
+
+  test("shadow mode never stops a call, module or not", async (t) => {
+    const { result } = await run(t, sensitiveRead("s-gc-shadow"), { mode: "shadow", rules: { RULE_SENSITIVE_PATH_READ: "deny" } });
+    assert.equal(result.stdout, passOutput);
   });
 }

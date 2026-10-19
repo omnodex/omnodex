@@ -16,6 +16,8 @@ export type { MCPProxyOptions } from "./mcp-proxy.js";
 export { createCloudPushQueue } from "./cloud-push.js";
 export { createProxyEvaluation, loadProxyEvaluator } from "./evaluation.js";
 export type { ProxyEvaluation, ProxyEvaluationOptions, ProxyEvaluator, LoadEvaluatorFn } from "./evaluation.js";
+export { createProxyGuardrails, proxyEnforcementMode } from "./guardrails.js";
+export type { ProxyGuardrails, ProxyGuardrailsOptions, ProxyDecision } from "./guardrails.js";
 export type {
   CloudPushQueue,
   CloudPushQueueOptions,

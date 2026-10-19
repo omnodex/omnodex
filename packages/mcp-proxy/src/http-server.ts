@@ -26,6 +26,7 @@ import type { EmitFn } from "@omnodex/shared";
 import type { ProxyConfig } from "./config.js";
 import type { UpstreamClientPool } from "./upstream-client.js";
 import { runProxyServer } from "./proxy-server.js";
+import type { ProxyGuardrails } from "./guardrails.js";
 
 /** Path the MCP endpoint is served on. */
 export const HTTP_MCP_PATH = "/mcp";
@@ -49,6 +50,8 @@ export interface ProxyHttpServerOptions extends HttpServeOptions {
   config: ProxyConfig;
   emit: EmitFn;
   projectPath?: string;
+  /** Guardrails: decides each call before it is forwarded. */
+  guardrails?: ProxyGuardrails;
 }
 
 export interface ProxyHttpServer {
@@ -205,6 +208,7 @@ export async function startProxyHttpServer(opts: ProxyHttpServerOptions): Promis
       pool,
       config,
       emit,
+      ...(opts.guardrails ? { guardrails: opts.guardrails } : {}),
       sessionId: randomUUID(),
       ...(projectPath !== undefined ? { projectPath } : {}),
       transport,

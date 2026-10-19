@@ -332,3 +332,46 @@ test("home-relative launcher is ignored on Windows, which keeps cmd.exe syntax",
   assert.match(cmd, /^set "OMNODEX_HOME=/);
   assert.ok(!cmd.includes("$HOME"), "cmd.exe does not expand $HOME");
 });
+
+// Guardrails: Antigravity installs observe PostToolUse; guardrails mode
+// adds PreToolUse so a call can be stopped before it runs.
+
+test("guardrails: install also subscribes to PreToolUse", async (t) => {
+  const projectPath = await fresh(t);
+  const home = path.join(projectPath, ".omnodex-home");
+  await mkdir(home, { recursive: true });
+  await writeFile(path.join(home, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "guardrails" } }));
+  const interceptor = makeInterceptor(projectPath);
+  await interceptor.install();
+  const file = JSON.parse(await readFile(interceptor.hooksFilePath(), "utf8"));
+  assert.equal(file.omnodex.PreToolUse[0].matcher, "*");
+  assert.match(file.omnodex.PreToolUse[0].hooks[0].command, /PreToolUse$/);
+  assert.ok(file.omnodex.PostToolUse);
+});
+
+test("setPreToolUse adds and removes only the Omnodex PreToolUse entry", async (t) => {
+  const projectPath = await fresh(t);
+  const interceptor = makeInterceptor(projectPath);
+  await interceptor.install();
+  const hooksPath = interceptor.hooksFilePath();
+  const file = JSON.parse(await readFile(hooksPath, "utf8"));
+  file["team-policy"] = { PreToolUse: [{ matcher: "run_command", hooks: [{ type: "command", command: "./policy.sh" }] }] };
+  await writeFile(hooksPath, JSON.stringify(file));
+
+  assert.equal(await interceptor.setPreToolUse(true), true);
+  let after = JSON.parse(await readFile(hooksPath, "utf8"));
+  assert.ok(after.omnodex.PreToolUse);
+  assert.deepEqual(after["team-policy"], file["team-policy"]);
+  assert.equal(await interceptor.setPreToolUse(true), false, "already there");
+
+  assert.equal(await interceptor.setPreToolUse(false), true);
+  after = JSON.parse(await readFile(hooksPath, "utf8"));
+  assert.equal(after.omnodex.PreToolUse, undefined);
+  assert.ok(after.omnodex.PostToolUse);
+  assert.deepEqual(after["team-policy"], file["team-policy"]);
+});
+
+test("setPreToolUse on a file without Omnodex hooks changes nothing", async (t) => {
+  const projectPath = await fresh(t);
+  assert.equal(await makeInterceptor(projectPath).setPreToolUse(true), false);
+});

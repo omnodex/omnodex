@@ -64,6 +64,11 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * from what a call read and reached, never from command text, and travel
  * only inside the encrypted payload, as tool parameters do.
  *
+ * risk_events.enforcement: what enforcement made of a finding when it was
+ * captured (the mode, the rule's candidate verdict, the verdict the user's
+ * settings give, whether the call was held), so the hosted dashboard can show
+ * what shadow mode would have stopped. Verdicts and rule ids only.
+ *
  * capture_pauses (top level, not per session): each time recording or
  * uploads were paused on the machine, so the dashboard can show the gap
  * even if it was not open when the pause happened. They carry no captured
@@ -85,7 +90,7 @@ export const PAYLOAD_FIELDS = {
   risk_events: [
     "event_id", "session_id", "related_event_id", "severity", "category",
     "description", "rule_id", "detected_at", "correlation_id",
-    "rule_tier", "related_event_ids", "evidence",
+    "rule_tier", "related_event_ids", "evidence", "enforcement",
   ],
   prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
   subagents: [

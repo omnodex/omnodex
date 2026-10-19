@@ -29,6 +29,8 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
+import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
+import { describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
@@ -93,6 +95,8 @@ import {
   streamHasSecret,
   ensureSecretVerifier,
   SecretMismatchError,
+  guardrailsEntitled,
+  refreshGuardrailsModule,
 } from "@omnodex/sync-encryptor";
 import type { AdvancedUsageState } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
@@ -1108,6 +1112,17 @@ function installComponents(args: readonly string[]): InstallComponents {
 }
 
 async function cmdInstall(rawArgs: string[]): Promise<void> {
+  // A first install offers shadow mode; reinstalls and upgrades keep the mode they have.
+  const firstInstall = (await listInstallations()).length === 0;
+  await installTargets(rawArgs);
+  if (firstInstall && !process.exitCode) {
+    await offerShadowMode({ home: resolvePaths().home, io: processIo(), yes: hasYes(rawArgs) }).catch((err: unknown) => {
+      console.error(`[install] could not set the enforcement mode: ${(err as Error).message}`);
+    });
+  }
+}
+
+async function installTargets(rawArgs: string[]): Promise<void> {
   const args = joinValueFlags(rawArgs);
   // No target, or a project folder in its place: set up every surface found.
   const positional = args.find((a) => !a.startsWith("-"));
@@ -2363,11 +2378,57 @@ export function describeSyncBlob(
   return line;
 }
 
+/**
+ * Make the installed hooks that must answer before a call runs do so
+ * (guardrails), or stop them doing so: Claude Code's Omnodex PreToolUse
+ * entries become synchronous or async again, and Antigravity's PreToolUse
+ * entry is added or removed. Codex always waits on its hooks, so nothing
+ * changes there. Covers the user-level files and each project install in
+ * the registry. Returns the files that changed.
+ */
+async function setGuardrailsHooks(omnodexHome: string, on: boolean): Promise<string[]> {
+  const files: Record<"claude-code" | "antigravity", Set<string>> = {
+    "claude-code": new Set([userHooksFile("claude-code")]),
+    antigravity: new Set([userHooksFile("antigravity")]),
+  };
+  for (const inst of await listInstallations()) {
+    if (inst.component !== "hooks" || inst.scope !== "project" || !inst.projectPath) continue;
+    if (inst.target === "claude-code") files["claude-code"].add(path.join(inst.projectPath, ".claude", inst.settingsFile));
+    if (inst.target === "antigravity") files.antigravity.add(path.join(inst.projectPath, ".agents", inst.settingsFile));
+  }
+  const changed: string[] = [];
+  for (const file of files["claude-code"]) {
+    const interceptor = new ClaudeCodeInterceptor({ projectPath: path.dirname(file), shimPath: CLAUDE_HOOK_SHIM_PATH, omnodexHome, settingsPath: file });
+    if (await interceptor.setPreToolUseSync(on)) changed.push(file);
+  }
+  for (const file of files.antigravity) {
+    const interceptor = new AntigravityInterceptor({ projectPath: path.dirname(file), shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome, hooksPath: file });
+    if (await interceptor.setPreToolUse(on)) changed.push(file);
+  }
+  return changed;
+}
+
+/**
+ * Before switching to guardrails: whether the cached license includes them,
+ * and the guardrails module fetched now and opened.
+ */
+async function prepareGuardrails(omnodexHome: string): Promise<GuardrailsReadiness> {
+  if (!(await guardrailsEntitled(omnodexHome))) {
+    return { entitled: false, ready: false, detail: "not included in this plan" };
+  }
+  await refreshGuardrailsModule(omnodexHome, { force: true });
+  const load = await loadGuardrailsModule(omnodexHome);
+  return { entitled: true, ready: !load.skipped, detail: describeGuardrails(load) };
+}
+
 /** Whether recording and uploads are paused on this machine. */
 async function printCaptureHealth(omnodexHome: string): Promise<void> {
   const { lines, markers } = await captureStatusLines(omnodexHome);
   await appendMarkers(omnodexHome, markers, pushEventsToCloud);
   for (const line of lines) console.log(line);
+  const mode = await currentMode(omnodexHome).catch(() => "monitor");
+  const module = mode === "guardrails" ? ` (${describeGuardrails(await loadGuardrailsModule(omnodexHome))})` : "";
+  console.log(`[status] enforcement:  ${mode}${module}`);
 }
 
 /**
@@ -2969,6 +3030,15 @@ async function main(): Promise<void> {
         home: resolvePaths().home, io: processIo(), push: pushEventsToCloud,
       });
       return;
+    case "enforce":
+      process.exitCode = await runEnforce(rest, {
+        home: resolvePaths().home,
+        io: processIo(),
+        applyHookTiming: (on) => setGuardrailsHooks(resolvePaths().home, on),
+        prepareGuardrails: () => prepareGuardrails(resolvePaths().home),
+        describeGuardrails: async () => describeGuardrails(await loadGuardrailsModule(resolvePaths().home)),
+      });
+      return;
     case "live":
       await cmdLive(rest);
       return;
@@ -3072,6 +3142,16 @@ commands:
                      pause recording on this machine: nothing is captured
                      or uploaded until it resumes. Pausing asks you to
                      confirm at a terminal.
+  enforce monitor | shadow | guardrails | status
+                     choose whether Omnodex acts on tool calls. monitor
+                     (the default) records and flags. shadow also records,
+                     on each finding, whether Omnodex would have stopped
+                     the call, and never stops one. guardrails (Pro)
+                     stops or holds calls your settings say to; leaving it
+                     needs a person at a terminal. A first install offers
+                     shadow. Rules, per-rule settings and exceptions are
+                     read from the enforcement section of
+                     ~/.omnodex/omnodex-config.json.
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.

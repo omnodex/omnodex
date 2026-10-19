@@ -14,7 +14,7 @@
  * the read model can change freely because it is always regenerable.
  */
 
-import type { FindingEvidence, InterceptorKind, McpServerTransport, PlatformKind, RiskSeverity } from "@omnodex/shared";
+import type { FindingEnforcement, FindingEvidence, InterceptorKind, McpServerTransport, PlatformKind, RiskSeverity } from "@omnodex/shared";
 
 export interface SessionRow {
   session_id: string;
@@ -168,6 +168,8 @@ export interface RiskEventRow {
    * where the last one went. Its steps name the calls in related_event_ids.
    */
   evidence?: FindingEvidence;
+  /** What enforcement made of the finding when it was captured (shadow or guardrails). */
+  enforcement?: FindingEnforcement;
 }
 
 /**

@@ -17,11 +17,18 @@
  *   MOCK_FAIL_STARTUP   if "1", exit with code 1 before speaking MCP
  *   MOCK_STARTUP_DELAY_MS  wait this long before speaking MCP
  *   MOCK_EXIT_AFTER_MS  exit this long after connecting (simulates a crash)
+ *   MOCK_CALL_LOG       append each called tool's name to this file
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { appendFileSync } from "node:fs";
 import { z } from "zod";
+
+const callLog = process.env.MOCK_CALL_LOG;
+const logCall = (toolName) => {
+  if (callLog) appendFileSync(callLog, `${toolName}\n`);
+};
 
 if (process.env.MOCK_FAIL_STARTUP === "1") {
   process.stderr.write("mock server: startup failure\n");
@@ -76,6 +83,7 @@ for (const toolName of tools) {
     `Mock tool: ${toolName}`,
     { input: z.string().optional() },
     async ({ input }) => {
+      logCall(toolName);
       if (returnError) {
         return {
           content: [{ type: "text", text: `error from ${toolName}` }],

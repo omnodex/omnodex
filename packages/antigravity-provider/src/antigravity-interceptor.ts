@@ -42,8 +42,9 @@
  * MCP config: `.agents/mcp_config.json` (separate file, not touched here).
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import * as path from "node:path";
+import { parseEnforcementConfig } from "@omnodex/shared";
 import type { EmitFn, Interceptor, StopFn } from "@omnodex/shared";
 
 export interface AntigravityInterceptorOptions {
@@ -91,6 +92,11 @@ export interface AntigravityInterceptorOptions {
    * Set explicitly in tests or when cross-compiling hooks for a different OS.
    */
   platform?: NodeJS.Platform;
+  /**
+   * Subscribe to PreToolUse, so guardrails can stop a call before it runs.
+   * Defaults to whether OMNODEX_HOME's enforcement mode is guardrails.
+   */
+  enforcePreToolUse?: boolean;
 }
 
 /** Top-level hooks.json: each key is a named hook containing event defs. */
@@ -127,6 +133,8 @@ const HOOK_NAME = "omnodex";
 /** Events that use matcher groups (PreToolUse, PostToolUse). */
 // PreToolUse requires a gating decision, with no documented observer response.
 // Observing PostToolUse leaves native permissions and other policy hooks alone.
+// Guardrails mode adds PreToolUse, whose answer is a decision or "allow",
+// which defers to Antigravity's own policy and never approves a call.
 const TOOL_EVENTS = ["PostToolUse"] as const;
 
 /** Events that use flat handler lists (Stop, PreInvocation, PostInvocation). */
@@ -178,6 +186,9 @@ export class AntigravityInterceptor implements Interceptor {
         },
       ];
     }
+    if (this.options.enforcePreToolUse ?? guardrailsOn(this.options.omnodexHome)) {
+      omnodexDef.PreToolUse = [{ matcher: "*", hooks: [this.makeHandler("PreToolUse")] }];
+    }
 
     for (const eventName of FLAT_EVENTS) {
       omnodexDef[eventName] = [this.makeHandler(eventName)];
@@ -197,6 +208,23 @@ export class AntigravityInterceptor implements Interceptor {
     delete next[HOOK_NAME];
 
     await this.writeHooks(hooksPath, next);
+  }
+
+  /**
+   * Add (guardrails) or remove the Omnodex PreToolUse entry in an installed
+   * hooks file. Touches nothing else. Returns whether the file changed.
+   */
+  async setPreToolUse(on: boolean): Promise<boolean> {
+    const hooksPath = this.hooksFilePath();
+    const existing = await this.readHooks(hooksPath);
+    const def = existing[HOOK_NAME];
+    if (!def) return false;
+    if (on === Boolean(def.PreToolUse)) return false;
+    const next: NamedHookDef = { ...def };
+    if (on) next.PreToolUse = [{ matcher: "*", hooks: [this.makeHandler("PreToolUse")] }];
+    else delete next.PreToolUse;
+    await this.writeHooks(hooksPath, { ...existing, [HOOK_NAME]: next });
+    return true;
   }
 
   private makeHandler(eventName: string): HookHandler {
@@ -250,6 +278,16 @@ export class AntigravityInterceptor implements Interceptor {
 
   private async writeHooks(hooksPath: string, hooks: HooksFile): Promise<void> {
     await fs.writeFile(hooksPath, JSON.stringify(hooks, null, 2) + "\n", "utf8");
+  }
+}
+
+/** Whether an OMNODEX_HOME's enforcement mode is guardrails. Unreadable means no. */
+function guardrailsOn(omnodexHome: string): boolean {
+  try {
+    const raw = JSON.parse(readFileSync(path.join(omnodexHome, "omnodex-config.json"), "utf8")) as { enforcement?: unknown };
+    return parseEnforcementConfig(raw?.enforcement).mode === "guardrails";
+  } catch {
+    return false;
   }
 }
 

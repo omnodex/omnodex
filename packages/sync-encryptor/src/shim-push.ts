@@ -20,6 +20,11 @@
  * skipped for a growing back-off window (see live-gate.ts), so an unwatched
  * machine costs a few requests an hour rather than one per event.
  *
+ * Deferred: a hook the agent waits on (a synchronous PreToolUse in
+ * guardrails mode) queues its events with deferLivePush instead of pushing,
+ * so the agent never waits on the network. The next push from this machine
+ * sends the queue first.
+ *
  * Key caching:
  *   - Derived streaming key (raw bytes + key_id) is cached to
  *     OMNODEX_HOME/streaming-key-cache.json.
@@ -29,7 +34,7 @@
  *   - Cache hit path is <5ms (JSON parse + AES-GCM import).
  */
 
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { appendFile, readFile, rename, unlink, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { webcrypto } from "node:crypto";
 import type { TraceEvent } from "@omnodex/shared";
@@ -192,12 +197,66 @@ async function resolveStreamingKey(
  * @param omnodexHome - Path to OMNODEX_HOME (e.g. ~/.omnodex).
  * @param timeoutMs - Network timeout in ms. Default: 3000.
  */
+export const DEFERRED_PUSH_FILE = "live-push-deferred.jsonl";
+/** Most deferred events kept; older ones are left to the sync blob. */
+const MAX_DEFERRED = 500;
+
+/**
+ * Queue events for the next live push from this machine, with no network
+ * request. Appending a few lines is safe across concurrent hook processes.
+ * Never throws.
+ */
+export async function deferLivePush(events: TraceEvent[], omnodexHome: string): Promise<void> {
+  if (events.length === 0) return;
+  try {
+    await mkdir(omnodexHome, { recursive: true });
+    await appendFile(join(omnodexHome, DEFERRED_PUSH_FILE), events.map((e) => JSON.stringify(e) + "\n").join(""));
+  } catch {
+    // Best effort: the events are in the local log and the next sync blob.
+  }
+}
+
+/**
+ * Take the deferred events, oldest first. The queue is renamed before it is
+ * read, so events deferred meanwhile wait for the push after this one.
+ */
+export async function takeDeferredPush(omnodexHome: string): Promise<TraceEvent[]> {
+  const file = join(omnodexHome, DEFERRED_PUSH_FILE);
+  const taking = `${file}.${process.pid}.take`;
+  try {
+    await rename(file, taking);
+  } catch {
+    return [];
+  }
+  let text = "";
+  try {
+    text = await readFile(taking, "utf8");
+  } catch {
+    return [];
+  } finally {
+    await unlink(taking).catch(() => undefined);
+  }
+  const events: TraceEvent[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      events.push(JSON.parse(line) as TraceEvent);
+    } catch {
+      // A torn line from a crash mid-append: skip it.
+    }
+  }
+  return events.slice(-MAX_DEFERRED);
+}
+
 export async function pushEventsToCloud(
   events: TraceEvent[],
   omnodexHome: string,
   timeoutMs = 3000,
 ): Promise<boolean> {
   try {
+    // Events a hook deferred go out first, in the order they happened.
+    const deferred = await takeDeferredPush(omnodexHome);
+    if (deferred.length > 0) events = [...deferred, ...events];
     // 0. Nothing recorded under a capture pause leaves the machine.
     events = await outboundEvents(events, omnodexHome);
     if (events.length === 0) return false;

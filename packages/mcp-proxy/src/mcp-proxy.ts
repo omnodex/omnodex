@@ -52,6 +52,7 @@ import {
 } from "./http-server.js";
 import { createCloudPushQueue, type CloudPushFn } from "./cloud-push.js";
 import { createProxyEvaluation, type LoadEvaluatorFn } from "./evaluation.js";
+import { createProxyGuardrails } from "./guardrails.js";
 import {
   startAutoSyncTimer,
   type AutoSyncTimer,
@@ -149,6 +150,9 @@ export class MCPProxy implements Interceptor {
     });
     // Rule detection runs on each recorded event, off the response path.
     // OMNODEX_CAPTURE_DETECT=0 turns it off; the background pass still runs.
+    // Guardrails judge a call before it is forwarded, in guardrails mode
+    // only; their findings are written then, so the evaluation skips them.
+    const guardrails = createProxyGuardrails({ home: this.home });
     const evaluation =
       process.env.OMNODEX_CAPTURE_DETECT === "0"
         ? null
@@ -157,6 +161,7 @@ export class MCPProxy implements Interceptor {
             emit,
             push: (event) => push.enqueue(event),
             loadEvaluator: this.hooks?.loadEvaluator,
+            skip: (finding) => guardrails.alreadyWritten(finding),
           });
     const emitAndPush: EmitFn = async (event) => {
       await emit(event);
@@ -186,6 +191,7 @@ export class MCPProxy implements Interceptor {
         pool,
         config: this.config,
         emit: emitAndPush,
+        guardrails,
         ...(this.projectPath !== undefined ? { projectPath: this.projectPath } : {}),
       });
       this.httpServer = httpServer;
@@ -195,6 +201,7 @@ export class MCPProxy implements Interceptor {
         pool,
         config: this.config,
         emit: emitAndPush,
+        guardrails,
         sessionId: this.sessionId,
         projectPath: this.projectPath,
         ...(this.transport ? { transport: this.transport } : {}),

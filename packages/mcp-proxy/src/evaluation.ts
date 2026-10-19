@@ -19,12 +19,14 @@
  * the first tool call, not at startup, so it adds nothing to the time before
  * the proxy answers initialize.
  *
- * Findings are written and pushed exactly like events. An evaluator error is
+ * Findings carry their enforcement record (what shadow mode would have
+ * done) and are written and pushed exactly like events. An evaluator error is
  * reported once on stderr and otherwise swallowed: detection must never take
  * the proxy down. The background pass re-judges anything missed here.
  */
 
 import type { EmitFn, RiskDetectedEvent, TraceEvent } from "@omnodex/shared";
+import { stampCaptured } from "@omnodex/analyzer/stamp";
 
 /** The part of an evaluator the proxy uses. */
 export interface ProxyEvaluator {
@@ -43,6 +45,8 @@ export interface ProxyEvaluationOptions {
   loadEvaluator?: LoadEvaluatorFn;
   /** Error reporting. Defaults to one stderr line. */
   onError?: (err: unknown) => void;
+  /** Findings already written elsewhere (by guardrails), not to write again. */
+  skip?: (finding: RiskDetectedEvent) => boolean;
 }
 
 export interface ProxyEvaluation {
@@ -105,6 +109,9 @@ export function createProxyEvaluation(opts: ProxyEvaluationOptions): ProxyEvalua
       onError(err);
       return;
     }
+    if (opts.skip) findings = findings.filter((f) => !opts.skip!(f));
+    // In shadow mode, record on each finding what enforcement would have done.
+    findings = await stampCaptured(findings, [event], { home: opts.home, onError });
     for (const finding of findings) {
       try {
         await opts.emit(finding);
