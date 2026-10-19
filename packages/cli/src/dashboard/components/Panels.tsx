@@ -153,6 +153,11 @@ export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTota
   const band = riskBandLabel(t.risk);
   const s = view.session;
   return (
+    <>
+    {/* Held-back advanced findings: one count above the summary, never beside the findings or calls. */}
+    {view.hiddenAdvanced > 0 && (
+      <div className="held-back-notice" role="note">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>
+    )}
     <div className="stats-row">
       <StatCard label="Tool Calls" value={t.toolCalls} tone="cyan" sub={`${t.mcpServers} MCP servers`} />
       <StatCard label="File Reads" value={t.fileReads} tone="mint" sub={`${t.fileWrites} writes`} />
@@ -163,6 +168,7 @@ export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTota
         <StatCard label="Sessions" value={t.sessions} tone="cyan" sub="in view" />
       )}
     </div>
+    </>
   );
 }
 
@@ -197,11 +203,9 @@ export function RiskEvents({ view, utc, detail, onSelect }: {
   const selectedRisk = detail?.kind === "risk" ? riskKey(detail.event) : null;
   return (
     <Panel title="Risk Events" badge={`${view.riskEvents.length} flagged`} badgeTone="red" scroll>
-      {view.riskEvents.length === 0 && view.hiddenAdvanced === 0 ? (
+      {view.riskEvents.length === 0 ? (
         <Empty icon="✅">No risk events detected in this session.</Empty>
       ) : (
-        <>
-        {view.riskEvents.length > 0 && (
         <ul className="risk-list">
           {view.riskEvents.map((r) => {
             const selected = selectedRisk ? selectedRisk === riskKey(r) : selectedCall === r.related_event_id;
@@ -216,11 +220,6 @@ export function RiskEvents({ view, utc, detail, onSelect }: {
             );
           })}
         </ul>
-        )}
-        {view.hiddenAdvanced > 0 && (
-          <div className="risk-held-back">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>
-        )}
-        </>
       )}
     </Panel>
   );
