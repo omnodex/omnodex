@@ -14,18 +14,26 @@
  *   --log <root>     replay a real event log and report findings per rule,
  *                    which is how a pack is checked for noise before it
  *                    ships. Reads only; nothing is written back.
+ *   --verbose        with --log, list every finding with its session and,
+ *                    for a sequence rule, each step of its evidence
+ *
+ * Rules run through the same evaluator the proxy and background pass use,
+ * with an in-memory machine store: fresh for each case, and one for the
+ * whole replay, which takes sessions in the order they started, so a
+ * first-seen rule judges each host against what came before it.
  *
  * Usage:
  *   node scripts/check-rules.mjs <pack.json|bundle.json> --cases cases.json
- *   node scripts/check-rules.mjs <pack.json> --log ~/.omnodex/event-log
+ *   node scripts/check-rules.mjs <pack.json> --log ~/.omnodex/event-log [--verbose]
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { openBundle } from "../packages/analyzer/dist/bundle.js";
-import { RuleEngine } from "../packages/analyzer/dist/engine.js";
-import { createWorkspaceResolver } from "../packages/analyzer/dist/workspace.js";
+import { createEvaluator } from "../packages/analyzer/dist/evaluator.js";
+import { RuleRegistry } from "../packages/analyzer/dist/registry.js";
+import { memoryMachineState } from "../packages/analyzer/dist/machine-state.js";
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(`--${name}`);
@@ -51,11 +59,14 @@ function loadPack(file) {
 }
 
 const rules = loadPack(packFile);
-const engine = new RuleEngine(rules);
-const workspaceRoots = createWorkspaceResolver();
-const contextFor = (event) => ({
-  workspaceRoots: event.cwd ? workspaceRoots(event.cwd) : undefined,
-  home: process.env.HOME,
+let findingSeq = 0;
+/** An evaluator over just this pack, as a long-lived host runs it. */
+const evaluatorFor = (machineState, userHome) => createEvaluator({
+  host: "batch",
+  registry: new RuleRegistry(rules),
+  newEventId: () => `check-${++findingSeq}`,
+  machineState,
+  userHome,
 });
 
 // ---------------------------------------------------------------------------
@@ -70,7 +81,8 @@ function runCases(file) {
     const sessionId = `case-${index}`;
     let at = Date.parse("2026-09-23T12:00:00.000Z");
     let fired = [];
-    engine.endSession(sessionId);
+    // Cases are written for the user "case", whatever machine runs them.
+    const evaluator = evaluatorFor(memoryMachineState(), testCase.home ?? "/home/case");
 
     testCase.calls.forEach((call, i) => {
       at += (call.after_seconds ?? 1) * 1000;
@@ -88,7 +100,7 @@ function runCases(file) {
         parameters: call.parameters,
         cwd: call.cwd ?? testCase.cwd ?? "/home/case/repo",
       };
-      fired = engine.evaluate(event, contextFor(event)).map((f) => f.rule_id);
+      fired = evaluator.evaluate(event).map((f) => f.rule_id);
     });
 
     const missing = (testCase.must_fire ?? []).filter((id) => !fired.includes(id));
@@ -112,37 +124,49 @@ function runCases(file) {
 // Real activity
 // ---------------------------------------------------------------------------
 
-function runLog(root) {
+function runLog(root, verbose) {
   const dir = path.join(root, "sessions");
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
   const perRule = new Map();
+  const all = [];
   let calls = 0;
-  let sessions = 0;
 
+  // Sessions in the order they started, so first-seen state builds as it did.
+  const sessions = [];
   for (const file of files) {
-    const sessionId = file.replace(/\.jsonl$/, "");
-    sessions++;
-    engine.endSession(sessionId);
+    const events = [];
     for (const line of fs.readFileSync(path.join(dir, file), "utf8").split("\n")) {
       if (!line.trim()) continue;
-      let event;
       try {
-        event = JSON.parse(line);
+        events.push(JSON.parse(line));
       } catch {
-        continue;
+        // Partial trailing write.
       }
-      if (event.event_type !== "tool.invoked") continue;
-      calls++;
-      for (const finding of engine.evaluate(event, contextFor(event))) {
+    }
+    if (events.length) sessions.push({ start: events[0].occurred_at ?? "", events });
+  }
+  sessions.sort((a, b) => a.start.localeCompare(b.start));
+
+  const evaluator = evaluatorFor(memoryMachineState());
+  for (const { events } of sessions) {
+    for (const event of events) {
+      // Findings already in the log would suppress the rules under test.
+      if (event.event_type !== "tool.invoked" && event.event_type !== "session.started" && event.event_type !== "session.ended") continue;
+      if (event.event_type === "tool.invoked") calls++;
+      for (const finding of evaluator.evaluate(event)) {
         const seen = perRule.get(finding.rule_id) ?? { count: 0, sessions: new Set(), example: finding.description };
         seen.count++;
         seen.sessions.add(event.session_id);
         perRule.set(finding.rule_id, seen);
+        all.push(finding);
       }
     }
   }
 
-  console.log(`${calls} tool calls in ${sessions} session(s)\n`);
+  console.log(`${calls} tool calls in ${sessions.length} session(s)\n`);
+  for (const { rule_id, reason } of evaluator.stats().unreadableRules) {
+    console.log(`  not run: ${rule_id} (${reason})`);
+  }
   if (perRule.size === 0) {
     console.log("  nothing fired");
     return 0;
@@ -150,6 +174,14 @@ function runLog(root) {
   for (const [ruleId, seen] of [...perRule].sort((a, b) => b[1].count - a[1].count)) {
     console.log(`  ${String(seen.count).padStart(5)}  ${ruleId}  (${seen.sessions.size} session(s))`);
     console.log(`         e.g. ${seen.example}`);
+  }
+  if (verbose) {
+    console.log("");
+    for (const f of all) {
+      console.log(`  ${f.rule_id}  ${f.session_id}  ${f.severity}`);
+      console.log(`    ${f.description}`);
+      for (const step of f.evidence?.steps ?? []) console.log(`      ${step.role.padEnd(8)} ${step.summary}`);
+    }
   }
   return 0;
 }
@@ -164,5 +196,5 @@ if (!cases && !log) {
 console.log(`${rules.length} rule(s) from ${packFile}\n`);
 let failures = 0;
 if (cases) failures += runCases(cases);
-if (log) failures += runLog(log);
+if (log) failures += runLog(log, process.argv.includes("--verbose"));
 process.exit(failures > 0 ? 1 : 0);

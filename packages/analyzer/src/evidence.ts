@@ -20,7 +20,7 @@ import type {
   FindingEvidence,
   ToolInvokedEvent,
 } from "@omnodex/shared";
-import { normalizeAction, shellWords, type StagingOp } from "./action.js";
+import { normalizeAction, shellSegments, shellWords, type StagingOp } from "./action.js";
 import type { MatchContext, RuleDefinition } from "./types.js";
 
 const STAGING_VERB: Readonly<Record<StagingOp, string>> = {
@@ -70,15 +70,33 @@ export function summarizeCall(
   const first = role === "sink" ? network() ?? staging() : staging() ?? network();
   if (first) return first;
 
+  // A shell command is described by what it ran: its words are flags and
+  // arguments as often as paths, so reading a path out of them misleads.
+  if (action.command !== null) {
+    const program = ranProgram(action.exec ?? action.command);
+    if (program) return context.matched_path ? `Ran ${program} on ${context.matched_path}` : `Ran ${program}`;
+  }
   const written = action.kinds.has("write") ? (context.matched_path ?? action.writes[0]) : undefined;
   if (written) return `Wrote ${written}`;
   const read = context.matched_path ?? action.paths[0];
   if (read) return `Read ${read}`;
-  if (action.exec) {
-    const program = shellWords(action.exec)[0];
-    if (program) return `Ran ${program}`;
-  }
   return `Called ${event.tool_name}`;
+}
+
+/** Commands that set up the shell rather than being the thing it ran. */
+const SETUP_COMMANDS = new Set(["cd", "pushd", "popd", "export", "set", "unset", "true"]);
+/** Words that run the command after them. */
+const PREFIX_WORDS = new Set(["sudo", "env", "time", "nohup", "exec"]);
+
+/** The first program a command runs, past directory changes and variable assignments. */
+function ranProgram(command: string): string | undefined {
+  for (const segment of shellSegments(command)) {
+    const words = shellWords(segment).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+    while (words.length && PREFIX_WORDS.has(words[0]!)) words.shift();
+    const program = words.find((w) => !w.startsWith("-"));
+    if (program && !SETUP_COMMANDS.has(program)) return program;
+  }
+  return undefined;
 }
 
 function labelsOf(context: Partial<MatchContext>): string[] | undefined {

@@ -145,6 +145,12 @@ describe("summarizeCall", () => {
     assert.equal(summarizeCall(bash("make deploy TOKEN=abc123secret"), "sink"), "Ran make");
   });
 
+  it("describes a shell command by the program it ran, past cd and assignments", () => {
+    assert.equal(summarizeCall(bash("cd /home/case/repo && FOO=1 npm test"), "sink"), "Ran npm");
+    assert.equal(summarizeCall(bash("tail -6 /home/case/repo/log.txt"), "sink"), "Ran tail");
+    assert.equal(summarizeCall(bash("cat /home/case/.aws/credentials"), "source", { matched_path: "/home/case/.aws/credentials" }), "Ran cat on /home/case/.aws/credentials");
+  });
+
   it("falls back to the tool name", () => {
     assert.equal(summarizeCall(tool({ tool_name: "mcp__plane__list", mcp_server: "plane" }), "context"), "Called mcp__plane__list");
   });
