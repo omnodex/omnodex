@@ -26,7 +26,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
 import type { PauseRow } from "./dashboard-model/pauses.js";
-import { lockAdvancedFinding, lockAdvancedFindings } from "./advanced-findings.js";
+import { shownFindings, withoutAdvancedFindings } from "./advanced-findings.js";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -47,8 +47,8 @@ export interface DashboardServerOptions {
   version?: string;
   /**
    * Whether this installation is entitled to advanced findings. The page
-   * never receives their detail either way; this only decides what the
-   * placeholder says. Asked on each request, since a plan can change.
+   * never receives them either way; this only decides what the count of
+   * them says. Asked on each request, since a plan can change.
    */
   advancedEntitled?: () => boolean;
 }
@@ -286,8 +286,10 @@ export class DashboardServer {
    */
   broadcast(message: SseMessage): void {
     if (this.sseClients.size === 0) return;
-    if (message.type === "risk_event.inserted") {
-      message = { ...message, payload: lockAdvancedFinding(message.payload, this.advancedEntitled()) };
+    // An advanced finding is never sent; the page reloads its snapshot,
+    // which carries the new count.
+    if (message.type === "risk_event.inserted" && message.payload.rule_tier === "advanced") {
+      message = { type: "read_model.changed" };
     }
     const payload = `data: ${JSON.stringify(message)}\n\n`;
     for (const client of this.sseClients) {
@@ -357,7 +359,7 @@ export class DashboardServer {
     // Every session with its rows, correlated hook and proxy observations
     // collapsed into one call and one finding: what the page renders.
     if (pathname === "/api/snapshot") {
-      const snapshot = lockAdvancedFindings(collapseCorrelated(await readSnapshot(this.store)), this.advancedEntitled());
+      const snapshot = withoutAdvancedFindings(collapseCorrelated(await readSnapshot(this.store)), this.advancedEntitled());
       const pauses = this.pauses ? await this.pauses().catch(() => []) : [];
       return sendJson(res, { ...snapshot, pauses });
     }
@@ -399,9 +401,8 @@ export class DashboardServer {
       /^\/api\/sessions\/([^/]+)\/risk-events$/,
     );
     if (riskEventsMatch) {
-      const entitled = this.advancedEntitled();
       const rows = await this.store.listRiskEvents(riskEventsMatch[1]);
-      return sendJson(res, rows.map((r) => lockAdvancedFinding(r, entitled)));
+      return sendJson(res, shownFindings(rows));
     }
 
     // --- Static: serve dashboard.html at root ---

@@ -6,19 +6,19 @@
 // A commercial license is available for use without copyleft obligations.
 /**
  * How advanced-tier findings appear on this machine: the local dashboard,
- * `omnodex detect` and `omnodex report` show their severity and a pointer
- * to where they can be read, never their detail. Counts and risk scores
- * are unchanged, because the rows are still there.
+ * `omnodex detect` and `omnodex report` say how many there are and where
+ * they can be read, and nothing else: not their rule, severity, text, or
+ * the calls they are about.
  *
  * The detail lives in the hosted dashboard, which comes with the plan that
  * produces these findings. An entitled installation is pointed there; any
  * other is told the finding comes with Pro.
  */
 
-import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { RiskEventRow } from "@omnodex/projection";
+import type { RiskEventRow, SessionRow } from "@omnodex/projection";
+import { riskScoreFor, roundRiskScore } from "@omnodex/shared";
 
 const ENTITLED_TIERS = new Set(["pro", "enterprise"]);
 
@@ -35,44 +35,42 @@ export function advancedEntitled(home: string): boolean {
   }
 }
 
-/** What an advanced finding says on this machine. */
-export function advancedFindingText(entitled: boolean): string {
-  return entitled
-    ? "Advanced finding. Open your Omnodex dashboard to see it."
-    : "Advanced finding, available with Omnodex Pro.";
+export { advancedFindingsText } from "./dashboard-model/advanced.js";
+
+const isAdvanced = (r: RiskEventRow): boolean => r.rule_tier === "advanced";
+
+/** The findings this machine may list: everything but advanced-tier ones. */
+export function shownFindings<T extends RiskEventRow>(rows: readonly T[]): T[] {
+  return rows.filter((r) => !isAdvanced(r));
+}
+
+/** Advanced findings held back, per session, and what to say about them. */
+export interface AdvancedHeldBack {
+  hidden: Record<string, number>;
+  entitled: boolean;
 }
 
 /**
- * A finding as this machine may show it. Community findings pass through;
- * an advanced one keeps its severity, timing and call, and loses its
- * category, description, rule, sequence and evidence. Its rule id becomes
- * an opaque one, distinct per rule, so two advanced findings on one call
- * stay two rows.
+ * A snapshot as this machine may show it. Advanced findings are removed,
+ * not masked: a masked row would still point at the call it is about, and
+ * the call says much of what the finding does. What remains is a count per
+ * session. The sessions that held them are rescored from what is shown, so
+ * a score's band does not give a hidden finding's severity away.
  */
-export function lockAdvancedFinding<T extends RiskEventRow>(row: T, entitled: boolean): T {
-  if (row.rule_tier !== "advanced") return row;
-  const { evidence: _evidence, related_event_ids: _related, ...rest } = row;
-  return {
-    ...rest,
-    category: "advanced",
-    description: advancedFindingText(entitled),
-    rule_id: `advanced-${createHash("sha256").update(row.rule_id).digest("hex").slice(0, 8)}`,
-  } as T;
-}
-
-/** Every finding in a snapshot, as this machine may show it. */
-export function lockAdvancedFindings<S extends { risk_events: Record<string, RiskEventRow[]> }>(
+export function withoutAdvancedFindings<S extends { sessions: SessionRow[]; risk_events: Record<string, RiskEventRow[]> }>(
   snapshot: S,
   entitled: boolean,
-): S {
-  let changed = false;
+): S & { advanced: AdvancedHeldBack } {
+  const hidden: Record<string, number> = {};
   const risk_events: Record<string, RiskEventRow[]> = {};
   for (const [sid, rows] of Object.entries(snapshot.risk_events)) {
-    risk_events[sid] = rows.map((r) => {
-      const locked = lockAdvancedFinding(r, entitled);
-      if (locked !== r) changed = true;
-      return locked;
-    });
+    const kept = shownFindings(rows);
+    if (kept.length !== rows.length) hidden[sid] = rows.length - kept.length;
+    risk_events[sid] = kept;
   }
-  return changed ? { ...snapshot, risk_events } : snapshot;
+  const sessions = snapshot.sessions.map((s) =>
+    s.session_id in hidden
+      ? { ...s, risk_score: roundRiskScore((risk_events[s.session_id] ?? []).reduce((n, r) => n + riskScoreFor(r.severity), 0)) }
+      : s);
+  return { ...snapshot, sessions, risk_events, advanced: { hidden, entitled } };
 }

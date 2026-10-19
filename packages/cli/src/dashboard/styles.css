@@ -432,6 +432,16 @@ header {
   margin-top: 4px;
 }
 
+/* Advanced findings the server held back: a count, never the findings. */
+.risk-held-back {
+  font-size: 12px;
+  color: var(--slate);
+  padding: 10px 12px;
+  border: 1px dashed var(--navy-border);
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
 /* --- Event detail / timeline --- */
 .timeline {
   list-style: none;

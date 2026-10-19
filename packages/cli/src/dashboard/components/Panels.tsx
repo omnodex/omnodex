@@ -30,6 +30,7 @@ import {
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
 import { riskLibraryUrl } from "../../dashboard-model/docs.js";
+import { advancedFindingsText } from "../../dashboard-model/advanced.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
 
 /** What the detail panel shows: a tool call, a finding, a prompt or a subagent. */
@@ -196,9 +197,11 @@ export function RiskEvents({ view, utc, detail, onSelect }: {
   const selectedRisk = detail?.kind === "risk" ? riskKey(detail.event) : null;
   return (
     <Panel title="Risk Events" badge={`${view.riskEvents.length} flagged`} badgeTone="red" scroll>
-      {view.riskEvents.length === 0 ? (
+      {view.riskEvents.length === 0 && view.hiddenAdvanced === 0 ? (
         <Empty icon="✅">No risk events detected in this session.</Empty>
       ) : (
+        <>
+        {view.riskEvents.length > 0 && (
         <ul className="risk-list">
           {view.riskEvents.map((r) => {
             const selected = selectedRisk ? selectedRisk === riskKey(r) : selectedCall === r.related_event_id;
@@ -207,14 +210,17 @@ export function RiskEvents({ view, utc, detail, onSelect }: {
                 <span className={`severity-badge severity-${r.severity}`}>{r.severity}</span>
                 <div>
                   <div className="risk-desc">{r.description}</div>
-                  <div className="risk-meta">
-                    {r.rule_tier === "advanced" ? "Advanced" : `${r.category} / ${r.rule_id}`} / {formatTime(r.detected_at, utc)}
-                  </div>
+                  <div className="risk-meta">{r.category} / {r.rule_id} / {formatTime(r.detected_at, utc)}</div>
                 </div>
               </li>
             );
           })}
         </ul>
+        )}
+        {view.hiddenAdvanced > 0 && (
+          <div className="risk-held-back">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>
+        )}
+        </>
       )}
     </Panel>
   );
@@ -402,26 +408,13 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
   } else if (detail?.kind === "risk") {
     const r = detail.event;
     const related = call(r.related_event_id);
-    // An advanced finding arrives with its detail removed (see the server);
-    // show what is left and nothing that would read as the rule.
-    const advanced = r.rule_tier === "advanced";
-    body = advanced ? (
-      <>
-        <h4 style={{ ...HEADING, color: "var(--cyan)" }}>Risk Event Detail</h4>
-        <DetailRow label="Severity"><span className={`severity-badge severity-${r.severity}`}>{r.severity}</span></DetailRow>
-        <DetailRow label="Description">{r.description}</DetailRow>
-        <DetailRow label="Tier">Advanced</DetailRow>
-        <DetailRow label="Detected">{formatWithTz(r.detected_at, utc)}</DetailRow>
-        <DetailRow label="Related Event">{r.related_event_id}</DetailRow>
-      </>
-    ) : (
+    body = (
       <>
         <h4 style={{ ...HEADING, color: "var(--cyan)" }}>Risk Event Detail</h4>
         <DetailRow label="Severity"><span className={`severity-badge severity-${r.severity}`}>{r.severity}</span></DetailRow>
         <DetailRow label="Category">{r.category}</DetailRow>
         <DetailRow label="Description">{r.description}</DetailRow>
         <DetailRow label="Rule">{r.rule_id}</DetailRow>
-        <DetailRow label="Tier">{r.rule_tier === "advanced" ? "Advanced" : "Community"}</DetailRow>
         <DetailRow label="Detected">{formatWithTz(r.detected_at, utc)}</DetailRow>
         <DetailRow label="Related Event">{r.related_event_id}</DetailRow>
         {r.related_event_ids && r.related_event_ids.length > 1 && (

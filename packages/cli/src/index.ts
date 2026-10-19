@@ -53,7 +53,7 @@ import {
 } from "@omnodex/antigravity-provider";
 import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
-import { advancedEntitled, advancedFindingText } from "./advanced-findings.js";
+import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
 import {
@@ -484,16 +484,15 @@ async function printReport(store: ReadModelStore): Promise<void> {
     console.log(`  file_reads:      ${session.file_read_count}`);
     console.log(`  file_writes:     ${session.file_write_count}`);
     console.log(`  risk_score:      ${session.risk_score}`);
-    const risks = await store.listRiskEvents(session.session_id);
-    if (risks.length > 0) {
+    const all = await store.listRiskEvents(session.session_id);
+    const risks = shownFindings(all);
+    if (all.length > 0) {
       console.log(`  risk_events:`);
-      const entitled = advancedEntitled(resolvePaths().home);
       for (const risk of risks) {
-        console.log(
-          risk.rule_tier === "advanced"
-            ? `    [${risk.severity}] ${advancedFindingText(entitled)}`
-            : `    [${risk.severity}] ${risk.category}: ${risk.description} (rule ${risk.rule_id})`,
-        );
+        console.log(`    [${risk.severity}] ${risk.category}: ${risk.description} (rule ${risk.rule_id})`);
+      }
+      if (all.length > risks.length) {
+        console.log(`    ${advancedFindingsText(all.length - risks.length, advancedEntitled(resolvePaths().home))}`);
       }
     }
   }
@@ -529,13 +528,12 @@ async function cmdDetect(args: string[]): Promise<void> {
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
         console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);
-        const entitled = advancedEntitled(resolvePaths().home);
-        for (const re of newEvents) {
-          console.log(
-            re.rule_tier === "advanced"
-              ? `  [${re.severity}] ${advancedFindingText(entitled)}`
-              : `  [${re.severity}] ${re.category}: ${re.description}`,
-          );
+        const shown = newEvents.filter((re) => re.rule_tier !== "advanced");
+        for (const re of shown) {
+          console.log(`  [${re.severity}] ${re.category}: ${re.description}`);
+        }
+        if (shown.length < newEvents.length) {
+          console.log(`  ${advancedFindingsText(newEvents.length - shown.length, advancedEntitled(resolvePaths().home))}`);
         }
       } else {
         console.log(`[detect] ${sessionId}: no new risks`);
