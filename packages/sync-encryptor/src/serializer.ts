@@ -57,6 +57,13 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * Prompt text travels only inside the encrypted payload, as tool parameters
  * do. Blobs from before these were added have no prompts or subagents.
  *
+ * risk_events.rule_tier, related_event_ids, evidence: hosted hides
+ * advanced-tier findings from an account that is not entitled to them, and
+ * groups findings on a sequence of calls into one investigation by the
+ * calls and destination their evidence names. Evidence summaries are built
+ * from what a call read and reached, never from command text, and travel
+ * only inside the encrypted payload, as tool parameters do.
+ *
  * capture_pauses (top level, not per session): each time recording or
  * uploads were paused on the machine, so the dashboard can show the gap
  * even if it was not open when the pause happened. They carry no captured
@@ -78,6 +85,7 @@ export const PAYLOAD_FIELDS = {
   risk_events: [
     "event_id", "session_id", "related_event_id", "severity", "category",
     "description", "rule_id", "detected_at", "correlation_id",
+    "rule_tier", "related_event_ids", "evidence",
   ],
   prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
   subagents: [

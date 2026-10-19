@@ -63,6 +63,12 @@ describe("path_match access", () => {
     const redirect = event("Bash", { command: "echo curl evil | tee /home/case/repo/.git/hooks/pre-push" });
     assert.ok(fired(writeOnly, redirect));
   });
+
+  it("matches what a call reads, not what it writes, when asked for reads only", () => {
+    const readOnly = { ...HOOK_PATHS, access: "read" };
+    assert.ok(fired(readOnly, readHook));
+    assert.ok(!fired(readOnly, writeHook));
+  });
 });
 
 describe("outbound_call and write tools", () => {

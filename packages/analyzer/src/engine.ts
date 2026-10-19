@@ -50,11 +50,14 @@ import {
   evaluateDomainMatch,
   evaluateCwdBoundary,
   evaluateSequence,
+  evaluateStaging,
+  evaluateDestinationFirstSeen,
 } from "./conditions/index.js";
 import {
   type RateThresholdState,
   createRateThresholdState,
 } from "./conditions/rate-threshold.js";
+import { buildEvidence } from "./evidence.js";
 
 // ---------------------------------------------------------------------------
 // Condition dispatch
@@ -68,6 +71,7 @@ export const STATEFUL_CONDITION_TYPES: ReadonlySet<Condition["type"]> = new Set(
   "session_first_seen",
   "rate_threshold",
   "sequence",
+  "destination_first_seen",
 ]);
 
 /** A stateless condition against one event; used for sequence priors. */
@@ -110,7 +114,11 @@ function evaluateCondition(
     case "cwd_boundary":
       return evaluateCwdBoundary(condition, event, context);
     case "sequence":
-      return evaluateSequence(condition, event, window, evaluateStateless);
+      return evaluateSequence(condition, event, window, evaluateStateless, context.home);
+    case "staging":
+      return evaluateStaging(condition, event);
+    case "destination_first_seen":
+      return evaluateDestinationFirstSeen(event, context);
     case "rate_threshold":
       // Handled specially in the rule loop (needs rule_id for state key).
       // This case should not be reached; it exists for exhaustive switch.
@@ -266,7 +274,10 @@ export class RuleEngine {
           rule_id: rule.rule_id,
           tier: rule.tier,
         };
-        if (ctx.related_event_ids?.length) finding.related_event_ids = ctx.related_event_ids;
+        if (ctx.sequence_steps?.length) {
+          finding.related_event_ids = ctx.sequence_steps.map((s) => s.event.tool_call_id);
+          finding.evidence = buildEvidence(rule, event, ctx);
+        }
         findings.push(finding);
       }
     }

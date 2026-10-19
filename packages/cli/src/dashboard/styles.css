@@ -432,6 +432,17 @@ header {
   margin-top: 4px;
 }
 
+/* Advanced findings the server held back: one count below the connection graph. */
+.held-back-notice {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--slate);
+  background: var(--cyan-dim);
+  border: 1px solid var(--navy-border);
+  border-radius: 8px;
+  padding: 9px 14px;
+}
+
 /* --- Event detail / timeline --- */
 .timeline {
   list-style: none;

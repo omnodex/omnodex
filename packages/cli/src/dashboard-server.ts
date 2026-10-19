@@ -26,6 +26,7 @@ import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
 import type { PauseRow } from "./dashboard-model/pauses.js";
+import { shownFindings, withoutAdvancedFindings } from "./advanced-findings.js";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -44,6 +45,12 @@ export interface DashboardServerOptions {
   pauses?: () => Promise<PauseRow[]>;
   /** The CLI version, shown in the page's feedback link. */
   version?: string;
+  /**
+   * Whether this installation is entitled to advanced findings. The page
+   * never receives them either way; this only decides what the count of
+   * them says. Asked on each request, since a plan can change.
+   */
+  advancedEntitled?: () => boolean;
 }
 
 /**
@@ -205,6 +212,7 @@ export class DashboardServer {
   private readonly assetsDir: string;
   private readonly pauses: (() => Promise<PauseRow[]>) | null;
   private readonly version: string | null;
+  private readonly advancedEntitled: () => boolean;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -221,6 +229,7 @@ export class DashboardServer {
     this.assetsDir = options.assetsDir;
     this.pauses = options.pauses ?? null;
     this.version = options.version ?? null;
+    this.advancedEntitled = options.advancedEntitled ?? (() => false);
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -277,6 +286,11 @@ export class DashboardServer {
    */
   broadcast(message: SseMessage): void {
     if (this.sseClients.size === 0) return;
+    // An advanced finding is never sent; the page reloads its snapshot,
+    // which carries the new count.
+    if (message.type === "risk_event.inserted" && message.payload.rule_tier === "advanced") {
+      message = { type: "read_model.changed" };
+    }
     const payload = `data: ${JSON.stringify(message)}\n\n`;
     for (const client of this.sseClients) {
       try {
@@ -345,7 +359,7 @@ export class DashboardServer {
     // Every session with its rows, correlated hook and proxy observations
     // collapsed into one call and one finding: what the page renders.
     if (pathname === "/api/snapshot") {
-      const snapshot = collapseCorrelated(await readSnapshot(this.store));
+      const snapshot = withoutAdvancedFindings(collapseCorrelated(await readSnapshot(this.store)), this.advancedEntitled());
       const pauses = this.pauses ? await this.pauses().catch(() => []) : [];
       return sendJson(res, { ...snapshot, pauses });
     }
@@ -388,7 +402,7 @@ export class DashboardServer {
     );
     if (riskEventsMatch) {
       const rows = await this.store.listRiskEvents(riskEventsMatch[1]);
-      return sendJson(res, rows);
+      return sendJson(res, shownFindings(rows));
     }
 
     // --- Static: serve dashboard.html at root ---

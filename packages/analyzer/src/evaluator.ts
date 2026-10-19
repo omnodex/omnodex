@@ -34,13 +34,14 @@
 
 import type { RiskDetectedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
+export { RULE_FORMAT_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
 import * as os from "node:os";
 import { RuleRegistry } from "./registry.js";
 import { COMMUNITY_RULES } from "./rules/index.js";
-import type { EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
+import type { Condition, EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
-import type { MachineState } from "./machine-state.js";
+import { reachedHosts, type MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
 import { CAPTURE_HOSTS } from "./capture.js";
 import { loadAdvancedRules } from "./bundle.js";
@@ -85,12 +86,66 @@ export function classesLeftAfterCapture(event: TraceEvent, host: EvaluatorHost):
   return HOST_CLASSES[host].filter((c) => !done.has(c));
 }
 
+/** Every condition type this analyzer evaluates. */
+const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
+  path_match: true,
+  credential_match: true,
+  outbound_call: true,
+  ip_destination: true,
+  tool_name_match: true,
+  session_first_seen: true,
+  rate_threshold: true,
+  domain_match: true,
+  cwd_boundary: true,
+  sequence: true,
+  staging: true,
+  destination_first_seen: true,
+};
+
+const EVIDENCE_ROLES = new Set(["source", "staging", "sink", "context"]);
+
 /**
- * The state a rule needs, derived from its conditions. Throws for a
- * sequence condition whose prior steps are themselves stateful, which the
- * engine cannot re-evaluate against events that have already passed.
+ * Why this analyzer cannot run a rule, or null when it can: a condition
+ * type it does not know, a sequence with neither form, or a sequence step
+ * whose conditions keep state, which the engine cannot re-evaluate against
+ * events that have already passed. A rule from a newer rule format reads
+ * as one of these, and is skipped rather than stopping every other rule.
+ */
+export function ruleProblem(rule: RuleDefinition): string | null {
+  if (!Array.isArray(rule.conditions) || !Array.isArray(rule.event_types)) return "no conditions or event types";
+  const check = (conditions: unknown, nested: boolean): string | null => {
+    if (!Array.isArray(conditions)) return "conditions are not a list";
+    for (const c of conditions as Condition[]) {
+      if (!c || !Object.hasOwn(CONDITION_TYPES, c.type)) return `unknown condition type ${String(c?.type)}`;
+      if (nested && STATEFUL_CONDITION_TYPES.has(c.type)) {
+        return `sequence step conditions must be stateless, got ${c.type}`;
+      }
+      if (c.type !== "sequence") continue;
+      if (nested) return "a sequence cannot be nested";
+      if (c.steps !== undefined) {
+        if (!Array.isArray(c.steps) || c.steps.length < 2) return "a sequence needs at least two steps";
+        for (const step of c.steps) {
+          if (!step || !EVIDENCE_ROLES.has(step.as)) return `unknown sequence step role ${String(step?.as)}`;
+          const problem = check(step.match, true);
+          if (problem) return problem;
+        }
+      } else {
+        const problem = check(c.prior, true);
+        if (problem) return problem.replace("step conditions", "prior conditions");
+      }
+    }
+    return null;
+  };
+  return check(rule.conditions, false);
+}
+
+/**
+ * The state a rule needs, derived from its conditions. Throws for a rule
+ * this analyzer cannot run (see ruleProblem).
  */
 export function classifyRule(rule: RuleDefinition): EvaluationClass {
+  const problem = ruleProblem(rule);
+  if (problem) throw new Error(`${rule.rule_id}: ${problem}`);
   let cls: EvaluationClass = "event";
   const raise = (to: EvaluationClass): void => {
     if (CLASS_ORDER.indexOf(to) > CLASS_ORDER.indexOf(cls)) cls = to;
@@ -98,13 +153,6 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
   for (const condition of rule.conditions) {
     switch (condition.type) {
       case "sequence":
-        for (const prior of condition.prior) {
-          if (STATEFUL_CONDITION_TYPES.has(prior.type)) {
-            throw new Error(
-              `${rule.rule_id}: sequence prior conditions must be stateless, got ${prior.type}`,
-            );
-          }
-        }
         raise("session");
         break;
       case "rate_threshold":
@@ -112,6 +160,9 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
         break;
       case "session_first_seen":
         raise(condition.scope === "machine" ? "machine" : "session");
+        break;
+      case "destination_first_seen":
+        raise("machine");
         break;
       default:
         break;
@@ -173,6 +224,8 @@ export interface EvaluatorOptions {
    * session scope.
    */
   machineState?: MachineState;
+  /** The user's home directory, for ~ in paths. Defaults to the OS's. */
+  userHome?: string;
 }
 
 export interface EvaluatorStats {
@@ -186,6 +239,8 @@ export interface EvaluatorStats {
   byRule: Record<string, number>;
   /** Emitted findings per rule tier. */
   byTier: Record<string, number>;
+  /** Rules this analyzer cannot run, left out of the set, with the reason. */
+  unreadableRules: { rule_id: string; reason: string }[];
 }
 
 export interface EvaluateOptions {
@@ -219,8 +274,13 @@ export interface Evaluator {
 
 export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const allowed = new Set(HOST_CLASSES[opts.host]);
-  const all = (opts.registry ?? registryForHost(opts.host, opts.home)).getRules();
-  const rules = all.filter((r) => allowed.has(classifyRule(r)));
+  const unreadableRules: EvaluatorStats["unreadableRules"] = [];
+  const readable = (opts.registry ?? registryForHost(opts.host, opts.home)).getRules().filter((r) => {
+    const reason = ruleProblem(r);
+    if (reason) unreadableRules.push({ rule_id: String(r?.rule_id), reason });
+    return !reason;
+  });
+  const rules = readable.filter((r) => allowed.has(classifyRule(r)));
   const order = new Map(rules.map((r, i) => [r.rule_id, i]));
 
   // Stateless and stateful rules run in separate engines so observe() can
@@ -232,7 +292,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const statefulEngine = new RuleEngine(statefulRules, { windowSize: opts.windowSize });
 
   const workspaceRoots = opts.workspaceRoots ?? createWorkspaceResolver();
-  const home = os.homedir();
+  const home = opts.userHome ?? os.homedir();
   // How each session's MCP servers are reached, from its session.started.
   const transports = new Map<string, Map<string, McpServerTransport>>();
   // Where each session started: its session.started project path, or the
@@ -268,7 +328,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   };
 
   const recorded = new Set<string>();
-  const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {} };
+  const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {}, unreadableRules };
 
   function seed(event: RiskDetectedEvent): void {
     recorded.add(`${event.rule_id}::${event.related_event_id}`);
@@ -301,11 +361,23 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     if (finding.related_event_ids?.length) {
       risk.related_event_ids = [...finding.related_event_ids, event.tool_call_id];
     }
+    if (finding.evidence) {
+      risk.evidence = { ...finding.evidence, found_at: opts.host === "proxy" ? "capture" : "background" };
+    }
 
     stats.findings++;
     stats.byRule[finding.rule_id] = (stats.byRule[finding.rule_id] ?? 0) + 1;
     stats.byTier[finding.tier] = (stats.byTier[finding.tier] ?? 0) + 1;
     return risk;
+  }
+
+  // After every rule has judged a call, so the call that first reaches a
+  // host reads as new to all of them, and whether or not any rule looked.
+  const tracksDestinations = rules.some((r) => r.conditions.some((c) => c.type === "destination_first_seen"));
+  function noteReached(event: ToolInvokedEvent): void {
+    if (!tracksDestinations || !opts.machineState) return;
+    const hosts = reachedHosts(event);
+    if (hosts.length) opts.machineState.noteDestinations(hosts, event.occurred_at);
   }
 
   function endSession(sessionId: string): void {
@@ -337,6 +409,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
             ...(!wanted || wanted.has("event") ? eventEngine.evaluate(event, context) : []),
             ...statefulEngine.evaluate(event, context),
           ].filter((f) => !wanted || wanted.has(ruleClass.get(f.rule_id) ?? "event"));
+          noteReached(event);
           // Registry order, as a single engine would have produced them.
           findings.sort((a, b) => (order.get(a.rule_id) ?? 0) - (order.get(b.rule_id) ?? 0));
           const out: RiskDetectedEvent[] = [];
@@ -354,7 +427,10 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     observe(event: TraceEvent): void {
       noteSession(event);
       if (event.event_type === "risk.detected") seed(event);
-      else if (event.event_type === "tool.invoked") statefulEngine.evaluate(event, contextFor(event));
+      else if (event.event_type === "tool.invoked") {
+        statefulEngine.evaluate(event, contextFor(event));
+        noteReached(event);
+      }
     },
 
     endSession,
@@ -364,6 +440,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
         ...stats,
         byRule: { ...stats.byRule },
         byTier: { ...stats.byTier },
+        unreadableRules: [...stats.unreadableRules],
       };
     },
   };

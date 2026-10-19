@@ -84,13 +84,15 @@ test("strict options, seed zero and injectable random seed", () => {
   for (const args of [["--seed"], ["--now"], ["--seed", "1x"], ["--seed", "1.5"], ["--random", "--seed", "1"], ["--random", "--random"], ["--sessions", "1"], ["--sessions", "1001"], ["--now", "yesterday"], ["--now", "2026-10-01"], ["../escape"], ["--unknown"], ["a", "b"]]) assert.throws(() => parseSpikeOptions(args), args.join(" "));
 });
 
-test("CLI writes reproducible session logs, replays SQLite and appends unique runs", async () => {
+// Six CLI runs, each writing and replaying a full scenario set into SQLite.
+// Windows runners take several times longer than Linux at this.
+test("CLI writes reproducible session logs, replays SQLite and appends unique runs", { timeout: 300_000 }, async () => {
   const scratch = await mkdtemp(path.join(tmpdir(), "omnodex-scenarios-"));
   const cli = fileURLToPath(new URL("../dist/index.js", import.meta.url));
   const run = (home, args) => {
     const result = spawnSync(process.execPath, [cli, ...args], {
       env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: home, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1", OMNODEX_AUTO_SYNC: "0" },
-      encoding: "utf8", timeout: 60_000,
+      encoding: "utf8", timeout: 180_000,
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return result.stdout;

@@ -14,7 +14,7 @@
  * the read model can change freely because it is always regenerable.
  */
 
-import type { InterceptorKind, McpServerTransport, PlatformKind, RiskSeverity } from "@omnodex/shared";
+import type { FindingEvidence, InterceptorKind, McpServerTransport, PlatformKind, RiskSeverity } from "@omnodex/shared";
 
 export interface SessionRow {
   session_id: string;
@@ -160,10 +160,14 @@ export interface RiskEventRow {
   rule_tier?: "community" | "advanced";
   /**
    * For a finding on a sequence of calls: every tool_call_id in the pattern,
-   * earliest first. Absent for single-call findings. Local only: neither
-   * this nor rule_tier is part of the sync payload.
+   * earliest first. Absent for single-call findings.
    */
   related_event_ids?: string[];
+  /**
+   * For a finding on a sequence of calls: each call's role and summary, and
+   * where the last one went. Its steps name the calls in related_event_ids.
+   */
+  evidence?: FindingEvidence;
 }
 
 /**

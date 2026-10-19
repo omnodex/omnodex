@@ -157,8 +157,7 @@ export function evaluateCredentialMatch(
 ): Partial<MatchContext>[] {
   const scope = condition.scope ?? "all";
   if (scope === "all") {
-    const types = findCredentialTypes(JSON.stringify(event.parameters), condition.patterns);
-    return types.length > 0 ? [{ credential_types: types }] : [];
+    return found(findCredentials(JSON.stringify(event.parameters), condition.patterns));
   }
 
   if (scope.includes("sql")) {
@@ -179,19 +178,28 @@ export function evaluateCredentialMatch(
   if (scope.includes("exec")) {
     const command = normalizeAction(event).command;
     if (command !== null) {
-      const types = findCredentialTypes(command, condition.patterns);
-      if (types.length > 0) return [{ credential_types: types }];
+      const hit = found(findCredentials(command, condition.patterns));
+      if (hit.length > 0) return hit;
     }
   }
   if (scope.includes("target")) {
-    const types = findCredentialTypes(normalizeAction(event).paths.join("\n"), condition.patterns);
-    if (types.length > 0) return [{ credential_types: types }];
+    const hit = found(findCredentials(normalizeAction(event).paths.join("\n"), condition.patterns));
+    if (hit.length > 0) return hit;
   }
   if (scope.includes("staged")) {
     for (const { path, text } of extractStagedContent(event)) {
-      const types = findCredentialTypes(text, condition.patterns);
-      if (types.length > 0) return [{ credential_types: types, staged_path: path }];
+      const hit = found(findCredentials(text, condition.patterns));
+      if (hit.length > 0) return [{ ...hit[0], staged_path: path }];
     }
   }
   return [];
+}
+
+/**
+ * One context for a set of sightings: the unique type labels, and the
+ * sightings themselves for sequence bindings. Empty when nothing matched.
+ */
+function found(sightings: CredentialSighting[]): Partial<MatchContext>[] {
+  if (sightings.length === 0) return [];
+  return [{ credential_types: [...new Set(sightings.map((c) => c.type))], credential_sightings: sightings }];
 }

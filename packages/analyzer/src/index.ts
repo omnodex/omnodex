@@ -82,7 +82,7 @@ export {
 } from "./capture.js";
 export type { JudgeCapturedOptions } from "./capture.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
-export { openMachineState, memoryMachineState, KNOWN_MCP_SERVERS_FILE } from "./machine-state.js";
+export { openMachineState, memoryMachineState, reachedHosts, KNOWN_MCP_SERVERS_FILE, KNOWN_DESTINATIONS_FILE } from "./machine-state.js";
 export type { MachineState, SeenResult } from "./machine-state.js";
 export type { WorkspaceRootsFn } from "./workspace.js";
 export type {
@@ -146,3 +146,7 @@ export type {
   StagingStep,
   CredentialRole,
 } from "./action.js";
+
+// Evidence for findings on a sequence of calls: each call's role, a summary
+// of what it did, and where the last one went.
+export { buildEvidence, summarizeCall, evidenceDestination } from "./evidence.js";

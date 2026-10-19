@@ -87,13 +87,17 @@ export function evaluatePathMatch(
   event: ToolInvokedEvent,
 ): Partial<MatchContext>[] {
   const action = normalizeAction(event);
-  const paths = condition.access === "write" ? action.writes : action.paths;
+  const paths = condition.access === "write"
+    ? action.writes
+    : condition.access === "read"
+      ? action.paths.filter((p) => !action.writes.includes(p))
+      : action.paths;
   const matched: Partial<MatchContext>[] = [];
 
   for (const p of paths) {
-    for (const { regex, label } of condition.patterns) {
+    for (const { regex, label, credential_type } of condition.patterns) {
       if (compiled(regex).test(p)) {
-        matched.push({ matched_path: p, matched_label: label });
+        matched.push({ matched_path: p, matched_label: label, ...(credential_type ? { path_credential_type: credential_type } : {}) });
         break; // One finding per path -- first matching pattern wins.
       }
     }

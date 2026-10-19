@@ -18,7 +18,15 @@ import { totalEvents } from "./labels.js";
 import { pauseOverlaps, type PauseRow } from "./pauses.js";
 
 /** The local dashboard's snapshot: the read model plus capture pauses. */
-export type LocalSnapshot = ReadModelSnapshot & { pauses?: PauseRow[] };
+export type LocalSnapshot = ReadModelSnapshot & {
+  pauses?: PauseRow[];
+  /**
+   * Advanced-tier findings the server held back: how many per session, and
+   * whether this installation's plan includes them. The findings themselves
+   * never reach the page.
+   */
+  advanced?: { hidden: Record<string, number>; entitled: boolean };
+};
 
 /** The selection value for every session with activity. */
 export const ALL_SESSIONS = "__all_active__";
@@ -35,6 +43,10 @@ export interface SessionView {
   subagents: SubagentRow[];
   /** Capture pauses that overlap the view. */
   pauses: PauseRow[];
+  /** Advanced findings held back across the view's sessions. */
+  hiddenAdvanced: number;
+  /** Whether this installation's plan includes advanced findings. */
+  advancedEntitled: boolean;
 }
 
 /**
@@ -47,7 +59,8 @@ export interface SessionView {
 export function hasActivity(snapshot: ReadModelSnapshot, s: SessionRow): boolean {
   const id = s.session_id;
   return totalEvents(s) > 0 || !!snapshot.tool_calls[id]?.length || !!snapshot.file_events[id]?.length
-    || !!snapshot.risk_events[id]?.length || !!snapshot.prompts?.[id]?.length || !!snapshot.subagents?.[id]?.length;
+    || !!snapshot.risk_events[id]?.length || !!snapshot.prompts?.[id]?.length || !!snapshot.subagents?.[id]?.length
+    || !!(snapshot as LocalSnapshot).advanced?.hidden[id];
 }
 
 /** Sessions worth listing: those with any activity. */
@@ -62,7 +75,7 @@ export function listedSessions(snapshot: ReadModelSnapshot): SessionRow[] {
 export function selectView(snapshot: LocalSnapshot, selection: string): SessionView {
   if (selection !== ALL_SESSIONS) {
     const session = snapshot.sessions.find((s) => s.session_id === selection) ?? null;
-    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [], prompts: [], subagents: [], pauses: [] };
+    if (!session) return { session: null, sessions: [], toolCalls: [], fileEvents: [], riskEvents: [], prompts: [], subagents: [], pauses: [], hiddenAdvanced: 0, advancedEntitled: !!snapshot.advanced?.entitled };
     const id = session.session_id;
     return {
       session,
@@ -74,6 +87,8 @@ export function selectView(snapshot: LocalSnapshot, selection: string): SessionV
       subagents: [...(snapshot.subagents?.[id] ?? [])],
       pauses: (snapshot.pauses ?? []).filter((p) =>
         pauseOverlaps(p, session.started_at, session.ended_at ?? session.last_event_at ?? null)),
+      hiddenAdvanced: snapshot.advanced?.hidden[id] ?? 0,
+      advancedEntitled: !!snapshot.advanced?.entitled,
     };
   }
   const sessions = listedSessions(snapshot);
@@ -84,7 +99,11 @@ export function selectView(snapshot: LocalSnapshot, selection: string): SessionV
   const subagents = sessions.flatMap((s) => snapshot.subagents?.[s.session_id] ?? []);
   toolCalls.sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""));
   riskEvents.sort((a, b) => (b.detected_at || "").localeCompare(a.detected_at || ""));
-  return { session: null, sessions, toolCalls, fileEvents, riskEvents, prompts, subagents, pauses: [...(snapshot.pauses ?? [])] };
+  const hiddenAdvanced = sessions.reduce((n, s) => n + (snapshot.advanced?.hidden[s.session_id] ?? 0), 0);
+  return {
+    session: null, sessions, toolCalls, fileEvents, riskEvents, prompts, subagents, pauses: [...(snapshot.pauses ?? [])],
+    hiddenAdvanced, advancedEntitled: !!snapshot.advanced?.entitled,
+  };
 }
 
 export interface ViewTotals {

@@ -30,6 +30,7 @@ import {
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
 import { riskLibraryUrl } from "../../dashboard-model/docs.js";
+import { advancedFindingsText } from "../../dashboard-model/advanced.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
 
 /** What the detail panel shows: a tool call, a finding, a prompt or a subagent. */
@@ -145,6 +146,15 @@ function StatCard({ label, value, tone, sub }: { label: string; value: React.Rea
       <div className="stat-sub">{sub}</div>
     </div>
   );
+}
+
+/**
+ * How many advanced findings the server held back from the view: one line,
+ * below the connection graph, never beside the findings or calls.
+ */
+export function HeldBackNotice({ view }: { view: SessionView }): React.JSX.Element | null {
+  if (view.hiddenAdvanced <= 0) return null;
+  return <div className="held-back-notice" role="note">{advancedFindingsText(view.hiddenAdvanced, view.advancedEntitled)}</div>;
 }
 
 export function StatsRow({ view, totals }: { view: SessionView; totals: ViewTotals }): React.JSX.Element {
@@ -407,7 +417,6 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
         <DetailRow label="Category">{r.category}</DetailRow>
         <DetailRow label="Description">{r.description}</DetailRow>
         <DetailRow label="Rule">{r.rule_id}</DetailRow>
-        <DetailRow label="Tier">{r.rule_tier === "advanced" ? "Advanced" : "Community"}</DetailRow>
         <DetailRow label="Detected">{formatWithTz(r.detected_at, utc)}</DetailRow>
         <DetailRow label="Related Event">{r.related_event_id}</DetailRow>
         {r.related_event_ids && r.related_event_ids.length > 1 && (

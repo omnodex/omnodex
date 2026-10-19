@@ -120,7 +120,8 @@ CREATE TABLE IF NOT EXISTS risk_events (
   rule_id TEXT NOT NULL,
   detected_at TEXT NOT NULL,
   rule_tier TEXT,
-  related_event_ids_json TEXT
+  related_event_ids_json TEXT,
+  evidence_json TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
@@ -245,6 +246,11 @@ export class SqliteReadModelStore implements ReadModelStore {
     // Migration 9: the subagent a tool call ran in (2026-10-02). The prompts
     // and subagents tables are new, so SCHEMA_SQL creates them everywhere.
     this.addColumnIfMissing("tool_calls", "agent_id", "TEXT");
+
+    // Migration 10: the evidence on a finding over a sequence of calls
+    // (2026-10-18). Rows written before it read as absent until the next
+    // replay.
+    this.addColumnIfMissing("risk_events", "evidence_json", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -466,8 +472,8 @@ export class SqliteReadModelStore implements ReadModelStore {
   async insertRiskEvent(row: RiskEventRow): Promise<boolean> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, rule_tier, related_event_ids_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO risk_events (event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, rule_tier, related_event_ids_json, evidence_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(session_id, rule_id, related_event_id) DO NOTHING`,
     );
     const result = stmt.run(
@@ -481,6 +487,7 @@ export class SqliteReadModelStore implements ReadModelStore {
       row.detected_at,
       row.rule_tier ?? null,
       row.related_event_ids?.length ? JSON.stringify(row.related_event_ids) : null,
+      row.evidence ? JSON.stringify(row.evidence) : null,
     );
     return Number(result.changes) > 0;
   }
@@ -537,16 +544,17 @@ export class SqliteReadModelStore implements ReadModelStore {
   async listRiskEvents(sessionId: string): Promise<RiskEventRow[]> {
     const db = this.requireDb();
     const stmt = db.prepare(
-      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, correlation_id, rule_tier, related_event_ids_json FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
+      `SELECT event_id, session_id, related_event_id, severity, category, description, rule_id, detected_at, correlation_id, rule_tier, related_event_ids_json, evidence_json FROM risk_events WHERE session_id = ? ORDER BY detected_at`,
     );
     return (stmt.all(sessionId) as unknown as RiskEventRowRaw[]).map(
-      ({ correlation_id, rule_tier, related_event_ids_json, ...r }) => ({
+      ({ correlation_id, rule_tier, related_event_ids_json, evidence_json, ...r }) => ({
         ...r,
         severity: r.severity as RiskSeverity,
         // Optional fields only where set, so other rows keep their shape.
         ...(correlation_id ? { correlation_id } : {}),
         ...(rule_tier ? { rule_tier: rule_tier as RiskEventRow["rule_tier"] } : {}),
         ...(related_event_ids_json ? { related_event_ids: JSON.parse(related_event_ids_json) as string[] } : {}),
+        ...(evidence_json ? { evidence: JSON.parse(evidence_json) as RiskEventRow["evidence"] } : {}),
       }),
     );
   }
@@ -634,6 +642,7 @@ interface RiskEventRowRaw {
   correlation_id: string | null;
   rule_tier: string | null;
   related_event_ids_json: string | null;
+  evidence_json: string | null;
 }
 
 function toSessionRow(raw: SessionRowRaw): SessionRow {

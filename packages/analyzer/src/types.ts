@@ -96,6 +96,12 @@ export interface RuleDefinition {
    * a registry override in .npmrc, set it equal to `severity`.
    */
   staged_severity?: RiskSeverity;
+  /**
+   * A routine reason the matched calls can happen ("deploy scripts upload
+   * configuration"). Carried in the evidence of findings on a sequence, so
+   * the reader sees why the finding might be fine beside why it fired.
+   */
+  benign_note?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +118,9 @@ export type Condition =
   | RateThresholdCondition
   | DomainMatchCondition
   | CwdBoundaryCondition
-  | SequenceCondition;
+  | SequenceCondition
+  | StagingCondition
+  | DestinationFirstSeenCondition;
 
 /**
  * Matches when at least one file path extracted from the event matches at
@@ -131,9 +139,11 @@ export interface PathMatchCondition {
    * Which paths to test. "any" (the default) is every path the call names,
    * read or write. "write" is only what it writes to (see
    * extractWriteTargets), which is what a rule about planting something in a
-   * file needs: reading that file is not planting anything.
+   * file needs: reading that file is not planting anything. "read" is every
+   * path except those, for a rule about data leaving: writing a file is not
+   * reading what is in it.
    */
-  access?: "any" | "write";
+  access?: "any" | "write" | "read";
 }
 
 export interface PathPattern {
@@ -144,6 +154,12 @@ export interface PathPattern {
   regex: string;
   /** Human-readable label used in {{matched_label}} substitution. */
   label: string;
+  /**
+   * The credential type the file holds ("aws-key"), for a sequence step
+   * that binds "credential": a later step sending it to that type's own
+   * service is authentication, not movement.
+   */
+  credential_type?: string;
 }
 
 /**
@@ -397,12 +413,82 @@ export interface EvaluationContext {
  */
 export interface SequenceCondition {
   type: "sequence";
-  /** Conditions an earlier event must all satisfy. Stateless types only. */
-  prior: Condition[];
+  /**
+   * Conditions an earlier event must all satisfy. Stateless types only.
+   * The two-step form: the earlier event is the source, the current one
+   * the sink. Ignored when `steps` is given.
+   */
+  prior?: Condition[];
+  /**
+   * The ordered form: each step matched by a later event than the one
+   * before, the last step by the current event. Steps can bind values a
+   * later step must carry, so "read, then encode that file, then send the
+   * encoded file" is one rule.
+   */
+  steps?: SequenceStep[];
   /** Look back at most this many earlier events (capped by the engine's window). */
   within_events?: number;
   /** Look back at most this many seconds before the current event. */
   within_seconds?: number;
+}
+
+/**
+ * Values a step can bind for later steps:
+ *   "path"       -- the file the step matched or read
+ *   "output"     -- the file a staging step wrote (archive, encoded copy)
+ *   "credential" -- credentials the step's credential_match found: their
+ *                   values, kept in memory to match against later calls
+ *                   and never recorded, and their types
+ */
+export type SequenceBinding = "path" | "output" | "credential";
+
+export interface SequenceStep {
+  /** The role the matching call plays in the finding's evidence. */
+  as: import("@omnodex/shared").EvidenceRole;
+  /** Conditions the call must all satisfy. Stateless types only. */
+  match: Condition[];
+  /** The step may be absent; when present it is recorded in the evidence. */
+  optional?: boolean;
+  /** Values this step makes available to later steps. */
+  bind?: SequenceBinding[];
+  /**
+   * The call must name at least one value bound under these keys by an
+   * earlier step, in its command or parameters.
+   */
+  carries?: SequenceBinding[];
+  /**
+   * With `carries`: the carried value must be used in one of these ways
+   * (a request body, a URL, an argument...). Authentication headers are
+   * how a credential is meant to be used, so a movement rule leaves them out.
+   */
+  carried_as?: import("./action.js").CredentialRole[];
+  /**
+   * Skip the call when it goes to the service a bound credential belongs
+   * to (a GitHub token sent to api.github.com): that is the credential
+   * being used, not moved.
+   */
+  exclude_credential_provider?: boolean;
+}
+
+/**
+ * Matches when the call reaches an external host no call from this machine
+ * had reached before (see machine-state.ts). Needs the host's machine
+ * state, so only hosts that keep one run it; without one it never matches.
+ * Yields one context naming the new host as {{matched_destination}}.
+ */
+export interface DestinationFirstSeenCondition {
+  type: "destination_first_seen";
+}
+
+/**
+ * Matches when the call archives, encodes, encrypts or copies data to the
+ * clipboard (see the normalized action's staging steps). Yields one context
+ * naming the staged output when the command names one.
+ */
+export interface StagingCondition {
+  type: "staging";
+  /** Only these operations. Omitted: any. */
+  ops?: import("./action.js").StagingOp[];
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +511,17 @@ export interface MatchContext {
   matched_label?: string;
   /** Populated by credential_match conditions. */
   credential_types?: string[];
+  /**
+   * Populated by credential_match conditions: what matched, values
+   * included, for sequence bindings. Never rendered or recorded.
+   */
+  credential_sightings?: { type: string; value: string }[];
+  /** Populated by path_match when the matched pattern names a credential type. */
+  path_credential_type?: string;
+  /** Populated by staging conditions: the file the staging step wrote. */
+  staging_output?: string;
+  /** Populated by destination_first_seen: the destination is new to this machine. */
+  first_seen_destination?: boolean;
   /** Populated by ip_destination conditions. */
   matched_ip?: string;
   /** Populated by ip_destination conditions ("cloud provider" or "unknown host"). */
@@ -439,8 +536,19 @@ export interface MatchContext {
   matched_destination?: string;
   /** Populated by staged credential_match: the file the content was written to. */
   staged_path?: string;
-  /** Populated by sequence conditions: tool_call_ids of the earlier events. */
-  related_event_ids?: string[];
+  /** Populated by sequence conditions: the earlier events that matched, oldest first. */
+  sequence_steps?: SequenceStepMatch[];
+  /** Populated by the steps form: the role the current event plays. */
+  sequence_role?: import("@omnodex/shared").EvidenceRole;
+  /** Populated by the steps form: the credential the chain carried, for evidence. */
+  sequence_credential?: import("@omnodex/shared").EvidenceCredential;
+}
+
+/** An earlier event a sequence condition matched, and what matched on it. */
+export interface SequenceStepMatch {
+  event: import("@omnodex/shared").ToolInvokedEvent;
+  role: import("@omnodex/shared").EvidenceRole;
+  context: Partial<MatchContext>;
 }
 
 /** A single detection result produced by the rule engine. */
@@ -454,6 +562,8 @@ export interface RiskFinding {
   tier: "community" | "advanced";
   /** Earlier events a sequence rule matched, in addition to the current one. */
   related_event_ids?: string[];
+  /** For a sequence rule: every matched call with its role, ending with the current one. */
+  evidence?: import("@omnodex/shared").FindingEvidence;
 }
 
 /** Return value of detectRisks(). */
