@@ -274,4 +274,14 @@ export interface ReadModelStore {
   listSubagents(sessionId: string): Promise<SubagentRow[]>;
   /** Best-effort close. Not all stores need it. */
   close(): Promise<void>;
+  /**
+   * Run `fn` as one write transaction, rolled back if it throws. A store
+   * without transactions leaves this out. Callers use inTransaction().
+   */
+  transaction?<T>(fn: () => Promise<T>): Promise<T>;
+}
+
+/** Run `fn` in the store's transaction when it has one, else directly. */
+export function inTransaction<T>(store: ReadModelStore, fn: () => Promise<T>): Promise<T> {
+  return store.transaction ? store.transaction(fn) : fn();
 }
