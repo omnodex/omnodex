@@ -35,6 +35,7 @@ import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
   SqliteReadModelStore,
+  inTransaction,
   runCorrelation,
   type ReadModelStore,
 } from "@omnodex/projection";
@@ -280,14 +281,17 @@ async function rebuildReadModel(
 ): Promise<void> {
   const projector = new Projector(store);
   await store.reset();
-  for (const { rootPath, log } of logs) {
-    projector.setSourceRoot(rootPath);
-    for await (const event of iterateLog(log)) {
-      await projector.apply(event);
+  // One transaction for the whole rebuild: far faster than a commit per row.
+  await inTransaction(store, async () => {
+    for (const { rootPath, log } of logs) {
+      projector.setSourceRoot(rootPath);
+      for await (const event of iterateLog(log)) {
+        await projector.apply(event);
+      }
     }
-  }
-  projector.setSourceRoot(null);
-  await runCorrelation(store);
+    projector.setSourceRoot(null);
+    await runCorrelation(store);
+  });
 }
 
 /**
