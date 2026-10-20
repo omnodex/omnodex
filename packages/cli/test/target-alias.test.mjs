@@ -21,10 +21,12 @@ function run(args, env) {
   child.stdout.on("data", (d) => (out += d));
   child.stderr.on("data", (d) => (out += d));
   return new Promise((resolve, reject) => {
+    // A run takes seconds alone, but loading the CLI from a slow disk under a
+    // full parallel suite can take most of a minute.
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`omnodex ${args.join(" ")} did not finish:\n${out}`));
-    }, 30000);
+    }, 60000);
     child.on("exit", (code) => {
       clearTimeout(timer);
       resolve({ code, out });
