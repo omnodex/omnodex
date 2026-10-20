@@ -19,6 +19,8 @@
  *               publishing keys compiled into this client
  *   payload     an ES module, sealed with AES-256-GCM under a content key
  *               the license check hands only to entitled accounts
+ *   renewal     present when a renewal key re-signed it with a later
+ *               not_after (renewal.ts)
  *
  * The module is opened in memory and imported from there; its source is
  * never written to disk unsealed. Without a module that opens (no
@@ -33,6 +35,7 @@ import * as path from "node:path";
 import { GUARDRAILS_INTERFACE, type BlockingVerdict } from "@omnodex/shared";
 import { TRUSTED_PUBLISHING_KEYS } from "../bundle.js";
 import { openSigned, type OpenFailure } from "../sealed.js";
+import { checkRenewal, raiseTrustFloor, readTrustFloor, type RenewalProof } from "../renewal.js";
 import type { Verdict } from "./resolve-verdict.js";
 
 export { GUARDRAILS_INTERFACE };
@@ -90,6 +93,8 @@ export interface SealedModule {
   manifest: ModuleManifest;
   signature: string;
   payload: string;
+  /** Present when a renewal key signed it. */
+  renewal?: RenewalProof;
 }
 
 export type ModuleSkipReason =
@@ -169,6 +174,9 @@ export async function loadGuardrailsModule(
 
   const cached = opened.get(m.payload_sha256);
   const devKey = env[GUARDRAILS_KEY_ENV] ? Buffer.from(env[GUARDRAILS_KEY_ENV]!, "base64") : null;
+  const keys = env[GUARDRAILS_PUBLIC_KEY_ENV] ? [env[GUARDRAILS_PUBLIC_KEY_ENV]!, ...TRUSTED_PUBLISHING_KEYS] : TRUSTED_PUBLISHING_KEYS;
+  const at = opts.at ?? new Date();
+  const scope = `guardrails-module:${m.channel}`;
   const result = openSigned({
     signed: canonicalModuleManifest(m),
     signature: sealed.signature,
@@ -176,12 +184,25 @@ export async function loadGuardrailsModule(
     payload: sealed.payload,
     payloadSha256: m.payload_sha256,
     key: opts.key ?? devKey ?? licensedModuleKey(home, m),
-    trustedKeys: env[GUARDRAILS_PUBLIC_KEY_ENV]
-      ? [env[GUARDRAILS_PUBLIC_KEY_ENV]!, ...TRUSTED_PUBLISHING_KEYS]
-      : TRUSTED_PUBLISHING_KEYS,
-    at: opts.at,
+    trustedKeys: keys,
+    renewal: () =>
+      checkRenewal({
+        kind: "guardrails-module",
+        scope,
+        manifest: m,
+        canonical: canonicalModuleManifest,
+        notAfter: m.not_after,
+        createdAt: m.created_at,
+        signature: sealed.signature,
+        renewal: sealed.renewal,
+        trustedKeys: keys,
+        floor: readTrustFloor(home),
+        at,
+      }),
+    at,
   });
   if (!result.ok) return { manifest: m, skipped: result.reason };
+  raiseTrustFloor(home, scope, m.created_at, result.renewalSerial);
   if (m.interface !== GUARDRAILS_INTERFACE) return { manifest: m, skipped: "interface_mismatch" };
   if (cached) return { module: cached, manifest: m };
 
@@ -207,7 +228,7 @@ export function describeGuardrails(load: GuardrailsLoad): string {
     unreadable: "the installed guardrails module could not be read",
     interface_mismatch: "the installed guardrails module is for another version of Omnodex; update Omnodex",
     malformed_module: "the installed guardrails module did not load",
-    untrusted_signature: "the installed guardrails module is not signed by a key this client trusts",
+    untrusted_signature: "the installed guardrails module is not signed by a key this client trusts, or its renewal was refused",
     expired: "the installed guardrails module has expired",
     payload_mismatch: "the installed guardrails module failed its integrity check",
     no_key: "guardrails module installed, but no key to open it (Pro subscription needed)",
