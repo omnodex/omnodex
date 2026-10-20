@@ -16,7 +16,7 @@
 
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
-import { collapseCorrelated, InMemoryReadModelStore, readSnapshot } from "../dist/index.js";
+import { collapseCorrelated, codexToolName, correlateToolCalls, InMemoryReadModelStore, readSnapshot } from "../dist/index.js";
 
 const AT = "2026-09-29T12:00:00.000Z";
 const CORR = "corr-1";
@@ -182,4 +182,79 @@ test("a snapshot with nothing correlated comes back unchanged", async () => {
   assert.deepEqual(collapseCorrelated(empty), {
     sessions: [], tool_calls: {}, file_events: {}, risk_events: {}, prompts: {}, subagents: {},
   });
+});
+
+const codexNames = [
+  ["mcp__capture_valid__demo__read_file_3ba7769949e4", "demo__read_file"],
+  ["mcp__capture_valid__demo__read_file_371d10a383fe", "demo__read-file"],
+  ["mcp__capture_dot__demo__read_file", "demo__read.file"],
+  ["mcp__capture_slash__demo__read_file", "demo__read/file"],
+  [codexToolName("omnodex", `demo__${"long-tool-".repeat(20)}`), `demo__${"long-tool-".repeat(20)}`],
+];
+
+for (const [hookName, proxyName] of codexNames) {
+  test(`a correlated Codex call displays the original name ${proxyName}`, () => {
+    const snap = pairSnapshot();
+    snap.sessions[0].interceptor = "codex-hook";
+    const hook = snap.tool_calls.hook[0];
+    Object.assign(hook, { interceptor: "codex-hook", tool_name: hookName, correlation_id: null });
+    const proxy = snap.tool_calls.proxy[0];
+    Object.assign(proxy, { tool_name: proxyName, correlation_id: null, mcp_server: "demo" });
+    const pairs = correlateToolCalls({ sessions: snap.sessions, toolCalls: [hook, proxy] });
+    assert.equal(pairs.length, 1);
+    hook.correlation_id = proxy.correlation_id = pairs[0].correlation_id;
+    hook.mcp_server = pairs[0].upstream_mcp_server;
+    const before = structuredClone(snap);
+    const out = collapseCorrelated(snap);
+    const kept = out.tool_calls.hook[0];
+    assert.equal(out.tool_calls.hook.length, 1);
+    assert.equal(out.tool_calls.proxy.length, 0);
+    assert.equal(kept.tool_name, proxyName);
+    assert.equal(kept.tool_call_id, hook.tool_call_id);
+    assert.equal(kept.session_id, hook.session_id);
+    assert.equal(kept.mcp_server, "demo");
+    assert.deepEqual(kept.sources, ["codex-hook", "mcp-proxy"]);
+    assert.deepEqual(collapseCorrelated(out), out);
+    assert.deepEqual(snap, before, "recorded observations are unchanged");
+  });
+}
+
+test("Codex rows without a paired proxy keep their model-visible names", () => {
+  for (const correlation_id of [null, CORR]) {
+    const snap = pairSnapshot();
+    snap.tool_calls.hook[0].interceptor = "codex-hook";
+    snap.tool_calls.hook[0].tool_name = codexNames[1][0];
+    snap.tool_calls.hook[0].correlation_id = correlation_id;
+    snap.tool_calls.proxy = [];
+    assert.equal(collapseCorrelated(snap).tool_calls.hook[0].tool_name, codexNames[1][0]);
+  }
+});
+
+test("uncorrelated Codex and proxy rows keep their original labels", () => {
+  const snap = pairSnapshot();
+  Object.assign(snap.tool_calls.hook[0], { interceptor: "codex-hook", tool_name: codexNames[1][0], correlation_id: null });
+  snap.tool_calls.proxy[0].correlation_id = null;
+  const out = collapseCorrelated(snap);
+  assert.deepEqual(out.tool_calls, snap.tool_calls);
+});
+
+test("an empty proxy name does not erase a Codex label", () => {
+  const snap = pairSnapshot();
+  snap.tool_calls.hook[0].interceptor = "codex-hook";
+  snap.tool_calls.proxy[0].tool_name = "";
+  assert.equal(collapseCorrelated(snap).tool_calls.hook[0].tool_name, snap.tool_calls.hook[0].tool_name);
+});
+
+test("other hook platforms keep their existing tool names", () => {
+  for (const interceptor of ["claude-code-hook", "antigravity-hook"]) {
+    const snap = pairSnapshot();
+    snap.tool_calls.hook[0].interceptor = interceptor;
+    assert.equal(collapseCorrelated(snap).tool_calls.hook[0].tool_name, snap.tool_calls.hook[0].tool_name);
+  }
+});
+
+test("a proxy-only row keeps its original tool name", () => {
+  const snap = pairSnapshot();
+  snap.tool_calls.hook = [];
+  assert.equal(collapseCorrelated(snap).tool_calls.proxy[0].tool_name, snap.tool_calls.proxy[0].tool_name);
 });

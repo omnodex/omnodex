@@ -88,7 +88,8 @@ function sortSources(sources: Iterable<string>): string[] {
 
 /**
  * Merge the rows of one correlated call. Attribution comes from the row that
- * is not the proxy's: that is the call the agent made, under its own name.
+ * is not the proxy's: that is the call the agent made. For Codex, the
+ * proxy's original tool name replaces the model's normalized display name.
  * Timing and outcome come from the proxy's, which measured the upstream
  * round trip; an error on either side is an error, because the hook fires
  * before the call is forwarded and cannot see the upstream fail.
@@ -102,6 +103,7 @@ function mergeRows(rows: CollapsedToolCallRow[]): CollapsedToolCallRow {
     observed_tool_call_ids: [...new Set(rows.flatMap((r) => r.observed_tool_call_ids ?? [r.tool_call_id]))],
   };
   if (proxy && proxy !== primary) {
+    if (primary.interceptor === "codex-hook" && proxy.tool_name) merged.tool_name = proxy.tool_name;
     if (proxy.duration_ms != null) merged.duration_ms = proxy.duration_ms;
     if (proxy.response_bytes != null) merged.response_bytes = proxy.response_bytes;
     if (proxy.ended_at) merged.ended_at = proxy.ended_at;
