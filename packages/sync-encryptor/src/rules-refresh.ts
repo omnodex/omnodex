@@ -12,7 +12,7 @@
  *
  * Two authenticated requests, kept separate on purpose:
  *
- *   GET  /api/v1/rules/update?format=<n>&since=<installed>
+ *   GET  /api/v1/rules/update?format=<n>&since=<installed>&not_after=<its expiry>
  *                                  the sealed bundle, or 304
  *   POST /api/v1/license/validate  the key that opens it
  *
@@ -90,11 +90,18 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
   }
 }
 
-/** The version of the bundle this home already holds, if any. */
-async function installedVersion(home: string): Promise<string | null> {
+/** The version of the bundle this home already holds, if any, and when it expires. */
+async function installedBundle(home: string): Promise<{ version: string; notAfter: string | null } | null> {
   const bundle = await readJson(join(home, RULE_BUNDLE_FILE));
-  const manifest = bundle?.manifest as { bundle_version?: unknown } | undefined;
-  return typeof manifest?.bundle_version === "string" ? manifest.bundle_version : null;
+  const manifest = bundle?.manifest as { bundle_version?: unknown; not_after?: unknown } | undefined;
+  if (typeof manifest?.bundle_version !== "string") return null;
+  return { version: manifest.bundle_version, notAfter: typeof manifest.not_after === "string" ? manifest.not_after : null };
+}
+
+/** `&since=<version>&not_after=<expiry>` for what this home holds, or nothing. */
+export function sinceQuery(held: { version: string; notAfter: string | null } | null): string {
+  if (!held) return "";
+  return `&since=${encodeURIComponent(held.version)}${held.notAfter ? `&not_after=${encodeURIComponent(held.notAfter)}` : ""}`;
 }
 
 /** Write the bundle in one step, so a reader never sees half a file. */
@@ -142,10 +149,12 @@ export async function refreshRuleBundle(
       return outcome;
     };
 
-    const installed = await installedVersion(home);
+    const held = await installedBundle(home);
+    const installed = held?.version ?? null;
     const fetchFn = opts.fetchFn ?? fetch;
+    // Naming the installed expiry asks for a renewal of the same version too.
     const res = await fetchFn(
-      `${apiUrl}/api/v1/rules/update?format=${RULE_FORMAT_VERSION}${installed ? `&since=${encodeURIComponent(installed)}` : ""}`,
+      `${apiUrl}/api/v1/rules/update?format=${RULE_FORMAT_VERSION}${sinceQuery(held)}`,
       {
         headers: { Authorization: `Bearer ${apiToken}` },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
