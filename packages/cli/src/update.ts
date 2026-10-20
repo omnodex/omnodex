@@ -14,7 +14,9 @@
  * 1. Background update check — spawns a detached child process on every CLI
  *    invocation (except `update` itself) that queries the npm registry and
  *    caches the result for 24h. On the *next* invocation, a one-liner is
- *    printed if an update is available. Fully non-blocking.
+ *    printed if an update is available. Fully non-blocking. A source install
+ *    instead fetches its branch's upstream (no tags) in the background, and
+ *    the notice counts the upstream commits HEAD does not have.
  *
  * 2. `omnodex update` command — checks for updates, runs npm install -g,
  *    refreshes stable launchers, and reports the result.
@@ -127,6 +129,60 @@ export function getSourceInstallInfo(): SourceInstallInfo | null {
     }
   } catch { /* fallback */ }
   return null;
+}
+
+function git(repoRoot: string, args: string[]): string | null {
+  const result = spawnSync("git", args, { cwd: repoRoot, encoding: "utf8", timeout: 5000 });
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * The remote-tracking branch a source checkout updates from: its branch's
+ * upstream, else origin/main (a local branch such as full-history has no
+ * upstream). Null when neither exists.
+ */
+export function sourceUpdateTarget(repoRoot: string): string | null {
+  const upstream = git(repoRoot, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
+  if (upstream) return upstream;
+  return git(repoRoot, ["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"]) ? "origin/main" : null;
+}
+
+/**
+ * How many commits on the update target HEAD does not have, from what was
+ * last fetched; no network. New tags and other branches never count.
+ */
+export function sourceUpdateStatus(repoRoot: string): { target: string; behind: number } | null {
+  const target = sourceUpdateTarget(repoRoot);
+  if (!target) return null;
+  const count = git(repoRoot, ["rev-list", "--count", `HEAD..${target}`]);
+  return count === null ? null : { target, behind: Number(count) };
+}
+
+/** The notice for a source checkout, or null when it is current. */
+export function sourceUpdateNotice(info: Pick<SourceInstallInfo, "repoRoot" | "branch" | "sha">): string | null {
+  const status = sourceUpdateStatus(info.repoRoot);
+  if (!status || status.behind <= 0) return null;
+  const commits = `${status.behind} new commit${status.behind === 1 ? "" : "s"}`;
+  return `Omnodex source updates available: ${commits} on ${status.target} (${info.branch} @ ${info.sha})`;
+}
+
+/** Fetch the update target's branch in the background, without tags. */
+function fetchSourceUpdates(repoRoot: string): void {
+  const target = sourceUpdateTarget(repoRoot);
+  const slash = target?.indexOf("/") ?? -1;
+  if (!target || slash < 1) return;
+  try {
+    const child = spawn("git", ["fetch", "--quiet", "--no-tags", target.slice(0, slash), target.slice(slash + 1)], {
+      cwd: repoRoot,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    child.on("error", () => undefined);
+    child.unref();
+  } catch {
+    // Can't spawn: not critical
+  }
 }
 
 /**
@@ -292,20 +348,15 @@ export async function printUpdateNotification(): Promise<boolean> {
   try {
     const method = detectInstallMethod();
 
-    // Source installs: show git info instead of npm update notification
+    // Source installs: compare with the upstream branch as last fetched (the
+    // background check fetches it), so nothing here touches the network.
     if (method === "source") {
       const info = getSourceInstallInfo();
-      if (info) {
-        // Check if there are upstream changes
-        const fetchResult = spawnSync("git", ["fetch", "--dry-run"], {
-          cwd: info.repoRoot, encoding: "utf8", timeout: 8000,
-        });
-        // git fetch --dry-run outputs to stderr when there are changes
-        if (fetchResult.status === 0 && fetchResult.stderr && fetchResult.stderr.trim()) {
-          console.error(`\n  Omnodex source updates available (${info.branch} @ ${info.sha})`);
-          console.error(`  Run \`omnodex update\` to pull and rebuild.\n`);
-          return true;
-        }
+      const notice = info ? sourceUpdateNotice(info) : null;
+      if (notice) {
+        console.error(`\n  ${notice}`);
+        console.error(`  Run \`omnodex update\` to pull and rebuild.\n`);
+        return true;
       }
       return false;
     }
@@ -345,6 +396,11 @@ export async function scheduleBackgroundCheck(): Promise<void> {
     }
   } catch {
     // No cache or unreadable — proceed with check
+  }
+
+  if (detectInstallMethod() === "source") {
+    const info = getSourceInstallInfo();
+    if (info) fetchSourceUpdates(info.repoRoot);
   }
 
   // Spawn a detached Node process that does the actual check.
