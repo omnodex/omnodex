@@ -45,25 +45,31 @@ Machine labels in synthetic user names distinguish fixture contexts; actual
 machine identity is sync-envelope metadata, outside the raw event schema.
 The generator does not invent machine fields or change capture/projection.
 
-## Loopback movement fixtures
+## Movement fixtures
 
 `buildMovementScenarios(options)` includes ten additional chains, or use
 `spike --scenario-set movement` (22 sessions minimum/default). The reusable
 `MOVEMENT_SCENARIOS` export is also accepted by `buildScenarios` through
 `additionalScenarios`. Every chain runs as an isolated, completed session.
-The movement set itself names only loopback destinations and contains no
-secret values. The normal community fixtures are still included separately.
+Nothing is executed, and the movement set contains no secret values. Sinks
+name reserved hosts that never resolve: RFC 2606 example domains, the
+`.invalid` TLD and the RFC 5737 documentation range `198.51.100.0/24`.
+Outbound detection treats them as external, so the chains produce real
+findings. Routine counterparts use loopback or a host the session already
+called. The normal community fixtures are still included separately.
 
 | Fixture | Sequence | Routine counterpart |
 | --- | --- | --- |
-| `credential-body` | Credential path read, then body upload | `provider-auth`: local provider emulator authentication |
-| `credential-staged` | Credential path read, archive, upload same archive | `release-staged`: project release archive with no credential source |
-| `sensitive-new-destination` | Sensitive path read, then local destination | `tests-usual-api`: earlier health call, environment read, tests, same health endpoint |
+| `credential-body` | Credential path read, then body upload to `upload.example.org` | `provider-auth`: local provider emulator authentication on loopback |
+| `credential-staged` | Credential path read, archive of that file, upload same archive to `paste.example.net` | `release-staged`: project release archive uploaded to the release host the session already called |
+| `sensitive-new-destination` | Sensitive path read, then upload to `198.51.100.23` | `tests-usual-api`: earlier `api.example.com` health call, environment read, tests, same health endpoint |
 | `credential-outside-write` | Credential path read, outside write | `login-config-write`: CLI login followed by config write |
-| `staged-path-mismatch` | Credential archive, upload a different file | Tests path linkage independently of staging presence |
+| `staged-path-mismatch` | Credential archive, upload a different file to `drop.example.invalid` | Tests path linkage independently of staging presence |
 | `windows-credential-copy` | Windows credential path read and outside write | Keeps Windows path semantics represented |
 
 `packages/cli/test/movement-scenarios.test.mjs` verifies these sequences across
-five seeds and inspects normalized destinations. Outbound detection skips
-loopback, so these chains add no outbound findings of their own; they are
-inert demo fixtures, not detection tests.
+five seeds, checks that every normalized destination is loopback or reserved,
+and pins the community findings each chain raises through the batch analyzer.
+The upload to `198.51.100.23` raises the unknown-IP outbound finding; uploads
+to reserved names raise no community finding of their own, since no community
+rule follows data from a read into a later upload.
