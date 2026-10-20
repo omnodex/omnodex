@@ -10,6 +10,8 @@
  *   3. The page labels each session by its agent runtime, not a fixed name.
  */
 
+// Keeps this file off the real ~/.omnodex; must stay the first import.
+import "../../../scripts/test-home.mjs";
 import { test } from "node:test";
 import * as assert from "node:assert/strict";
 import { promises as fs } from "node:fs";

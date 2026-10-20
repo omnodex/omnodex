@@ -9,6 +9,8 @@
  * Run: node --test packages/analyzer/test/evaluator.test.mjs
  */
 
+// Keeps this file off the real ~/.omnodex; must stay the first import.
+import "../../../scripts/test-home.mjs";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
