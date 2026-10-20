@@ -21,9 +21,9 @@ export const ADVANCED_RULE = {
 /**
  * A sealed bundle plus the keys to check and open it.
  *
- * Overrides: rules, channel, version, notAfter (Date or ISO string), and
- * `tamper`, which flips a byte of the sealed payload after the manifest is
- * signed.
+ * Overrides: rules, channel, version, notAfter (Date or ISO string),
+ * createdAt, contentKey, signingKey (an Ed25519 key pair), and `tamper`,
+ * which flips a byte of the sealed payload after the manifest is signed.
  */
 export function makeBundle(overrides = {}) {
   const rules = overrides.rules ?? [ADVANCED_RULE];
@@ -44,13 +44,13 @@ export function makeBundle(overrides = {}) {
   const manifest = {
     bundle_version: overrides.version ?? "1.0.0",
     channel: overrides.channel ?? "pro",
-    created_at: new Date().toISOString(),
+    created_at: overrides.createdAt ?? new Date().toISOString(),
     not_after: notAfter,
     rules: rules.map((r) => ({ rule_id: r.rule_id, version: "1.0.0" })),
     payload_sha256: crypto.createHash("sha256").update(payload).digest("hex"),
   };
 
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const { publicKey, privateKey } = overrides.signingKey ?? crypto.generateKeyPairSync("ed25519");
   const signature = crypto.sign(null, canonicalManifest(manifest), privateKey);
 
   if (overrides.tamper) {
@@ -64,6 +64,7 @@ export function makeBundle(overrides = {}) {
     keyBase64: contentKey.toString("base64"),
     publicKeyBase64: publicKey.export({ type: "spki", format: "der" }).toString("base64"),
     contentKey,
+    privateKey,
   };
 }
 

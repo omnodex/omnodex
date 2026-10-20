@@ -63,6 +63,20 @@ export {
   RULES_PUBLIC_KEY_ENV,
   TRUSTED_PUBLISHING_KEYS,
 } from "./bundle.js";
+export {
+  canonicalEndorsement,
+  checkRenewal,
+  readTrustFloor,
+  RENEWAL_ENDORSEMENT_KIND,
+  TRUST_STATE_FILE,
+} from "./renewal.js";
+export type {
+  EndorsementStatement,
+  RenewalEndorsement,
+  RenewalProof,
+  RenewableKind,
+  TrustFloor,
+} from "./renewal.js";
 export type {
   BundleManifest,
   SealedBundle,
