@@ -2384,7 +2384,8 @@ export function describeSyncBlob(
  * entries become synchronous or async again, and Antigravity's PreToolUse
  * entry is added or removed. Codex always waits on its hooks, so nothing
  * changes there. Covers the user-level files and each project install in
- * the registry. Returns the files that changed.
+ * the registry. A file another Omnodex home also uses keeps its entries
+ * while that home is in guardrails. Returns the files that changed.
  */
 async function setGuardrailsHooks(omnodexHome: string, on: boolean): Promise<string[]> {
   const files: Record<"claude-code" | "antigravity", Set<string>> = {

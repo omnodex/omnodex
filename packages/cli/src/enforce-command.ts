@@ -20,6 +20,9 @@
  * a call runs, and only those: Claude Code's Omnodex PreToolUse entries run
  * synchronously (it ignores a background hook's decision), and Antigravity
  * gets an Omnodex PreToolUse entry (installs observe PostToolUse otherwise).
+ * A hooks file another home also uses keeps those entries while that home is
+ * in guardrails. Setting the mode a home already has applies the hooks
+ * again, which repairs a file another home changed.
  *
  * Leaving a mode that acts on calls switches protection down, which is for
  * a person, not an agent: like pausing, it needs an interactive terminal and
@@ -154,6 +157,21 @@ export interface GuardrailsReadiness {
   detail: string;
 }
 
+/** Make the installed hooks answer before each call, or not, for a mode. False on failure. */
+async function applyHooks(opts: EnforceOptions, mode: EnforcementMode): Promise<boolean> {
+  if (!opts.applyHookTiming) return true;
+  const on = mode === "guardrails";
+  try {
+    for (const file of await opts.applyHookTiming(on)) {
+      opts.io.log(`[enforce] ${on ? "hooks now answer before each call" : "hooks no longer hold calls"}: ${file}`);
+    }
+    return true;
+  } catch (err) {
+    opts.io.error(`[enforce] could not update the installed hooks: ${(err as Error).message}`);
+    return false;
+  }
+}
+
 /** Run `omnodex enforce <sub>`. Returns the exit code. */
 export async function runEnforce(args: string[], opts: EnforceOptions): Promise<number> {
   const { home, io } = opts;
@@ -178,7 +196,7 @@ export async function runEnforce(args: string[], opts: EnforceOptions): Promise<
     previous = await currentMode(home);
     if (previous === mode) {
       io.log(`${tag} already ${mode} in ${home}.`);
-      return 0;
+      return (await applyHooks(opts, mode)) ? 0 : 1;
     }
     if (mode === "guardrails" && opts.prepareGuardrails) {
       const readiness = await opts.prepareGuardrails();
@@ -215,16 +233,7 @@ export async function runEnforce(args: string[], opts: EnforceOptions): Promise<
     return 1;
   }
   io.log(`${tag} ${mode} in ${home}: ${MODE_EFFECT[mode]}.`);
-  if (opts.applyHookTiming && (mode === "guardrails" || previous === "guardrails")) {
-    try {
-      for (const file of await opts.applyHookTiming(mode === "guardrails")) {
-        io.log(`${tag} ${mode === "guardrails" ? "hooks now answer before each call" : "hooks no longer hold calls"}: ${file}`);
-      }
-    } catch (err) {
-      io.error(`${tag} could not update the Claude Code hooks: ${(err as Error).message}`);
-      return 1;
-    }
-  }
+  if ((mode === "guardrails" || previous === "guardrails") && !(await applyHooks(opts, mode))) return 1;
   if (mode === "guardrails") {
     io.log(`${tag} a rule stops or holds a call only where your settings say so, or once the rule has a safer alternative to offer.`);
   }
