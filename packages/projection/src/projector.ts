@@ -28,17 +28,19 @@ import type {
   TraceEvent,
 } from "@omnodex/shared";
 import { riskScoreFor, splitMcpToolName } from "@omnodex/shared";
-import type { ReadModelStore, SessionRow } from "./read-model.js";
+import { inTransaction, type ReadModelStore, type SessionRow } from "./read-model.js";
 
 export class Projector {
   constructor(private readonly store: ReadModelStore) {}
 
-  /** Wipe the read model and replay a stream of events from scratch. */
+  /** Wipe the read model and replay a stream of events from scratch, in one transaction. */
   async replay(events: Iterable<TraceEvent> | AsyncIterable<TraceEvent>): Promise<void> {
     await this.store.reset();
-    for await (const event of events as AsyncIterable<TraceEvent>) {
-      await this.apply(event);
-    }
+    await inTransaction(this.store, async () => {
+      for await (const event of events as AsyncIterable<TraceEvent>) {
+        await this.apply(event);
+      }
+    });
   }
 
   /**

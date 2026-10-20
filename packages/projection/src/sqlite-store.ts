@@ -134,9 +134,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last_event ON sessions(last_event_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_interceptor ON sessions(interceptor, last_event_at);
 `;
 
+/**
+ * How long a write waits for another process's transaction on the same file
+ * (the background sync replays traces.db too) before failing as busy.
+ */
+const BUSY_TIMEOUT_MS = 60_000;
+
 export class SqliteReadModelStore implements ReadModelStore {
   private readonly dbPath: string;
   private db: DatabaseSync | null = null;
+  private inTransaction = false;
 
   constructor(options: SqliteReadModelStoreOptions) {
     this.dbPath = options.dbPath;
@@ -145,6 +152,7 @@ export class SqliteReadModelStore implements ReadModelStore {
   async init(): Promise<void> {
     await fs.mkdir(path.dirname(this.dbPath), { recursive: true });
     this.db = new DatabaseSync(this.dbPath);
+    this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA foreign_keys = ON;");
     this.db.exec(SCHEMA_SQL);
@@ -266,7 +274,33 @@ export class SqliteReadModelStore implements ReadModelStore {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
+  /**
+   * One write transaction around `fn`: a rebuild is thousands of small
+   * writes, and outside a transaction each commits on its own, which is
+   * what made replay slow (most of all on Windows). IMMEDIATE takes the
+   * write lock up front, so another process replaying the same file waits
+   * (busy_timeout) rather than interleaving with this one. Rolled back if
+   * `fn` throws. A nested call joins the outer transaction.
+   */
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.inTransaction) return fn();
+    const db = this.requireDb();
+    db.exec("BEGIN IMMEDIATE");
+    this.inTransaction = true;
+    try {
+      const result = await fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    } finally {
+      this.inTransaction = false;
+    }
+  }
+
   async reset(): Promise<void> {
+    if (this.inTransaction) throw new Error("reset() inside a transaction");
     if (this.db) {
       this.db.close();
       this.db = null;
