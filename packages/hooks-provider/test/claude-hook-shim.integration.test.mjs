@@ -209,9 +209,17 @@ test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta whe
 test("SessionEnd starts a detached sync that uploads the session without delaying the hook", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-sync-"));
   const pushes = [];
+  // Every sync request is held until the hook has exited, so the sync cannot
+  // finish first. A hook that waited for it would never exit. This proves the
+  // ordering without a wall-clock limit that a loaded machine can miss.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let answered = 0;
   const server = createServer((req, res) => {
     req.resume();
-    req.on("end", () => {
+    req.on("end", async () => {
+      await held;
+      answered++;
       pushes.push({ method: req.method, url: req.url.replace(/segments\/.+$/, "segments/:id") });
       if (req.url === "/api/v1/stream/verifier") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -224,6 +232,7 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
+    release();
     await new Promise((resolve) => server.close(resolve));
     await rm(home, { recursive: true, force: true });
   });
@@ -244,12 +253,20 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
   await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "SessionStart", user: "case" }, env);
   assert.equal(pushes.length, 0, "only a session end starts a sync");
 
-  const started = Date.now();
-  const res = await runShim({ session_id, hook_event_name: "SessionEnd", reason: "completed" }, env);
+  let timer;
+  const res = await Promise.race([
+    runShim({ session_id, hook_event_name: "SessionEnd", reason: "completed" }, env),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("hook must not wait for the sync")), 60_000); }),
+  ]);
+  clearTimeout(timer);
   assert.equal(res.code, 0, `SessionEnd stderr: ${res.stderr}`);
   assert.equal(res.stdout, "");
-  // The hook returns before the sync (Argon2id alone takes longer than this).
-  assert.ok(Date.now() - started < 2000, "hook must not wait for the sync");
+  // Nothing the sync asked for has been answered, and it has neither
+  // finished nor given up: the hook exited without waiting for it.
+  assert.equal(answered, 0, "hook must not wait for the sync");
+  const before = await readFile(path.join(home, "auto-sync-state.json"), "utf8").then(JSON.parse, () => ({}));
+  assert.equal(before.last_success_at ?? before.last_error ?? null, null, "hook must not wait for the sync");
+  release();
 
   const deadline = Date.now() + 20_000;
   let state = {};
