@@ -12,10 +12,12 @@
  * payload hash the manifest carries, and only then decryption, so nothing
  * unverified is ever handed to the cipher. Each artifact type signs its own
  * canonical manifest, which names its kind, so one type's signature never
- * passes as another's.
+ * passes as another's. A signature by a renewal key counts only when the
+ * caller's renewal check passes (renewal.ts).
  */
 
 import * as crypto from "node:crypto";
+import { verifiesWith } from "./renewal.js";
 
 export type OpenFailure =
   | "untrusted_signature"
@@ -24,7 +26,9 @@ export type OpenFailure =
   | "no_key"
   | "undecryptable";
 
-export type OpenResult = { ok: true; plaintext: Buffer } | { ok: false; reason: OpenFailure };
+export type OpenResult =
+  | { ok: true; plaintext: Buffer; /** Set when a renewal key signed it: the endorsement's serial. */ renewalSerial?: number }
+  | { ok: false; reason: OpenFailure };
 
 export interface OpenSignedInput {
   /** The canonical manifest bytes the signature covers. */
@@ -41,22 +45,21 @@ export interface OpenSignedInput {
   key: Buffer | null;
   /** Base64 SPKI Ed25519 keys to accept. */
   trustedKeys: readonly string[];
+  /**
+   * When no trusted key signed it: whether a renewal key did, as the
+   * endorsement's serial, or null. See checkRenewal in renewal.ts.
+   */
+  renewal?: () => number | null;
   at?: Date;
-}
-
-function verifies(signed: Buffer, signature: Buffer, spkiBase64: string): boolean {
-  try {
-    const key = crypto.createPublicKey({ key: Buffer.from(spkiBase64, "base64"), format: "der", type: "spki" });
-    return crypto.verify(null, signed, key, signature);
-  } catch {
-    return false;
-  }
 }
 
 /** Check a sealed artifact and decrypt it. Never throws. */
 export function openSigned(input: OpenSignedInput): OpenResult {
-  const signature = Buffer.from(input.signature, "base64");
-  if (!input.trustedKeys.some((k) => verifies(input.signed, signature, k))) return { ok: false, reason: "untrusted_signature" };
+  let renewalSerial: number | undefined;
+  if (!input.trustedKeys.some((k) => verifiesWith(input.signed, input.signature, k))) {
+    renewalSerial = input.renewal?.() ?? undefined;
+    if (renewalSerial === undefined) return { ok: false, reason: "untrusted_signature" };
+  }
 
   const now = input.at ?? new Date();
   const notAfter = Date.parse(input.notAfter);
@@ -73,7 +76,8 @@ export function openSigned(input: OpenSignedInput): OpenResult {
     const body = payload.subarray(12, payload.length - 16);
     const decipher = crypto.createDecipheriv("aes-256-gcm", input.key, iv);
     decipher.setAuthTag(tag);
-    return { ok: true, plaintext: Buffer.concat([decipher.update(body), decipher.final()]) };
+    const plaintext = Buffer.concat([decipher.update(body), decipher.final()]);
+    return renewalSerial === undefined ? { ok: true, plaintext } : { ok: true, plaintext, renewalSerial };
   } catch {
     return { ok: false, reason: "undecryptable" };
   }

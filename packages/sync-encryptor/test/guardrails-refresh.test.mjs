@@ -128,3 +128,17 @@ test("a license that lapsed on revalidation stops before fetching", async () => 
   assert.equal(await refreshGuardrailsModule(home, c), "not-entitled");
   assert.equal(c.calls.fetch.length, 0);
 });
+
+test("the installed module's expiry is named, so a renewal of the same version is offered", async () => {
+  const held = sealed("1.2.0");
+  held.manifest.not_after = "2026-11-18T22:17:35.216Z";
+  await setup({ installed: held });
+  const c = cloud({ version: "1.2.0", licensed: "1.2.0" });
+  assert.equal(await refreshGuardrailsModule(home, c), "updated");
+  assert.equal(
+    c.calls.fetch[0].url,
+    "https://api.example.test/api/v1/guardrails/update?interface=1&since=1.2.0&not_after=2026-11-18T22%3A17%3A35.216Z",
+  );
+  // Same version, so the cached key still opens it: no forced license check.
+  assert.equal(c.calls.validate.length, 1);
+});

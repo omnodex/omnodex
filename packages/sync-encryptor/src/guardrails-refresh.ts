@@ -12,8 +12,9 @@
  * bundle: the background pass checks it, and `omnodex enforce guardrails`
  * checks it at once.
  *
- *   GET  /api/v1/guardrails/update?interface=<n>&since=<installed>
- *                                         the sealed module, or 304
+ *   GET  /api/v1/guardrails/update?interface=<n>&since=<installed>&not_after=<its expiry>
+ *                                         the sealed module (a newer version,
+ *                                         or a renewal of this one), or 304
  *   POST /api/v1/license/validate         the key that opens it
  *
  * The client names the module interface it speaks, so the cloud never hands
@@ -28,6 +29,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GUARDRAILS_INTERFACE } from "@omnodex/shared";
 import { validateLicense, type LicenseClientConfig, type ValidateResult } from "@omnodex/license-client";
+import { sinceQuery } from "./rules-refresh.js";
 
 /** Where a home keeps its sealed module. Must match the analyzer's modulePath. */
 export const GUARDRAILS_MODULE_FILE = join("guardrails", "current.module.json");
@@ -72,13 +74,12 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
   }
 }
 
-async function installedVersion(home: string): Promise<string | null> {
+async function installedModule(home: string): Promise<{ version: string; notAfter: string | null } | null> {
   const manifest = (await readJson(join(home, GUARDRAILS_MODULE_FILE)))?.manifest as
-    | { module_version?: unknown; interface?: unknown }
+    | { module_version?: unknown; interface?: unknown; not_after?: unknown }
     | undefined;
-  return typeof manifest?.module_version === "string" && manifest.interface === GUARDRAILS_INTERFACE
-    ? manifest.module_version
-    : null;
+  if (typeof manifest?.module_version !== "string" || manifest.interface !== GUARDRAILS_INTERFACE) return null;
+  return { version: manifest.module_version, notAfter: typeof manifest.not_after === "string" ? manifest.not_after : null };
 }
 
 async function installModule(home: string, sealed: unknown): Promise<void> {
@@ -125,8 +126,9 @@ export async function refreshGuardrailsModule(
       return outcome;
     };
 
-    const installed = await installedVersion(home);
-    const query = `interface=${GUARDRAILS_INTERFACE}${installed ? `&since=${encodeURIComponent(installed)}` : ""}`;
+    const held = await installedModule(home);
+    const installed = held?.version ?? null;
+    const query = `interface=${GUARDRAILS_INTERFACE}${sinceQuery(held)}`;
     const res = await (opts.fetchFn ?? fetch)(`${apiUrl}/api/v1/guardrails/update?${query}`, {
       headers: { Authorization: `Bearer ${apiToken}` },
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
