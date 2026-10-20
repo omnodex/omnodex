@@ -354,3 +354,72 @@ test("setPreToolUseSync on a file with no Omnodex hooks changes nothing", async 
   const interceptor = makeInterceptor(projectPath);
   assert.equal(await interceptor.setPreToolUseSync(true), false);
 });
+
+// One settings file used by two Omnodex homes, such as a project opened from
+// both native Windows and WSL. PreToolUse stays synchronous while either
+// home is in guardrails.
+
+async function twoHomes(t) {
+  const projectPath = await fresh(t);
+  const settingsPath = path.join(projectPath, ".claude", "settings.local.json");
+  const make = async (name, mode) => {
+    const home = path.join(projectPath, name);
+    await mkdir(home, { recursive: true });
+    await writeFile(path.join(home, "omnodex-config.json"), JSON.stringify({ enforcement: { mode } }));
+    return new ClaudeCodeInterceptor({ projectPath, shimPath: "/opt/omnodex/shim.js", omnodexHome: home, settingsPath });
+  };
+  return { settingsPath, a: await make("home-a", "guardrails"), b: await make("home-b", "guardrails") };
+}
+
+async function preToolUse(settingsPath) {
+  const { hooks } = JSON.parse(await readFile(settingsPath, "utf8"));
+  return hooks.PreToolUse[0].hooks[0];
+}
+
+test("shared file: leaving guardrails in one home keeps PreToolUse synchronous for the other", async (t) => {
+  const { settingsPath, a, b } = await twoHomes(t);
+  await a.install();
+  assert.equal((await preToolUse(settingsPath)).async, undefined);
+  assert.equal(await b.setPreToolUseSync(true), false, "already synchronous");
+
+  assert.equal(await a.setPreToolUseSync(false), false, "home b still needs it");
+  assert.equal((await preToolUse(settingsPath)).async, undefined);
+
+  assert.equal(await b.setPreToolUseSync(false), true);
+  assert.equal((await preToolUse(settingsPath)).async, true);
+});
+
+test("shared file: the list survives Claude Code rewriting the settings file", async (t) => {
+  const { settingsPath, a, b } = await twoHomes(t);
+  await a.install();
+  await b.setPreToolUseSync(true);
+
+  // Claude Code drops keys it does not know when it rewrites the file.
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  for (const groups of Object.values(settings.hooks)) {
+    for (const handler of groups[0].hooks) delete handler["omnodex-managed"];
+  }
+  settings.permissions = { allow: ["Read"] };
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+
+  await a.setPreToolUseSync(false);
+  assert.equal((await preToolUse(settingsPath)).async, undefined);
+});
+
+test("shared file: reinstalling from a home not in guardrails keeps the other home's PreToolUse", async (t) => {
+  const { settingsPath, a, b } = await twoHomes(t);
+  await a.install();
+  await writeFile(path.join(b.options.omnodexHome, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "shadow" } }));
+  await b.install();
+  assert.equal((await preToolUse(settingsPath)).async, undefined);
+});
+
+test("shared file: uninstall from one home unlists it", async (t) => {
+  const { settingsPath, a, b } = await twoHomes(t);
+  await a.install();
+  await a.uninstall();
+  await b.install();
+  await writeFile(path.join(b.options.omnodexHome, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "shadow" } }));
+  assert.equal(await b.setPreToolUseSync(false), true);
+  assert.equal((await preToolUse(settingsPath)).async, true);
+});

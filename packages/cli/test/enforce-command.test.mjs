@@ -169,3 +169,29 @@ test("status in guardrails mode names the module's state", async (t) => {
   assert.equal(await runEnforce(["status"], { home, io, describeGuardrails: async () => "guardrails module 1.0.0 (valid until 2026-11-18)" }), 0);
   assert.match(io.out[1], /guardrails module 1\.0\.0/);
 });
+
+test("setting the mode a home already has applies the hooks again, as a repair", async (t) => {
+  const home = await tempHome(t);
+  await setMode(home, "guardrails");
+  const calls = [];
+  const applyHookTiming = async (sync) => { calls.push(sync); return ["/home/case/repo/.claude/settings.local.json"]; };
+
+  // Another home sharing a project left guardrails and put its hooks in the background.
+  const io = fakeIo({ tty: false });
+  assert.equal(await runEnforce(["guardrails"], { home, io, applyHookTiming }), 0);
+  assert.deepEqual(calls, [true]);
+  assert.match(io.out[0], /already guardrails/);
+  assert.ok(io.out.some((l) => /hooks now answer before each call: .*settings\.local\.json/.test(l)));
+
+  await setMode(home, "shadow");
+  assert.equal(await runEnforce(["shadow"], { home, io: fakeIo(), applyHookTiming }), 0);
+  assert.deepEqual(calls, [true, false]);
+});
+
+test("a failure to update the hooks is reported", async (t) => {
+  const home = await tempHome(t);
+  const io = fakeIo({ tty: false });
+  const applyHookTiming = async () => { throw new Error("EACCES"); };
+  assert.equal(await runEnforce(["guardrails"], { home, io, applyHookTiming }), 1);
+  assert.match(io.err[0], /could not update the installed hooks: EACCES/);
+});

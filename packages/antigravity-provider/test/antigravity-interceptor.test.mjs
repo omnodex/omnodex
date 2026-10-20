@@ -375,3 +375,24 @@ test("setPreToolUse on a file without Omnodex hooks changes nothing", async (t) 
   const projectPath = await fresh(t);
   assert.equal(await makeInterceptor(projectPath).setPreToolUse(true), false);
 });
+
+test("shared hooks file: the PreToolUse entry stays while another home is in guardrails", async (t) => {
+  const projectPath = await fresh(t);
+  const hooksPath = path.join(projectPath, ".agents", "hooks.json");
+  const make = async (name) => {
+    const home = path.join(projectPath, name);
+    await mkdir(home, { recursive: true });
+    await writeFile(path.join(home, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "guardrails" } }));
+    return new AntigravityInterceptor({ projectPath, shimPath: "/opt/omnodex/antigravity-shim.js", omnodexHome: home, hooksPath });
+  };
+  const a = await make("home-a");
+  const b = await make("home-b");
+  await a.install();
+  assert.equal(await b.setPreToolUse(true), false, "already there");
+
+  assert.equal(await a.setPreToolUse(false), false, "home b still needs it");
+  assert.ok(JSON.parse(await readFile(hooksPath, "utf8")).omnodex.PreToolUse);
+
+  assert.equal(await b.setPreToolUse(false), true);
+  assert.equal(JSON.parse(await readFile(hooksPath, "utf8")).omnodex.PreToolUse, undefined);
+});

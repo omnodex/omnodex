@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./guardrails-hooks": {
+      "import": "./dist/guardrails-hooks.js",
+      "types": "./dist/guardrails-hooks.d.ts"
     }
   },
   "scripts": {

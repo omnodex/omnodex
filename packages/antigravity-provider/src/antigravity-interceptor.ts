@@ -42,9 +42,9 @@
  * MCP config: `.agents/mcp_config.json` (separate file, not touched here).
  */
 
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import * as path from "node:path";
-import { parseEnforcementConfig } from "@omnodex/shared";
+import { setGuardrailsHome, syncGuardrailsHome } from "@omnodex/shared/guardrails-hooks";
 import type { EmitFn, Interceptor, StopFn } from "@omnodex/shared";
 
 export interface AntigravityInterceptorOptions {
@@ -94,7 +94,8 @@ export interface AntigravityInterceptorOptions {
   platform?: NodeJS.Platform;
   /**
    * Subscribe to PreToolUse, so guardrails can stop a call before it runs.
-   * Defaults to whether OMNODEX_HOME's enforcement mode is guardrails.
+   * Defaults to whether OMNODEX_HOME, or another home sharing the hooks
+   * file, is in guardrails (see @omnodex/shared/guardrails-hooks).
    */
   enforcePreToolUse?: boolean;
 }
@@ -186,7 +187,7 @@ export class AntigravityInterceptor implements Interceptor {
         },
       ];
     }
-    if (this.options.enforcePreToolUse ?? guardrailsOn(this.options.omnodexHome)) {
+    if (this.options.enforcePreToolUse ?? (await syncGuardrailsHome(hooksPath, this.options.omnodexHome))) {
       omnodexDef.PreToolUse = [{ matcher: "*", hooks: [this.makeHandler("PreToolUse")] }];
     }
 
@@ -201,6 +202,7 @@ export class AntigravityInterceptor implements Interceptor {
 
   async uninstall(): Promise<void> {
     const hooksPath = this.hooksFilePath();
+    await setGuardrailsHome(hooksPath, this.options.omnodexHome, false);
     const existing = await this.readHooks(hooksPath);
     if (!(HOOK_NAME in existing)) return;
 
@@ -211,14 +213,17 @@ export class AntigravityInterceptor implements Interceptor {
   }
 
   /**
-   * Add (guardrails) or remove the Omnodex PreToolUse entry in an installed
-   * hooks file. Touches nothing else. Returns whether the file changed.
+   * Record whether this home needs the Omnodex PreToolUse entry in an
+   * installed hooks file (guardrails) or not, and keep the entry while this
+   * or any other home sharing the file needs it. Touches nothing else.
+   * Returns whether the file changed.
    */
-  async setPreToolUse(on: boolean): Promise<boolean> {
+  async setPreToolUse(needed: boolean): Promise<boolean> {
     const hooksPath = this.hooksFilePath();
     const existing = await this.readHooks(hooksPath);
     const def = existing[HOOK_NAME];
     if (!def) return false;
+    const on = (await setGuardrailsHome(hooksPath, this.options.omnodexHome, needed)).length > 0;
     if (on === Boolean(def.PreToolUse)) return false;
     const next: NamedHookDef = { ...def };
     if (on) next.PreToolUse = [{ matcher: "*", hooks: [this.makeHandler("PreToolUse")] }];
@@ -278,16 +283,6 @@ export class AntigravityInterceptor implements Interceptor {
 
   private async writeHooks(hooksPath: string, hooks: HooksFile): Promise<void> {
     await fs.writeFile(hooksPath, JSON.stringify(hooks, null, 2) + "\n", "utf8");
-  }
-}
-
-/** Whether an OMNODEX_HOME's enforcement mode is guardrails. Unreadable means no. */
-function guardrailsOn(omnodexHome: string): boolean {
-  try {
-    const raw = JSON.parse(readFileSync(path.join(omnodexHome, "omnodex-config.json"), "utf8")) as { enforcement?: unknown };
-    return parseEnforcementConfig(raw?.enforcement).mode === "guardrails";
-  } catch {
-    return false;
   }
 }
 
