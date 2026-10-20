@@ -160,3 +160,13 @@ test("the background pass refreshes rules before it detects", async () => {
   assert.deepEqual(order, ["refresh", "detect"]);
   assert.ok(!existsSync(path.join(home, RULE_BUNDLE_FILE)));
 });
+
+test("the installed bundle's expiry is named, so a renewal of the same version is offered", async () => {
+  await setup();
+  await mkdir(path.join(home, "rules"), { recursive: true });
+  await write(RULE_BUNDLE_FILE, { ...bundle("1.0.0"), manifest: { ...bundle("1.0.0").manifest, not_after: "2026-11-18T00:00:00.000Z" } });
+  const c = cloud({ version: "1.0.0", licensed: "1.0.0" });
+  assert.equal(await refreshRuleBundle(home, c), "updated");
+  assert.match(c.calls.fetch[0].url, /&since=1\.0\.0&not_after=2026-11-18T00%3A00%3A00\.000Z$/);
+  assert.equal(c.calls.validate.length, 1);
+});

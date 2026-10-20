@@ -31,7 +31,7 @@ export function decide({ host, verdicts, failure, onError }) {
 
 /**
  * A sealed module plus the keys to check and open it.
- * Overrides: source, version, interface, notAfter, tamper.
+ * Overrides: source, version, interface, notAfter, signingKey, tamper.
  */
 export function makeModule(overrides = {}) {
   const contentKey = crypto.randomBytes(32);
@@ -48,7 +48,7 @@ export function makeModule(overrides = {}) {
     not_after: overrides.notAfter ?? new Date(Date.now() + 30 * 86_400_000).toISOString(),
     payload_sha256: crypto.createHash("sha256").update(payload).digest("hex"),
   };
-  const { publicKey, privateKey } = crypto.generateKeyPairSync("ed25519");
+  const { publicKey, privateKey } = overrides.signingKey ?? crypto.generateKeyPairSync("ed25519");
   const signature = crypto.sign(null, canonicalModuleManifest(manifest), privateKey).toString("base64");
   if (overrides.tamper) {
     payload = Buffer.from(payload);
@@ -58,6 +58,7 @@ export function makeModule(overrides = {}) {
     sealed: { manifest, signature, payload: payload.toString("base64") },
     contentKey,
     publicKeyB64: publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+    privateKey,
   };
 }
 

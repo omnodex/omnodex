@@ -20,6 +20,9 @@
  *   signature   Ed25519 over the canonical manifest, checked against a key
  *               compiled into this client
  *   payload     RuleDefinition[] sealed with AES-256-GCM under the content key
+ *   renewal     present when a renewal key re-signed it with a later
+ *               not_after: the endorsement and the manifest as published
+ *               (renewal.ts)
  *
  * The signature is checked before anything is opened, and it covers the
  * payload hash, so a tampered payload is refused without being decrypted. A
@@ -37,6 +40,7 @@ import * as path from "node:path";
 
 import type { RuleDefinition } from "./types.js";
 import { openSigned } from "./sealed.js";
+import { checkRenewal, raiseTrustFloor, readTrustFloor, type RenewalProof } from "./renewal.js";
 
 /** Where a home keeps the sealed bundle it last fetched. */
 export const RULES_DIR = "rules";
@@ -82,6 +86,8 @@ export interface SealedBundle {
   signature: string;
   /** Base64 iv (12 bytes) || ciphertext || tag (16 bytes). */
   payload: string;
+  /** Present when a renewal key signed it. */
+  renewal?: RenewalProof;
 }
 
 /** Why a bundle is not in use. Every value means: run community rules. */
@@ -137,6 +143,8 @@ export interface OpenBundleOptions {
   /** Defaults to now. */
   at?: Date;
   env?: NodeJS.ProcessEnv;
+  /** The home whose trust floors apply (renewal.ts). Without one, none do and none are recorded. */
+  home?: string;
 }
 
 /**
@@ -157,15 +165,33 @@ export function openBundle(sealed: unknown, opts: OpenBundleOptions = {}): Advan
     return skip("unreadable");
   }
 
+  const m = bundle.manifest;
+  const keys = trustedKeys(env);
+  const at = opts.at ?? new Date();
+  const scope = `rule-bundle:${m.channel}`;
   const opened = openSigned({
-    signed: canonicalManifest(bundle.manifest),
+    signed: canonicalManifest(m),
     signature: bundle.signature,
-    notAfter: bundle.manifest.not_after,
+    notAfter: m.not_after,
     payload: bundle.payload,
-    payloadSha256: bundle.manifest.payload_sha256,
+    payloadSha256: m.payload_sha256,
     key: opts.key ?? (env[RULES_KEY_ENV] ? Buffer.from(env[RULES_KEY_ENV], "base64") : null),
-    trustedKeys: trustedKeys(env),
-    at: opts.at,
+    trustedKeys: keys,
+    renewal: () =>
+      checkRenewal({
+        kind: "rule-bundle",
+        scope,
+        manifest: m,
+        canonical: canonicalManifest,
+        notAfter: m.not_after,
+        createdAt: m.created_at,
+        signature: bundle.signature,
+        renewal: bundle.renewal,
+        trustedKeys: keys,
+        floor: readTrustFloor(opts.home),
+        at,
+      }),
+    at,
   });
   if (!opened.ok) return skip(opened.reason);
   const plaintext = opened.plaintext;
@@ -180,6 +206,7 @@ export function openBundle(sealed: unknown, opts: OpenBundleOptions = {}): Advan
     return skip("malformed_rules");
   }
 
+  raiseTrustFloor(opts.home, scope, m.created_at, opened.renewalSerial);
   // The bundle says what tier it carries; a rule inside it does not get to
   // claim otherwise, so nothing can smuggle a community label past a check
   // that trusts it.
@@ -249,7 +276,7 @@ export function loadAdvancedRules(
   const env = opts.env ?? process.env;
   const manifest = (parsed as { manifest?: BundleManifest } | null)?.manifest;
   const key = opts.key ?? (env[RULES_KEY_ENV] ? null : manifest ? licensedKey(home, manifest) : null);
-  return openBundle(parsed, key ? { ...opts, key } : opts);
+  return openBundle(parsed, { ...opts, home, ...(key ? { key } : {}) });
 }
 
 /** One line for `omnodex status`: what this installation will judge with. */
@@ -262,7 +289,7 @@ export function describeRules(result: AdvancedRulesResult, communityCount: numbe
     none_cached: "none installed",
     no_key: "installed, but no key to open it (subscription needed)",
     unreadable: "installed bundle could not be read",
-    untrusted_signature: "installed bundle is not signed by a key this client trusts",
+    untrusted_signature: "installed bundle is not signed by a key this client trusts, or its renewal was refused",
     expired: "installed bundle has expired",
     payload_mismatch: "installed bundle failed its integrity check",
     undecryptable: "installed bundle did not open with the key held",
