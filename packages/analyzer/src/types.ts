@@ -128,7 +128,8 @@ export type Condition =
   | CwdBoundaryCondition
   | SequenceCondition
   | StagingCondition
-  | DestinationFirstSeenCondition;
+  | DestinationFirstSeenCondition
+  | FileEditCondition;
 
 /**
  * Matches when at least one file path extracted from the event matches at
@@ -493,6 +494,25 @@ export interface DestinationFirstSeenCondition {
  * clipboard (see the normalized action's staging steps). Yields one context
  * naming the staged output when the command names one.
  */
+/**
+ * Matches on what a file-writing call does to the text of a file, per file
+ * (see conditions/file-edit.ts). "removed": a pattern is in the replaced
+ * text and not in the new text. "added": in the new text and not the
+ * replaced text. "absent": the call writes the whole file without it.
+ * Yields one context per matching file, with {{matched_path}} and the
+ * pattern's {{matched_label}}.
+ */
+export interface FileEditCondition {
+  type: "file_edit";
+  /** Files this applies to; tested against the path with forward slashes. */
+  paths: PathPattern[];
+  change: "removed" | "added" | "absent";
+  /** At least one must match; the first that does names the finding. */
+  patterns: { regex: string; label: string }[];
+  /** Only files whose new text matches this. Omitted: every file. */
+  when?: string;
+}
+
 export interface StagingCondition {
   type: "staging";
   /** Only these operations. Omitted: any. */

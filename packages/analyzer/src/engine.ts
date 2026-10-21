@@ -52,6 +52,7 @@ import {
   evaluateSequence,
   evaluateStaging,
   evaluateDestinationFirstSeen,
+  evaluateFileEdit,
 } from "./conditions/index.js";
 import {
   type RateThresholdState,
@@ -117,6 +118,8 @@ function evaluateCondition(
       return evaluateSequence(condition, event, window, evaluateStateless, context.home);
     case "staging":
       return evaluateStaging(condition, event);
+    case "file_edit":
+      return evaluateFileEdit(condition, event);
     case "destination_first_seen":
       return evaluateDestinationFirstSeen(event, context);
     case "rate_threshold":
