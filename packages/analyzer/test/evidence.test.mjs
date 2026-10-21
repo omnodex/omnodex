@@ -8,7 +8,8 @@
  *      repeat command text, which can hold the credential itself.
  *   3. The destination is the external host the sink reached.
  *   4. found_at says whether the finding was made at capture or later.
- *   5. Single-call findings carry no evidence.
+ *   5. Single-call findings carry no evidence, except one whose rule matched
+ *      a destination this machine had never reached.
  *
  * Run: node --test packages/analyzer/test/evidence.test.mjs
  */
@@ -18,6 +19,7 @@ import assert from "node:assert/strict";
 import { createEvaluator } from "../dist/evaluator.js";
 import { RuleRegistry } from "../dist/registry.js";
 import { summarizeCall, evidenceDestination } from "../dist/evidence.js";
+import { memoryMachineState } from "../dist/machine-state.js";
 
 let counter = 0;
 const newEventId = () => `evt-${++counter}`;
@@ -126,6 +128,44 @@ describe("evidence on a sequence finding", () => {
     assert.equal(risk.rule_id, "RULE_CASE_AWS_READ");
     assert.ok(!("evidence" in risk));
     assert.ok(!("related_event_ids" in risk));
+  });
+});
+
+const PUSH = {
+  rule_id: "RULE_CASE_PUSH_NEW_HOST",
+  version: "1.0.0",
+  tier: "advanced",
+  event_types: ["tool.invoked"],
+  conditions: [
+    { type: "credential_match", scope: ["exec"], patterns: [{ regex: "^\\s*git\\s+push\\b", type: "git push" }] },
+    { type: "outbound_call" },
+    { type: "destination_first_seen" },
+  ],
+  severity: "MEDIUM",
+  category: "case_single",
+  description_template: "Pushed to {{matched_destination}}.",
+};
+
+describe("evidence on a single call to a first-seen destination", () => {
+  const push = () => bash("git push https://git.example.net/case/repo.git main");
+  const evaluator = () => createEvaluator({ host: "batch", registry: new RuleRegistry([PUSH]), newEventId, machineState: memoryMachineState() });
+
+  it("is that call as the sink, with where it went and that it was the first time", () => {
+    const call = push();
+    const [risk] = evaluator().evaluate(call);
+    assert.deepEqual(risk.evidence.steps.map((s) => [s.tool_call_id, s.role]), [[call.tool_call_id, "sink"]]);
+    assert.equal(risk.evidence.steps[0].summary, "Network call to git.example.net");
+    assert.ok(risk.evidence.steps[0].labels.includes("first time this machine reached this host"));
+    assert.deepEqual(risk.evidence.destination, { host: "git.example.net", scheme: "https" });
+    assert.equal(risk.evidence.first_seen_destination, true);
+    assert.equal(risk.evidence.found_at, "background");
+    assert.ok(!("related_event_ids" in risk));
+  });
+
+  it("is absent once the host has been reached", () => {
+    const ev = evaluator();
+    ev.evaluate(push());
+    assert.deepEqual(ev.evaluate(push()), []);
   });
 });
 
