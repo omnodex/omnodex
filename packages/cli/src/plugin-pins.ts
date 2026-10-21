@@ -23,9 +23,9 @@ export interface PluginPin {
 
 export const PLUGIN_PINS: Record<"cowork" | "codex" | "antigravity", PluginPin> = {
   "cowork": {
-    "version": "0.3.2",
-    "sha256": "76bafeb5513fac23f16a80f2349d153e0d49a463bddd74452063c40910341973",
-    "size": 28247
+    "version": "0.4.0",
+    "sha256": "72bfa39a8cc3c0d5e307ba316344ce1fbcc3ccf3e142698c2633e699b3d29095",
+    "size": 28805
   },
   "codex": {
     "version": "0.1.2",
