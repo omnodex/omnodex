@@ -4,7 +4,7 @@
 # (fixes) or minor (features). It runs the full CI matrix, builds the
 # bundle, stamps the next version, publishes with provenance, and tags the
 # commit vX.Y.Z, then creates a GitHub release with notes grouped from the
-# commit subjects since the last tag. The version lives in the tag and on
+# commit subjects since the last tag, led by the optional highlights. The version lives in the tag and on
 # npm, not in a commit.
 # If nothing that ships has changed since the last tag it stops, unless
 # "force" is set. A weekly schedule can call the same job later.
@@ -27,6 +27,10 @@ on:
         description: "Publish even if nothing that ships changed since the last release"
         type: boolean
         default: false
+      highlights:
+        description: "Optional lead for the release notes (Markdown, a sentence or two on what matters most)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -121,6 +125,7 @@ jobs:
         if: steps.plan.outputs.changed == 'true' || inputs.force
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_HIGHLIGHTS: ${{ inputs.highlights }}
         run: |
           node scripts/release.mjs notes "${{ steps.plan.outputs.last_tag }}" > release-notes.md
           gh release create "${{ steps.plan.outputs.tag }}" --verify-tag \

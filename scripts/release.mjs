@@ -13,7 +13,10 @@
 //
 //   node scripts/release.mjs notes [<last-tag>]
 //     Prints release notes for the commits since <last-tag> that touch what
-//     ships, grouped by type (see conventional.mjs).
+//     ships, grouped by type (see conventional.mjs). RELEASE_HIGHLIGHTS, when
+//     set, is placed above them as a short hand-written lead. Every release
+//     ends with a link to the site's release notes, which also cover the
+//     hosted dashboard and paid plans.
 //
 // The released version lives in git tags (vX.Y.Z) and on npm, never in a
 // commit: the next version is one bump past the higher of npm's latest and
@@ -29,6 +32,7 @@ import { releaseNotes } from "./conventional.mjs";
 const PACKAGE = "omnodex";
 /** What ships in the npm package. A release with no change here is skipped. */
 const SHIPPED_PATHS = ["packages", "package.json", "package-lock.json", "tsconfig.base.json"];
+const RELEASE_NOTES_URL = "https://omnodex.com/resources/release-notes";
 
 export function parseVersion(v) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(v).trim());
@@ -96,10 +100,20 @@ function stamp(dir, version) {
   console.log(`${file}: version ${version}`);
 }
 
+/** Puts the optional highlights above the generated notes and the site link below them. */
+export function composeNotes(generated, highlights = "") {
+  const lead = highlights.trim();
+  return [
+    ...(lead ? [`## Highlights\n\n${lead}\n`] : []),
+    generated.trimEnd() + "\n",
+    `Release notes for everything Omnodex ships, including the hosted dashboard and paid plans: ${RELEASE_NOTES_URL}\n`,
+  ].join("\n");
+}
+
 function notes(lastTag) {
   if (!lastTag) return "First release published by the Release workflow.\n";
   const log = git("log", "--format=%s", `${lastTag}..HEAD`, "--", ...SHIPPED_PATHS);
-  return releaseNotes(log.split("\n"));
+  return composeNotes(releaseNotes(log.split("\n")), process.env.RELEASE_HIGHLIGHTS ?? "");
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
