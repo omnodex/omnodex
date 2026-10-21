@@ -7,8 +7,10 @@
 /**
  * RULE_OUTBOUND_KNOWN_IP, RULE_OUTBOUND_UNKNOWN_IP
  *
- * Two rules that together provide tiered detection for outbound calls to
- * raw IPv4 addresses instead of hostnames.
+ * Two rules that together provide tiered detection for calls that name raw
+ * IPv4 or IPv6 addresses instead of hostnames, including an address nested
+ * in another URL's query (redirect and proxy parameters). They read what
+ * the call names, not observed traffic.
  *
  * RULE_OUTBOUND_KNOWN_IP (MEDIUM)
  *   Fires when the destination IP falls within a known major cloud provider
@@ -18,11 +20,13 @@
  *
  * RULE_OUTBOUND_UNKNOWN_IP (HIGH)
  *   Fires when the destination IP is outside all known CIDR ranges. This is
- *   the stronger signal: the agent is contacting an unrecognised host, which
+ *   the stronger signal: the agent is contacting an unrecognized host, which
  *   may indicate C2 callback, prompt injection exfiltration, or supply chain
- *   compromise.
+ *   compromise. Private network, link-local and metadata addresses fire
+ *   here too, labeled by their class, as reaching into an internal network
+ *   is as notable as reaching an unknown public host.
  *
- * Design note: embedding CIDR ranges as data keeps rules serialisable and
+ * Design note: embedding CIDR ranges as data keeps rules serializable and
  * diff-able. The list covers representative stable blocks -- not exhaustive
  * provider space -- so that it stays maintainable without a live feed.
  * Unknown-IP findings (HIGH) appear for IPs outside this list; operators
@@ -34,6 +38,10 @@
  *   Azure:      https://www.microsoft.com/en-us/download/details.aspx?id=56519
  *   Cloudflare: https://www.cloudflare.com/ips/
  *   Fastly:     https://api.fastly.com/public-ip-list
+ *   Google:     https://www.gstatic.com/ipranges/goog.json
+ *
+ * Azure publishes its ranges only as a dated download, so its IPv6 space is
+ * not listed; an Azure IPv6 address reads as unknown.
  *
  * Tier:     community
  * Severity: MEDIUM (known CIDRs) / HIGH (unknown CIDRs)
@@ -43,7 +51,7 @@ import type { RuleDefinition } from "../../types.js";
 
 /**
  * Representative stable CIDR blocks for major cloud and CDN providers.
- * Updated as of Q1 2026. Covers primary compute and CDN ranges but is not
+ * IPv4 updated as of Q1 2026, IPv6 as of October 2026. Covers primary compute and CDN ranges but is not
  * exhaustive -- providers publish full machine-readable lists linked above.
  */
 const KNOWN_CLOUD_CIDRS: string[] = [
@@ -103,11 +111,33 @@ const KNOWN_CLOUD_CIDRS: string[] = [
   "185.31.16.0/22",
   "199.27.72.0/21",
   "199.232.0.0/16",
+
+  // IPv6, checked October 2026. AWS: the allocations that hold its regional
+  // EC2 blocks. Google: Cloud and Google front ends. Cloudflare and Fastly:
+  // their full published lists.
+  "2600:1f00::/24",
+  "2406:da00::/24",
+  "2a05:d000::/24",
+  "2600:1900::/28",
+  "2001:4860::/32",
+  "2607:f8b0::/32",
+  "2a00:1450::/32",
+  "2404:6800::/32",
+  "2400:cb00::/32",
+  "2606:4700::/32",
+  "2803:f800::/32",
+  "2405:b500::/32",
+  "2405:8100::/32",
+  "2a06:98c0::/29",
+  "2c0f:f248::/32",
+  "2a04:4e40::/32",
+  "2a04:4e42::/31",
+  "2a04:4e44::/32",
 ];
 
 export const RULE_OUTBOUND_KNOWN_IP: RuleDefinition = {
   rule_id: "RULE_OUTBOUND_KNOWN_IP",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -120,12 +150,12 @@ export const RULE_OUTBOUND_KNOWN_IP: RuleDefinition = {
   severity: "MEDIUM",
   category: "unexpected_network_destination",
   description_template:
-    "Outbound call to raw IP {{matched_ip}} ({{ip_classification}} range) via {{tool_name}}. Legitimate clients should use hostnames.",
+    "{{tool_name}} names raw IP {{matched_ip}} ({{ip_classification}} range) as a destination. Legitimate clients should use hostnames.",
 };
 
 export const RULE_OUTBOUND_UNKNOWN_IP: RuleDefinition = {
   rule_id: "RULE_OUTBOUND_UNKNOWN_IP",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -138,5 +168,5 @@ export const RULE_OUTBOUND_UNKNOWN_IP: RuleDefinition = {
   severity: "HIGH",
   category: "unexpected_network_destination",
   description_template:
-    "Outbound call to raw IP {{matched_ip}} ({{ip_classification}}) via {{tool_name}}. Destination is outside all known cloud provider ranges.",
+    "{{tool_name}} names raw IP {{matched_ip}} ({{ip_classification}}) as a destination, outside all known cloud provider ranges.",
 };

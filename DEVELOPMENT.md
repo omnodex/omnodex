@@ -156,8 +156,8 @@ Sensitive file access:
 3. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, coding agents' stored logins (Codex, Claude Code, OpenCode), PEM files, etc.
 
 Unexpected network destinations:
-4. **RULE_OUTBOUND_KNOWN_IP** (MEDIUM) - outbound calls to raw IPv4 addresses within known cloud provider CIDR ranges (AWS, GCP, Azure, Cloudflare, Fastly).
-5. **RULE_OUTBOUND_UNKNOWN_IP** (HIGH) - outbound calls to raw IPv4 addresses outside all known CIDR ranges; likely C2 callback, exfiltration, or supply chain compromise.
+4. **RULE_OUTBOUND_KNOWN_IP** (MEDIUM) - calls that name a raw IPv4 or IPv6 address within known cloud provider CIDR ranges (AWS, GCP, Azure IPv4, Cloudflare, Fastly).
+5. **RULE_OUTBOUND_UNKNOWN_IP** (HIGH) - calls that name a raw IPv4 or IPv6 address outside all known CIDR ranges, labeled as an unknown public host, a private network or link-local address, or a cloud metadata service; possible C2 callback, exfiltration, internal network access, or supply chain compromise. Both rules also read an address nested percent-encoded in another URL's query.
 
 Wallet and key material:
 6. **RULE_WALLET_CLI_DETECTED** (HIGH) - bash commands invoking known wallet key-generation CLIs (solana-keygen, ethkey, bitcoin-cli, etc.).
