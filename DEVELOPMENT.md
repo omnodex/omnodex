@@ -149,11 +149,11 @@ Advanced rules themselves are not in this repository, because it is public and t
 **Community rules (19 rules across 8 categories):**
 
 Credential detection:
-1. **RULE_CREDENTIAL_IN_PARAMS** (MEDIUM) - flags tool calls whose parameters contain API keys, Bearer tokens, Stripe keys, GitHub PATs, Slack bot tokens, AWS access keys.
-2. **RULE_CREDENTIAL_EXFIL** (CRITICAL) - flags outbound HTTP/fetch calls that carry credentials to external hosts.
+1. **RULE_CREDENTIAL_IN_PARAMS** (MEDIUM) - flags tool calls whose parameters contain API keys, Bearer tokens, AI model provider keys (Anthropic, OpenAI, OpenRouter, xAI, Groq, Perplexity, Hugging Face, Google), Stripe keys, GitHub tokens, Slack bot tokens, AWS access keys.
+2. **RULE_CREDENTIAL_EXFIL** (CRITICAL) - flags outbound HTTP/fetch calls that carry credentials to external hosts. A credential sent as authentication to its own service (a GitHub token to api.github.com) does not count.
 
 Sensitive file access:
-3. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, PEM files, etc.
+3. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, coding agents' stored logins (Codex, Claude Code, OpenCode), PEM files, etc.
 
 Unexpected network destinations:
 4. **RULE_OUTBOUND_KNOWN_IP** (MEDIUM) - outbound calls to raw IPv4 addresses within known cloud provider CIDR ranges (AWS, GCP, Azure, Cloudflare, Fastly).

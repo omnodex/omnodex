@@ -45,6 +45,11 @@ const MUST_FIRE = [
   ["/home/user/.kube/config",    "Kubernetes config"],
   ["/home/user/server.pem",      "PEM private key"],
   ["/home/user/.ssh/id_ed25519", "SSH private key"],
+  // Coding agents' stored logins.
+  ["/home/case/.codex/auth.json",                "Codex credentials"],
+  ["C:\\Users\\case\\.codex\\auth.json",         "Codex credentials"],
+  ["/home/case/.claude/.credentials.json",       "Claude Code credentials"],
+  ["/home/case/.local/share/opencode/auth.json", "OpenCode credentials"],
 ];
 
 for (const [filePath, expectedLabel] of MUST_FIRE) {
@@ -69,6 +74,11 @@ const MUST_NOT_FIRE = [
   "/var/log/app.log",
   "/home/user/documents/report.pdf",
   "/usr/local/bin/node",
+  // Neighbors of the agent credential files that hold no login.
+  "/home/case/.codex/config.toml",
+  "/home/case/.claude/settings.json",
+  "/home/case/repo/src/auth.json",
+  "/home/case/.config/gh/hosts.yml", // written by gh auth login as routine
 ];
 
 for (const filePath of MUST_NOT_FIRE) {
