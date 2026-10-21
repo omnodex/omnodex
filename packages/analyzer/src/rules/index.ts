@@ -70,6 +70,9 @@ import {
 import {
   RULE_SELF_PROTECTION_CONFIG_WRITE,
   RULE_SELF_PROTECTION_BASH,
+  RULE_SELF_PROTECTION_HOOK_REMOVED,
+  RULE_SELF_PROTECTION_HOOKS_DISABLED,
+  RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
 } from "./community/self-protection.js";
 import { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 import { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
@@ -127,6 +130,9 @@ export {
 export {
   RULE_SELF_PROTECTION_CONFIG_WRITE,
   RULE_SELF_PROTECTION_BASH,
+  RULE_SELF_PROTECTION_HOOK_REMOVED,
+  RULE_SELF_PROTECTION_HOOKS_DISABLED,
+  RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
 } from "./community/self-protection.js";
 export { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 export { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
@@ -175,6 +181,9 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   // Self-protection
   RULE_SELF_PROTECTION_CONFIG_WRITE,
   RULE_SELF_PROTECTION_BASH,
+  RULE_SELF_PROTECTION_HOOK_REMOVED,
+  RULE_SELF_PROTECTION_HOOKS_DISABLED,
+  RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
   // API base URL override
   RULE_THREAT_API_BASE_URL_OVERRIDE,
   // Working-directory boundary

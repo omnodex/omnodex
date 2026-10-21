@@ -16,8 +16,10 @@
  *   Fires when a Write/Edit tool call targets an agent settings file
  *   AND the content contains sandbox-disabling patterns. Covers:
  *   - Claude Code: settings.json with sandbox-related keys
- *   - Codex: config with sandbox/permissions bypass flags
- *   - Gemini CLI: config with sandbox_mode or execution settings
+ *   - Codex: config.toml (or JSON/YAML) with sandbox/permissions bypass
+ *     flags, including sandbox_mode = "danger-full-access"
+ *   - Gemini CLI and Antigravity: config with sandbox_mode or execution
+ *     settings, in ~/.gemini/ or ~/.gemini/config/
  *
  * RULE_SANDBOX_DISABLE_BASH (HIGH)
  *   Fires when a bash command attempts to disable sandboxing via
@@ -37,7 +39,7 @@ import type { RuleDefinition } from "../../types.js";
 
 export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
   rule_id: "RULE_SANDBOX_DISABLE_SETTINGS_WRITE",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -50,13 +52,13 @@ export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
           label: "Claude Code settings file",
         },
         {
-          // Codex config files
-          regex: "(?:^|[/\\\\])\\.codex[/\\\\](?:config|settings)\\.(?:json|yaml|yml)$",
+          // Codex config files (config.toml is the current format)
+          regex: "(?:^|[/\\\\])\\.codex[/\\\\](?:config|settings)\\.(?:toml|json|yaml|yml)$",
           label: "Codex config file",
         },
         {
-          // Gemini CLI config
-          regex: "(?:^|[/\\\\])\\.gemini[/\\\\](?:config|settings)\\.(?:json|yaml|yml)$",
+          // Gemini CLI and Antigravity config (Antigravity keeps it under config/)
+          regex: "(?:^|[/\\\\])\\.gemini[/\\\\](?:config[/\\\\])?(?:config|settings)\\.(?:json|yaml|yml)$",
           label: "Gemini CLI config file",
         },
       ],
@@ -75,6 +77,11 @@ export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
           // Codex: --dangerously-skip-permissions or equivalent config
           regex: "(?:dangerously.?skip.?permissions|bypass.?permissions|skip.?sandbox)",
           type: "codex-permission-bypass",
+        },
+        {
+          // Codex: sandbox_mode = "danger-full-access" in config.toml
+          regex: "\\bsandbox_mode\\b[^\\n,]{0,8}danger-full-access",
+          type: "codex-sandbox-full-access",
         },
         {
           // Gemini: sandbox_mode: none/disabled/false

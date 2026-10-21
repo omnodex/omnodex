@@ -100,6 +100,7 @@ const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
   sequence: true,
   staging: true,
   destination_first_seen: true,
+  file_edit: true,
 };
 
 const EVIDENCE_ROLES = new Set(["source", "staging", "sink", "context"]);
