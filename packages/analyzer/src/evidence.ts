@@ -6,7 +6,10 @@
 // A commercial license is available for use without copyleft obligations.
 /**
  * Evidence for findings on a sequence of calls: each call's role, a one-line
- * summary of what it did, and where the last one went.
+ * summary of what it did, and where the last one went. A single call gets
+ * evidence too when its rule matched a destination this machine had never
+ * reached: where data went for the first time is what an investigation
+ * reads, whether one call got it there or several.
  *
  * Summaries are built from the normalized action (what a call reads,
  * writes, stages and reaches), never from the command text, because a
@@ -121,16 +124,17 @@ function step(event: ToolInvokedEvent, role: EvidenceRole, context: Partial<Matc
 }
 
 /**
- * Evidence for a finding whose context names earlier steps, or undefined
- * for a single-event finding. The current event is the last step.
+ * Evidence for a finding whose context names earlier steps, or a first-seen
+ * destination; undefined for any other single-event finding. The current
+ * event is the last step.
  */
 export function buildEvidence(
   rule: RuleDefinition,
   event: ToolInvokedEvent,
   context: MatchContext,
 ): FindingEvidence | undefined {
-  const earlier = context.sequence_steps;
-  if (!earlier?.length) return undefined;
+  const earlier = context.sequence_steps ?? [];
+  if (!earlier.length && !context.first_seen_destination) return undefined;
   const { sequence_steps: _, sequence_role: role = "sink", sequence_credential: credential, ...own } = context;
   const destination = evidenceDestination(event);
   return {

@@ -570,7 +570,7 @@ export interface RiskFinding {
   tier: "community" | "advanced";
   /** Earlier events a sequence rule matched, in addition to the current one. */
   related_event_ids?: string[];
-  /** For a sequence rule: every matched call with its role, ending with the current one. */
+  /** For a sequence rule, every matched call with its role, ending with the current one; for a single call to a first-seen destination, that call. */
   evidence?: import("@omnodex/shared").FindingEvidence;
 }
 

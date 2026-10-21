@@ -276,8 +276,9 @@ export class RuleEngine {
         };
         if (ctx.sequence_steps?.length) {
           finding.related_event_ids = ctx.sequence_steps.map((s) => s.event.tool_call_id);
-          finding.evidence = buildEvidence(rule, event, ctx);
         }
+        const evidence = buildEvidence(rule, event, ctx);
+        if (evidence) finding.evidence = evidence;
         findings.push(finding);
       }
     }
