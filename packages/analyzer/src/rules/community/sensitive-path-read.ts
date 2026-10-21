@@ -19,7 +19,7 @@ import type { RuleDefinition } from "../../types.js";
 
 export const RULE_SENSITIVE_PATH_READ: RuleDefinition = {
   rule_id: "RULE_SENSITIVE_PATH_READ",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -40,6 +40,11 @@ export const RULE_SENSITIVE_PATH_READ: RuleDefinition = {
         { regex: "[/\\\\]\\.aws[/\\\\]credentials", label: "AWS credentials" },
         { regex: "[/\\\\]\\.gcloud[/\\\\]",         label: "GCloud config" },
         { regex: "[/\\\\]\\.kube[/\\\\]config",     label: "Kubernetes config" },
+        // Coding agents' stored logins. The GitHub CLI's hosts.yml is left
+        // out: `gh auth login` writes it as routine, and the rule matches writes.
+        { regex: "[/\\\\]\\.codex[/\\\\]auth\\.json$",               label: "Codex credentials" },
+        { regex: "[/\\\\]\\.claude[/\\\\]\\.credentials\\.json$",  label: "Claude Code credentials" },
+        { regex: "[/\\\\]opencode[/\\\\]auth\\.json$",                label: "OpenCode credentials" },
         { regex: "\\.pem$",                         label: "PEM private key" },
       ],
     },

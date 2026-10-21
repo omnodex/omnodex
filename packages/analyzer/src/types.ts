@@ -189,6 +189,13 @@ export interface CredentialMatchCondition {
    * SQL statement parameters as raw strings, before JSON escaping.
    */
   scope?: CredentialScope;
+  /**
+   * "skip" drops a credential the call sends as authentication (a header or
+   * the URL) when every host the call reaches belongs to the credential's
+   * own service: that is the service being used, not the credential leaving.
+   * Applies with scope "all". Omitted: every credential counts.
+   */
+  provider_auth?: "skip";
 }
 
 export type CredentialScope = "all" | ReadonlyArray<"exec" | "staged" | "target" | "sql">;
@@ -213,9 +220,13 @@ export interface CredentialPattern {
    * "notarealtoken"), vendor documentation example keys, and values without
    * both letters and digits (prose such as "Bearer tokens"). "placeholder"
    * skips only placeholders and variable references, for secrets such as
-   * passwords that can be letters alone. Omitted: every match counts.
+   * passwords that can be letters alone. "prefixed" is for vendor formats
+   * whose prefix and fixed length already mark a key, some of which are
+   * letters alone: it skips placeholders by their words, runs and
+   * references, and documentation keys, but not identifier-like values.
+   * Omitted: every match counts.
    */
-  check?: "secret" | "placeholder";
+  check?: "secret" | "placeholder" | "prefixed";
 }
 
 /**
