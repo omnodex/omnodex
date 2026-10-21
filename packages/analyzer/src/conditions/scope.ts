@@ -51,6 +51,9 @@ const WRITE_TOOLS = new Set([
   "write_file",
   "edit_file",
   "apply_patch",
+  "write_to_file",
+  "replace_file_content",
+  "multi_replace_file_content",
 ]);
 
 /**
@@ -74,6 +77,8 @@ const STAGED_TARGETS: readonly RegExp[] = [
   /(?:^|\/)\.github\/workflows\/[^/]+\.ya?ml$/i,
   // Agent configuration: settings, hooks and MCP server lists.
   /(?:^|\/)\.(?:claude|codex|gemini|cursor)\/[^/]*\.(?:json|toml)$/i,
+  /(?:^|\/)\.gemini\/(?:config|antigravity(?:-cli|-ide)?)\/[^/]*\.json$/i,
+  /(?:^|\/)\.agents\/mcp_config\.json$/i,
   /(?:^|\/)\.claude\.json$/i,
   /(?:^|\/)\.?mcp\.json$/i,
   /(?:^|\/)hooks\.json$/i,
@@ -122,7 +127,7 @@ export function extractExecText(event: ToolInvokedEvent): string | null {
   if (!isExecTool(event)) return null;
   const params = (event.parameters ?? {}) as Record<string, unknown>;
   const parts: string[] = [];
-  for (const key of ["command", "cmd", "script", "args", "input"]) {
+  for (const key of ["command", "cmd", "script", "args", "input", "CommandLine"]) {
     const text = asText(params[key]);
     if (text) parts.push(text);
   }
@@ -169,19 +174,25 @@ export function extractStagedContent(event: ToolInvokedEvent): StagedContent[] {
     return patch ? stagedFromPatch(patch) : [];
   }
 
-  const path = ["file_path", "path", "filePath", "filename", "notebook_path"]
+  const path = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile"]
     .map((k) => params[k])
     .find((v): v is string => typeof v === "string");
   if (!path || !isStagedTarget(path)) return [];
 
   const parts: string[] = [];
-  for (const key of ["content", "new_string", "new_source", "text"]) {
+  for (const key of ["content", "new_string", "new_source", "text", "CodeContent", "ReplacementContent"]) {
     const text = asText(params[key]);
     if (text) parts.push(text);
   }
   if (Array.isArray(params.edits)) {
     for (const edit of params.edits) {
       const text = asText((edit as Record<string, unknown> | null)?.new_string);
+      if (text) parts.push(text);
+    }
+  }
+  if (Array.isArray(params.ReplacementChunks)) {
+    for (const chunk of params.ReplacementChunks) {
+      const text = asText((chunk as Record<string, unknown> | null)?.ReplacementContent);
       if (text) parts.push(text);
     }
   }

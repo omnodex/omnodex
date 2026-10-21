@@ -41,8 +41,8 @@ export function extractPaths(event: ToolInvokedEvent): string[] {
   const paths: string[] = [];
 
   // Standard parameter keys across builtin and MCP filesystem tools.
-  // Standard keys (Claude Code, Codex) + Antigravity keys (DirectoryPath, Cwd, CommandLine)
-  for (const key of ["file_path", "path", "filePath", "filename", "pattern", "DirectoryPath", "directory_path"]) {
+  // Standard keys (Claude Code, Codex) and Antigravity file and directory keys.
+  for (const key of ["file_path", "path", "filePath", "filename", "pattern", "DirectoryPath", "directory_path", "TargetFile", "AbsolutePath"]) {
     const val = params[key];
     if (typeof val === "string" && val.length > 0) paths.push(val);
   }

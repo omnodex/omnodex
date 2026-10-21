@@ -18,7 +18,7 @@
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import { extractExecText, isWriteTool, patchTargets } from "./scope.js";
 
-const PATH_KEYS = ["file_path", "path", "filePath", "filename", "notebook_path"];
+const PATH_KEYS = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile"];
 
 function unquote(token: string): string {
   return token.replace(/^['"]|['"]$/g, "");
