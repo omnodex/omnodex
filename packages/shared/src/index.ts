@@ -393,13 +393,38 @@ export interface EvidenceCredential {
 }
 
 /**
+ * How an MCP server changed, on a drift finding: the structured form of
+ * what its description says, so a dashboard or digest can group and link
+ * it without parsing text. Tool names only; descriptions stay local.
+ */
+export interface EvidenceDrift {
+  server: string;
+  transport: "stdio" | "http";
+  /** Which drift rule's kind of change: an update, tools added or removed, or a tool definition changed. */
+  change: "updated" | "tools" | "definition";
+  /** The change was announced while the server was in use. */
+  mid_session: boolean;
+  reported_version?: { from: string; to: string };
+  installed_version?: { from: string; to: string };
+  config_changed: boolean;
+  tools_added: string[];
+  tools_removed: string[];
+  tools_changed: string[];
+}
+
+/**
  * The calls behind a finding and how they connect. Carried on findings from
  * rules that match a sequence of calls. It names credentials by kind only:
  * a credential's value is never part of it.
  */
 export interface FindingEvidence {
-  /** The calls in order, ending with the one the finding is anchored on. */
+  /**
+   * The calls in order, ending with the one the finding is anchored on.
+   * Empty on a drift finding, which has no call behind it.
+   */
   steps: EvidenceStep[];
+  /** On a drift finding: how the MCP server changed. */
+  drift?: EvidenceDrift;
   /** Where the sink call went, when it reached an external host. */
   destination?: EvidenceDestination;
   credential?: EvidenceCredential;

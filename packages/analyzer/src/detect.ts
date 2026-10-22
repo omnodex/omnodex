@@ -56,7 +56,7 @@ export function detectRisks(
 
   const newEvents = [];
   for (const e of events) {
-    if (e.event_type === "session.started" || e.event_type === "tool.invoked") {
+    if (e.event_type === "session.started" || e.event_type === "tool.invoked" || e.event_type === "server.observed") {
       newEvents.push(...evaluator.evaluate(e));
     }
   }

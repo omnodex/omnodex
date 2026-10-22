@@ -78,6 +78,11 @@ import {
 import { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 import { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
 import { RULE_CWD_BOUNDARY_WRITE } from "./community/cwd-boundary.js";
+import {
+  RULE_MCP_SERVER_UPDATED,
+  RULE_MCP_SERVER_TOOLS_CHANGED,
+  RULE_MCP_TOOL_DEFINITION_CHANGED,
+} from "./community/server-drift.js";
 
 export { RULE_SENSITIVE_PATH_READ } from "./community/sensitive-path-read.js";
 export {
@@ -139,6 +144,11 @@ export {
 export { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 export { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
 export { RULE_CWD_BOUNDARY_WRITE } from "./community/cwd-boundary.js";
+export {
+  RULE_MCP_SERVER_UPDATED,
+  RULE_MCP_SERVER_TOOLS_CHANGED,
+  RULE_MCP_TOOL_DEFINITION_CHANGED,
+} from "./community/server-drift.js";
 
 /** All community-tier rules. Extend this array when adding new rules. */
 export const COMMUNITY_RULES: RuleDefinition[] = [
@@ -191,4 +201,8 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   RULE_THREAT_API_BASE_URL_OVERRIDE,
   // Working-directory boundary
   RULE_CWD_BOUNDARY_WRITE,
+  // MCP server and tool drift
+  RULE_MCP_SERVER_UPDATED,
+  RULE_MCP_SERVER_TOOLS_CHANGED,
+  RULE_MCP_TOOL_DEFINITION_CHANGED,
 ];
