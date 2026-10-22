@@ -25,7 +25,7 @@ async function start(t, upstreams, connection = {}, cached = new Map()) {
   } });
   pool.start(config);
   const [clientTransport, transport] = InMemoryTransport.createLinkedPair();
-  const startedAt = Date.now();
+  const startedAt = performance.now();
   const done = runProxyServer({ pool, config, emit: () => undefined, sessionId: "cold-discovery",
     projectPath: "/home/case/project", transport });
   const client = new Client({ name: "discovery-test", version: "1" }, {});
@@ -39,16 +39,16 @@ async function start(t, upstreams, connection = {}, cached = new Map()) {
 
 test("an uncached upstream starting in 25 seconds appears in the first list", { timeout: 45000 }, async (t) => {
   const proxy = await start(t, [upstream("cold", 25000)]);
-  const began = Date.now();
+  const began = performance.now();
   assert.ok((await proxy.names()).includes("cold__ping"));
-  assert.ok(Date.now() - began < 40000, "return once connected rather than waiting out 45 seconds");
+  assert.ok(performance.now() - began < 40000, "return once connected rather than waiting out 45 seconds");
   assert.equal((await proxy.status()).warnings, undefined);
 });
 
 test("a 60-second cold start stops listing at 45 seconds and reports restart guidance", { timeout: 95000 }, async (t) => {
   const proxy = await start(t, [upstream("late", 60000)]);
   assert.equal((await proxy.names()).includes("late__ping"), false);
-  const elapsed = Date.now() - proxy.startedAt;
+  const elapsed = performance.now() - proxy.startedAt;
   assert.ok(elapsed >= 44000 && elapsed < 49000, `expected the 45-second ceiling, got ${elapsed}ms`);
   const warningLines = () => proxy.stderr.filter((line) => /late.*restart the agent app/i.test(line));
   assert.equal(warningLines().length, 1);
@@ -64,18 +64,18 @@ test("a 60-second cold start stops listing at 45 seconds and reports restart gui
 test("a cached upstream is listed immediately even with a long cold-start window", async (t) => {
   const cached = new Map([["cached", [{ name: "ping", inputSchema: { type: "object" } }]]]);
   const proxy = await start(t, [upstream("cached", 1200)], {}, cached);
-  const began = Date.now();
+  const began = performance.now();
   assert.ok((await proxy.names()).includes("cached__ping"));
-  assert.ok(Date.now() - began < 800);
+  assert.ok(performance.now() - began < 800);
   await proxy.pool.waitForInitialAttempts(5000);
   assert.equal((await proxy.status()).warnings, undefined);
 });
 
 test("a failed uncached upstream returns at its first failure without awaiting retry", async (t) => {
   const proxy = await start(t, [upstream("broken", 0, { MOCK_FAIL_STARTUP: "1" })]);
-  const began = Date.now();
+  const began = performance.now();
   assert.equal((await proxy.names()).includes("broken__ping"), false);
-  assert.ok(Date.now() - began < 3000);
+  assert.ok(performance.now() - began < 3000);
   assert.equal(proxy.pool.getUpstreamStatuses()[0].state, "failed");
 });
 
@@ -84,9 +84,9 @@ test("a short uncached override expires from proxy start and does not delay late
     discovery_window_ms: 10, discovery_window_uncached_ms: 500,
   });
   assert.equal((await proxy.names()).includes("late__ping"), false);
-  assert.ok(Date.now() - proxy.startedAt >= 400);
+  assert.ok(performance.now() - proxy.startedAt >= 400);
   assert.equal((await proxy.names()).includes("late__ping"), false);
-  assert.ok(Date.now() - proxy.startedAt < 1000, "the second request gets no new window");
+  assert.ok(performance.now() - proxy.startedAt < 1000, "the second request gets no new window");
   assert.equal(proxy.stderr.filter((line) => /restart the agent app/i.test(line)).length, 1);
   await proxy.pool.waitForInitialAttempts(5000);
 });

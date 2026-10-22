@@ -390,11 +390,11 @@ export class UpstreamClientPool {
    * from this call; a settled first attempt never waits for its retries.
    */
   async waitForDiscovery(timeoutMs: number, uncachedTimeoutMs = timeoutMs): Promise<void> {
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     const pending = this.entries.filter((e) => !e.knownFromCache).map((e) => e.firstAttempt);
     const settled = Promise.all(pending);
     await raceTimeout(settled, Math.min(timeoutMs, uncachedTimeoutMs));
-    await raceTimeout(settled, Math.max(0, uncachedTimeoutMs - (Date.now() - startedAt)));
+    await raceTimeout(settled, Math.max(0, uncachedTimeoutMs - (performance.now() - startedAt)));
   }
 
   /** Upstreams still connecting without any tool list to offer the agent. */
