@@ -22,6 +22,9 @@ import { serializeReadModel, PAYLOAD_FIELDS } from "../dist/index.js";
  *   5. A finding's tier, sequence and evidence survive projection, SQLite
  *      and serialization: hosted gates advanced findings and groups
  *      findings into investigations from them.
+ *   6. A session's git remote survives projection, SQLite and
+ *      serialization, and a later session.started without one keeps it:
+ *      hosted matches one project across machines by it.
  */
 
 const AT = "2026-09-29T12:00:00.000Z";
@@ -104,6 +107,7 @@ test("the payload allowlist is exactly these fields", () => {
       "started_at", "ended_at", "duration_ms", "status",
       "tool_call_count", "file_read_count", "file_write_count", "risk_score",
       "last_event_at", "source_root", "platform", "mcp_client_name", "title",
+      "project_remote",
     ],
     tool_calls: [
       "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
@@ -287,4 +291,20 @@ test("prompts, subagents and a subagent's tool calls reach the payload; other se
   assert.equal("sess_plain" in payload.prompts, false);
   assert.equal("sess_plain" in payload.subagents, false);
   assert.equal("agent_id" in payload.tool_calls.sess_plain.concat([{}])[0], false);
+});
+
+test("a session's git remote survives SQLite and serialization, and a later start without one keeps it", async (t) => {
+  const store = await sqliteStore(t);
+  await project(store, [{ ...START, project_remote: "github.com/case/repo" }, INVOKED]);
+  // A second session.started (a resumed session) from a folder with no remote.
+  await project(store, [{ ...START, event_id: "e_start_again" }]);
+
+  const payload = await serializeReadModel(store);
+  assert.equal(payload.sessions[0].project_remote, "github.com/case/repo");
+});
+
+test("a session with no git remote has no project_remote in the payload", async () => {
+  const store = await project(new InMemoryReadModelStore(), [START, INVOKED]);
+  const payload = await serializeReadModel(store);
+  assert.ok(!("project_remote" in payload.sessions[0]));
 });

@@ -75,6 +75,9 @@ export class InMemoryReadModelStore implements ReadModelStore {
         ? { mcp_client_name: row.mcp_client_name ?? existing.mcp_client_name }
         : {}),
       ...(row.title ?? existing.title ? { title: row.title ?? existing.title } : {}),
+      ...(row.project_remote ?? existing.project_remote
+        ? { project_remote: row.project_remote ?? existing.project_remote }
+        : {}),
       tool_call_count: existing.tool_call_count,
       file_read_count: existing.file_read_count,
       file_write_count: existing.file_write_count,

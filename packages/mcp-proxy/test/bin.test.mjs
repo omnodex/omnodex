@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as url from "node:url";
@@ -69,7 +69,14 @@ test("closing stdin ends the session after the calls and exits the process, labe
       })
     );
 
-    const env = { ...process.env, OMNODEX_HOME: home };
+    // A project in a repository, so session.started records its origin
+    // remote. Named by OMNODEX_PROJECT_PATH, not cwd: on Windows a child the
+    // proxy leaves running would hold a cwd folder open past cleanup.
+    const repo = path.join(home, "repo");
+    await mkdir(path.join(repo, ".git"), { recursive: true });
+    await writeFile(path.join(repo, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:case/repo.git\n');
+
+    const env = { ...process.env, OMNODEX_HOME: home, OMNODEX_PROJECT_PATH: repo };
     delete env.OMNODEX_PLATFORM;
     child = spawn(process.execPath, [BIN, "--config", configPath, "--platform", "cowork"], {
       env,
@@ -108,6 +115,7 @@ test("closing stdin ends the session after the calls and exits the process, labe
     // The client as it named itself, and the runtime the plugin declared.
     assert.equal(types[0], "session.started");
     assert.deepEqual(events[0].mcp_client, { name: "bin-test", version: "0.0.0" });
+    assert.equal(events[0].project_remote, "github.com/case/repo");
     for (const e of events) assert.equal(e.platform, "cowork", `${e.event_type} carries the platform`);
   } finally {
     // Kill a proxy that failed to exit (and its upstream) so the runner does not hang.

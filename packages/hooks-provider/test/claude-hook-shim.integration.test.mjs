@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, rm, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readFile, readdir, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -126,6 +126,29 @@ test("shim writes SessionStart and PostToolUse events to the event log", async (
 
   assert.equal(events[3].event_type, "session.ended");
   assert.equal(events[3].status, "completed");
+});
+
+test("shim records the project's git origin remote on session.started", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-remote-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const repo = path.join(home, "work", "repo");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  await writeFile(
+    path.join(repo, ".git", "config"),
+    '[remote "origin"]\n\turl = https://case:secret@github.com/case/repo.git\n',
+    "utf8",
+  );
+
+  const session_id = "integration-sess-remote";
+  const res = await runShim(
+    { session_id, cwd: repo, hook_event_name: "SessionStart", user: "case" },
+    { OMNODEX_HOME: home },
+  );
+  assert.equal(res.code, 0, `SessionStart stderr: ${res.stderr}`);
+
+  const [start] = await readSessionLog(home, session_id);
+  assert.equal(start.event_type, "session.started");
+  assert.equal(start.project_remote, "github.com/case/repo");
 });
 
 test("shim exits 0 and stays silent on malformed stdin", async () => {

@@ -94,6 +94,8 @@ export function buildSessionStartedEvent(fields: {
   platform?: PlatformKind;
   /** The MCP client, as it named itself in initialize. */
   mcpClient?: { name: string; version?: string };
+  /** The project's normalized git `origin` remote, when it has one. */
+  projectRemote?: string;
 }): SessionStartedEvent {
   return {
     schema_version: SCHEMA_VERSION,
@@ -109,6 +111,7 @@ export function buildSessionStartedEvent(fields: {
     mcp_server_transports: fields.servers,
     ...(fields.platform ? { platform: fields.platform } : {}),
     ...(fields.mcpClient ? { mcp_client: fields.mcpClient } : {}),
+    ...(fields.projectRemote ? { project_remote: fields.projectRemote } : {}),
   };
 }
 

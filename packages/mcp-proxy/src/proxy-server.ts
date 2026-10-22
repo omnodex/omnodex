@@ -34,6 +34,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { type EmitFn, type PlatformKind } from "@omnodex/shared";
+import { readProjectRemote } from "@omnodex/event-log";
 import {
   type UpstreamClientPool,
   McpUpstreamUnavailableError,
@@ -180,6 +181,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         ? { name: client.name, ...(client.version ? { version: client.version } : {}) }
         : undefined;
       platform = platformForClient(client?.name) ?? platform;
+      const projectRemote = await readProjectRemote(projectPath);
       await emit(buildSessionStartedEvent({
         sessionId,
         at: sessionStart,
@@ -192,6 +194,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         ),
         platform,
         mcpClient,
+        projectRemote,
       }));
       // What each upstream that has already listed its tools looked like.
       // Upstreams that list later are recorded as they do (below).
