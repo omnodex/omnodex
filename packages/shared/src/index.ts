@@ -246,6 +246,43 @@ export interface McpServerTransport {
   host?: string;
 }
 
+/**
+ * What an MCP server looked like when the proxy received its tool list: at
+ * connect, or after the server announced a change (tools/list_changed). The
+ * proxy writes one per server per session, and another whenever the list
+ * changes, so comparing a server's observations shows when it changed.
+ *
+ * Fingerprints are hashes of local data. Tool descriptions and schemas are
+ * not in the event; the proxy keeps the full lists on the machine, found by
+ * tool_list_fingerprint, for a before-and-after view.
+ */
+export interface ServerObservedEvent extends BaseEvent {
+  event_type: "server.observed";
+  /** The server's configured name, as tool.invoked names it. */
+  mcp_server: string;
+  transport: "stdio" | "http";
+  /** connect: listed when the server connected. list_changed: listed again after the server announced a change. */
+  trigger: "connect" | "list_changed";
+  /**
+   * Hash of the server's configuration entry: command, arguments and
+   * working directory, or URL; and the names, never the values, of its
+   * environment variables and headers.
+   */
+  config_fingerprint: string;
+  /** The server's own name and version from the MCP initialize handshake. */
+  reported?: { name: string; version?: string };
+  /**
+   * The version of the package actually installed, when the proxy can read
+   * it (an npx server's package in the npx cache). Unlike the reported
+   * version, the server cannot choose it.
+   */
+  installed_version?: string;
+  /** Hash of every tool's fingerprint, sorted: one comparison for the whole list. */
+  tool_list_fingerprint: string;
+  /** Each tool's name, and a hash of its name, description and input schema. */
+  tools: { name: string; fingerprint: string }[];
+}
+
 export interface SessionEndedEvent extends BaseEvent {
   event_type: "session.ended";
   duration_ms: number;
@@ -864,7 +901,8 @@ export type TraceEvent =
   | RuleUpdatedEvent
   | CapturePausedEvent
   | CaptureResumedEvent
-  | MonitoringChangedEvent;
+  | MonitoringChangedEvent
+  | ServerObservedEvent;
 
 export type EventType = TraceEvent["event_type"];
 

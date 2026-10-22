@@ -18,6 +18,9 @@
  *      with a doubling delay, and reporting changes to the connected set
  *   6. Offering each upstream's last known tools (tool-cache.ts) while it is
  *      not connected, so a slow start does not hide them from the agent
+ *   7. Listing an upstream's tools again when it announces a change
+ *      (tools/list_changed), and recording what each upstream looked like
+ *      every time it listed them (server-observation.ts)
  *
  * Upstreams are independent: they connect in parallel, and one that is slow,
  * fails to start, or dies later never affects the others.
@@ -37,7 +40,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import { ToolListChangedNotificationSchema, type Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
   type ProxyConfig,
   type UpstreamConnectionSettings,
@@ -51,6 +54,12 @@ import {
 } from "./config.js";
 import { prefixedToolName, prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
 import type { ToolListCache } from "./tool-cache.js";
+import {
+  npxInstalledVersion,
+  observeServer,
+  type ServerObservation,
+  type ToolListSnapshots,
+} from "./server-observation.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -160,6 +169,8 @@ class UpstreamConnection {
   async discoverTools(options?: RequestOptions): Promise<PrefixedTool[]> {
     const result = await this.client.listTools(undefined, options);
     const prefixed: PrefixedTool[] = [];
+    // A new list replaces the old one: a tool the upstream dropped goes.
+    this.toolMap.clear();
 
     for (const tool of result.tools) {
       this.toolMap.set(tool.name, tool);
@@ -191,6 +202,11 @@ class UpstreamConnection {
         : {}),
       isError: result.isError === true,
     };
+  }
+
+  /** The upstream's name and version from the initialize handshake. */
+  serverVersion(): { name?: string; version?: string } | undefined {
+    return this.client.getServerVersion();
   }
 
   async close(): Promise<void> {
@@ -243,6 +259,8 @@ interface UpstreamEntry {
   retriesExhausted: boolean;
   /** Credential values in use for this upstream, scrubbed from errors. */
   secrets: string[];
+  /** What the upstream looked like the last time it listed its tools. */
+  observation: ServerObservation | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,11 +290,17 @@ export interface UpstreamClientPoolOptions {
    * core/tool-routing). No limit by default.
    */
   toolNameLimit?: number;
+  /** Where each observed tool list is kept for a before-and-after view. None by default. */
+  snapshots?: ToolListSnapshots;
+  /** Reads the installed package version of an upstream. Defaults to the npx cache. */
+  installedVersion?: (server: UpstreamServer) => string | undefined;
 }
 
 export class UpstreamClientPool {
   private readonly toolCache: ToolListCache | undefined;
   private readonly toolNameLimit: number | undefined;
+  private readonly snapshots: ToolListSnapshots | undefined;
+  private readonly installedVersion: (server: UpstreamServer) => string | undefined;
   private readonly entries: UpstreamEntry[] = [];
   /** prefixedName -> connection that owns it */
   private toolIndex = new Map<string, UpstreamConnection>();
@@ -291,10 +315,13 @@ export class UpstreamClientPool {
   private closed = false;
   private readonly toolsChangedListeners = new Set<() => void>();
   private readonly exhaustedListeners = new Set<(status: UpstreamStatus) => void>();
+  private readonly observedListeners = new Set<(observation: ServerObservation) => void>();
 
   constructor(options?: UpstreamClientPoolOptions) {
     this.toolCache = options?.toolCache;
     this.toolNameLimit = options?.toolNameLimit;
+    this.snapshots = options?.snapshots;
+    this.installedVersion = options?.installedVersion ?? ((server) => npxInstalledVersion(server));
   }
 
   /**
@@ -330,6 +357,7 @@ export class UpstreamClientPool {
         retryTimer: undefined,
         retriesExhausted: false,
         secrets: [],
+        observation: undefined,
       });
     }
     for (const entry of this.entries) entry.firstAttempt = this.attempt(entry);
@@ -393,6 +421,21 @@ export class UpstreamClientPool {
   onRetriesExhausted(listener: (status: UpstreamStatus) => void): () => void {
     this.exhaustedListeners.add(listener);
     return () => this.exhaustedListeners.delete(listener);
+  }
+
+  /**
+   * Registers a listener called each time an upstream lists its tools: when
+   * it connects, and when it lists them again after announcing a change.
+   * Returns a function that removes it.
+   */
+  onServerObserved(listener: (observation: ServerObservation) => void): () => void {
+    this.observedListeners.add(listener);
+    return () => this.observedListeners.delete(listener);
+  }
+
+  /** The latest observation of each connected upstream, in config order. */
+  getServerObservations(): ServerObservation[] {
+    return this.entries.flatMap((e) => (e.connection && e.observation ? [e.observation] : []));
   }
 
   /** Returns the tools of the connected upstreams. */
@@ -576,6 +619,9 @@ export class UpstreamClientPool {
       await client.connect(this.createTransport(entry), options);
       const connection = new UpstreamConnection(entry.server, client, this.toolNameLimit);
       client.onclose = () => this.handleDisconnect(entry, connection);
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () =>
+        this.handleToolsChanged(entry, connection)
+      );
       const tools = await connection.discoverTools(options);
 
       if (this.closed) {
@@ -592,6 +638,7 @@ export class UpstreamClientPool {
       entry.lastError = null;
       entry.retriesExhausted = false;
       this.rebuildToolIndex();
+      this.observe(entry, connection, "connect");
     } catch (err) {
       // Closing the client also stops a subprocess that started but did not
       // finish the handshake in time.
@@ -604,6 +651,54 @@ export class UpstreamClientPool {
         this.recordFailure(entry, message);
       }
     }
+  }
+
+  /**
+   * The upstream announced that its tools changed: list them again, offer
+   * the new list, and record the observation. A failure leaves the previous
+   * list in place; the connection's own close handling covers a dead
+   * upstream.
+   */
+  private async handleToolsChanged(entry: UpstreamEntry, connection: UpstreamConnection): Promise<void> {
+    if (this.closed || entry.connection !== connection) return;
+    try {
+      const tools = await connection.discoverTools({ timeout: this.settings.connect_timeout_ms });
+      if (this.closed || entry.connection !== connection) return;
+      entry.tools = tools;
+      this.rememberTools(entry, connection);
+      this.rebuildToolIndex();
+      this.observe(entry, connection, "list_changed");
+    } catch (err) {
+      process.stderr.write(
+        `[omnodex-mcp-proxy] upstream "${entry.server.name}" announced new tools ` +
+          `but listing them failed: ${this.cleanError(entry, err)}\n`
+      );
+    }
+  }
+
+  /** Records what the upstream looks like now, keeps its list, and tells listeners. */
+  private observe(
+    entry: UpstreamEntry,
+    connection: UpstreamConnection,
+    trigger: ServerObservation["trigger"]
+  ): void {
+    let installedVersion: string | undefined;
+    try {
+      installedVersion = this.installedVersion(entry.server);
+    } catch {
+      installedVersion = undefined;
+    }
+    const listed = connection.listedTools();
+    const observation = observeServer({
+      server: entry.server,
+      trigger,
+      tools: listed,
+      reported: connection.serverVersion(),
+      ...(installedVersion ? { installedVersion } : {}),
+    });
+    entry.observation = observation;
+    this.snapshots?.save(observation.toolListFingerprint, entry.server.name, listed);
+    for (const listener of this.observedListeners) listener(observation);
   }
 
   /** Keeps the upstream's fresh tool list to offer if it goes away, and caches it. */

@@ -18,6 +18,10 @@
  *   MOCK_STARTUP_DELAY_MS  wait this long before speaking MCP
  *   MOCK_EXIT_AFTER_MS  exit this long after connecting (simulates a crash)
  *   MOCK_CALL_LOG       append each called tool's name to this file
+ *   MOCK_SERVER_VERSION reported in serverInfo (default: "0.0.0")
+ *   MOCK_ADD_TOOL       name of a tool to add after connecting, which
+ *                       announces tools/list_changed
+ *   MOCK_ADD_TOOL_AFTER_MS  wait this long after connecting before adding it
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -57,7 +61,7 @@ try {
   tools = defaultTools;
 }
 
-const server = new McpServer({ name, version: "0.0.0" });
+const server = new McpServer({ name, version: process.env.MOCK_SERVER_VERSION ?? "0.0.0" });
 
 for (const toolName of tools) {
   if (structured) {
@@ -99,6 +103,15 @@ for (const toolName of tools) {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+const addTool = process.env.MOCK_ADD_TOOL;
+if (addTool) {
+  setTimeout(() => {
+    server.tool(addTool, `Mock tool: ${addTool}`, { input: z.string().optional() }, async () => ({
+      content: [{ type: "text", text: `${resultText}:${addTool}:` }],
+    }));
+  }, Number(process.env.MOCK_ADD_TOOL_AFTER_MS ?? 100));
+}
 
 const exitAfterMs = Number(process.env.MOCK_EXIT_AFTER_MS ?? 0);
 if (exitAfterMs > 0) {
