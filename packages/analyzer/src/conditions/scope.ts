@@ -186,7 +186,8 @@ export function extractStagedContent(event: ToolInvokedEvent): StagedContent[] {
   }
   if (Array.isArray(params.edits)) {
     for (const edit of params.edits) {
-      const text = asText((edit as Record<string, unknown> | null)?.new_string);
+      const fields = edit as Record<string, unknown> | null;
+      const text = asText(fields?.new_string) ?? asText(fields?.newText);
       if (text) parts.push(text);
     }
   }
