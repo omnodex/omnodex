@@ -43,7 +43,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { applyCapturePause, EventLog, isPauseMarker, newEventId } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, withProjectRemote } from "@omnodex/event-log";
 import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
@@ -206,10 +206,11 @@ async function main(): Promise<number> {
     }
 
     const options = { newEventId, emitSessionStart: firstActivity, sessionStartedAt: session?.startedAt };
-    const events = mapAntigravityPayload(eventName, payload, options, correlation);
+    let events = mapAntigravityPayload(eventName, payload, options, correlation);
     if (firstActivity && eventName !== "PreInvocation") {
       events.unshift(...mapAntigravityPayload("PreInvocation", payload, options));
     }
+    events = await withProjectRemote(events);
     if (events.length === 0) {
       if (debug)
         console.error(

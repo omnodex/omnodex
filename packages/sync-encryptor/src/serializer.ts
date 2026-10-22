@@ -53,6 +53,10 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * sessions.title: the session list names a session by its title when one
  * was recorded, rather than by its project folder.
  *
+ * sessions.project_remote: the project's normalized git origin remote, so
+ * the hosted dashboard can treat one repository as one project across
+ * machines whatever its folder is called there.
+ *
  * tool_calls.agent_id, prompts, subagents: the session view shows what the
  * session was asked, which subagents it ran, and which calls each made.
  * Prompt text travels only inside the encrypted payload, as tool parameters
@@ -81,6 +85,7 @@ export const PAYLOAD_FIELDS = {
     "started_at", "ended_at", "duration_ms", "status",
     "tool_call_count", "file_read_count", "file_write_count", "risk_score",
     "last_event_at", "source_root", "platform", "mcp_client_name", "title",
+    "project_remote",
   ],
   tool_calls: [
     "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",

@@ -60,6 +60,12 @@ export interface SessionRow {
    * none was recorded. In the sync payload, for the hosted session list.
    */
   title?: string;
+  /**
+   * The project's normalized git `origin` remote, from session.started.
+   * Absent when the folder has none, and for older rows. In the sync
+   * payload, so the hosted dashboard can match one project across machines.
+   */
+  project_remote?: string;
 }
 
 export interface ToolCallRow {

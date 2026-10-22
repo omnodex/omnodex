@@ -238,6 +238,15 @@ export interface SessionStartedEvent extends BaseEvent {
    * initialize handshake (clientInfo). Only the proxy records it.
    */
   mcp_client?: { name: string; version?: string };
+  /**
+   * The project's git `origin` remote, normalized to `host/owner/repo`
+   * (scheme, credentials, port and `.git` dropped; ssh and https forms of
+   * one repo read the same). It names the project the same way on every
+   * machine, whatever its folder is called. Absent when the working
+   * directory is not in a repository, has no `origin`, or `origin` is a
+   * local path.
+   */
+  project_remote?: string;
 }
 
 export interface McpServerTransport {

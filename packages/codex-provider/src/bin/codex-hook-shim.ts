@@ -38,7 +38,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
-import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
 import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
@@ -129,7 +129,7 @@ async function main(): Promise<number> {
       }
     }
 
-    const events = mapCodexPayload(payload, { newEventId });
+    const events = await withProjectRemote(mapCodexPayload(payload, { newEventId }));
     // Codex keeps thread names in its session index; record one when it changes.
     if (TITLE_HOOKS.has(payload.hook_event_name)) {
       const renamed = await sessionRenamedIfChanged(

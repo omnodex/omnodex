@@ -304,6 +304,12 @@ export {
 } from "./session-title.js";
 export type { FoundTitle, SessionRenamedOptions, TitleSource } from "./session-title.js";
 export {
+  normalizeGitRemote,
+  originUrlFromConfig,
+  readProjectRemote,
+  withProjectRemote,
+} from "./project-remote.js";
+export {
   PAUSABLE_KINDS,
   PAUSE_STATE_FILE,
   activePauses,

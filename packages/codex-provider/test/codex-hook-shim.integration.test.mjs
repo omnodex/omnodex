@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, readdir, readFile, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -71,6 +71,17 @@ test("shim writes session.started for SessionStart payload", async (t) => {
   assert.equal(events[0].event_type, "session.started");
   assert.equal(events[0].session_id, "s-shim-1");
   assert.equal(events[0].interceptor, "codex-hook");
+});
+
+test("shim records the project's git origin remote on session.started", async (t) => {
+  const home = await fresh(t);
+  const repo = path.join(home, "repo");
+  await mkdir(path.join(repo, ".git"), { recursive: true });
+  await writeFile(path.join(repo, ".git", "config"), '[remote "origin"]\n\turl = https://github.com/case/repo.git\n');
+  const { code } = await runShim(home, { session_id: "s-shim-remote", cwd: repo, hook_event_name: "SessionStart", source: "startup" });
+  assert.equal(code, 0);
+  const [start] = await readEvents(home);
+  assert.equal(start.project_remote, "github.com/case/repo");
 });
 
 test("shim writes tool.invoked for PreToolUse payload", async (t) => {

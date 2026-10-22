@@ -129,3 +129,14 @@ test("installed command executes in this host's shell and records a completed ca
   assert.deepEqual(JSON.parse(result.stdout), {});
   assert.equal((await loggedEvents(s.home)).filter(e => e.event_type === "tool.completed").length, 1);
 });
+
+test("session.started records the workspace's git origin remote", async (t) => {
+  const s = await scratch(t);
+  const repo = join(s.home, "repo");
+  await mkdir(join(repo, ".git"), { recursive: true });
+  await writeFile(join(repo, ".git", "config"), '[remote "origin"]\n\turl = git@github.com:case/repo.git\n');
+  const result = await runShim(shim, s, { ...common, workspacePaths: [repo], invocationNum: 0, initialNumSteps: 0 }, { args: ["PreInvocation"] });
+  assert.equal(result.code, 0, result.stderr);
+  const [start] = (await loggedEvents(s.home)).filter(e => e.event_type === "session.started");
+  assert.equal(start.project_remote, "github.com/case/repo");
+});
