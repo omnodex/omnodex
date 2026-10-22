@@ -88,8 +88,8 @@ describe("classifyRule", () => {
     RULE_UNBOUNDED_CONSUMPTION_SUSTAINED: "session",
   };
 
-  it("classifies every community rule: 37 event, 2 session, 1 machine", () => {
-    assert.equal(COMMUNITY_RULES.length, 40);
+  it("classifies every community rule: 38 event, 2 session, 1 machine", () => {
+    assert.equal(COMMUNITY_RULES.length, 41);
     for (const rule of COMMUNITY_RULES) {
       assert.equal(classifyRule(rule), STATEFUL[rule.rule_id] ?? "event", rule.rule_id);
     }
@@ -112,7 +112,7 @@ describe("hosts", () => {
   it("runs event-class rules only in the hook host", () => {
     const hook = createEvaluator({ host: "hook", newEventId });
     const ids = hook.rules.map((r) => r.rule_id);
-    assert.equal(ids.length, 37);
+    assert.equal(ids.length, 38);
     assert.ok(!ids.includes("RULE_SUPPLY_CHAIN_NEW_MCP_SERVER"));
     assert.ok(!ids.includes("RULE_UNBOUNDED_CONSUMPTION_BURST"));
     assert.deepEqual(HOST_CLASSES.hook, ["event"]);
@@ -120,12 +120,12 @@ describe("hosts", () => {
 
   it("runs every rule in the proxy and batch hosts", () => {
     for (const host of ["proxy", "batch"]) {
-      assert.equal(createEvaluator({ host, newEventId }).rules.length, 40, host);
+      assert.equal(createEvaluator({ host, newEventId }).rules.length, 41, host);
     }
   });
 
   it("loads the community rules from loadRegistry", () => {
-    assert.equal(loadRegistry("/home/case/.omnodex").getRules().length, 40);
+    assert.equal(loadRegistry("/home/case/.omnodex").getRules().length, 41);
   });
 });
 

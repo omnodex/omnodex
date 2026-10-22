@@ -67,6 +67,7 @@ export function findCredentials(
       if (check === "secret" && !looksLikeSecret(value)) continue;
       if (check === "placeholder" && isPlaceholder(value)) continue;
       if (check === "prefixed" && !looksLikeVendorKey(value)) continue;
+      if (check === "generated" && !looksGenerated(value)) continue;
       if (found.some((c) => c.value === value)) continue;
       found.push({ type, value });
     }
@@ -159,6 +160,42 @@ export function looksLikeVendorKey(value: string): boolean {
 }
 
 /**
+ * Shapes of generated values that are not secrets: git object and sha256
+ * hashes, UUIDs, and package integrity strings.
+ */
+const NOT_SECRET_SHAPES = [
+  /^[0-9a-f]{40}$/i,
+  /^[0-9a-f]{64}$/i,
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+  /^sha(?:1|256|384|512)-/i,
+];
+
+/** Shannon entropy of a string, in bits per character. */
+function entropy(value: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of value) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let bits = 0;
+  for (const n of counts.values()) {
+    const p = n / value.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
+
+/**
+ * True when a value with no vendor format looks machine-made enough to be a
+ * key or token: it passes looksLikeSecret, has at least three bits of
+ * entropy per character, and is not a hash, UUID, integrity string or file
+ * path.
+ */
+export function looksGenerated(value: string): boolean {
+  if (!looksLikeSecret(value)) return false;
+  if (NOT_SECRET_SHAPES.some((re) => re.test(value))) return false;
+  if (/^(?:\.{0,2}\/|~)/.test(value) || /\.[a-z]{2,4}$/i.test(value)) return false;
+  return entropy(value) >= 3;
+}
+
+/**
  * Evaluate a credential_match condition against a tool.invoked event.
  *
  * Returns a single-element array with the matched credential types when
@@ -176,8 +213,10 @@ export function evaluateCredentialMatch(
 ): Partial<MatchContext>[] {
   const scope = condition.scope ?? "all";
   if (scope === "all") {
-    const sightings = findCredentials(JSON.stringify(event.parameters), condition.patterns);
-    return found(condition.provider_auth === "skip" ? withoutProviderAuth(event, sightings) : sightings);
+    let sightings = findCredentials(JSON.stringify(event.parameters), condition.patterns);
+    if (condition.provider_auth === "skip") sightings = withoutProviderAuth(event, sightings);
+    if (condition.report) sightings = sightings.filter((s) => condition.report!.includes(s.type));
+    return found(sightings);
   }
 
   if (scope.includes("sql")) {

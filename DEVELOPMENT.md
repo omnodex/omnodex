@@ -151,35 +151,36 @@ Advanced rules themselves are not in this repository, because it is public and t
 Credential detection:
 1. **RULE_CREDENTIAL_IN_PARAMS** (MEDIUM) - flags tool calls whose parameters contain API keys, Bearer tokens, AI model provider keys (Anthropic, OpenAI, OpenRouter, xAI, Groq, Perplexity, Hugging Face, Google), Stripe keys, GitHub tokens, Slack bot tokens, AWS access keys.
 2. **RULE_CREDENTIAL_EXFIL** (CRITICAL) - flags outbound HTTP/fetch calls that carry credentials to external hosts. A credential sent as authentication to its own service (a GitHub token to api.github.com) does not count.
+3. **RULE_UNRECOGNIZED_SECRET** (LOW) - flags a machine-made value used as a credential that no known format or generic pattern reports: a field or variable named for a secret, key or auth, a credential flag such as `--client-secret`, or a non-Bearer Authorization header. A heuristic, kept separate so it can be muted on its own.
 
 Sensitive file access:
-3. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, coding agents' stored logins (Codex, Claude Code, OpenCode), PEM files, etc.
+4. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, coding agents' stored logins (Codex, Claude Code, OpenCode), PEM files, etc.
 
 Unexpected network destinations:
-4. **RULE_OUTBOUND_KNOWN_IP** (MEDIUM) - calls that name a raw IPv4 or IPv6 address within known cloud provider CIDR ranges (AWS, GCP, Azure IPv4, Cloudflare, Fastly).
-5. **RULE_OUTBOUND_UNKNOWN_IP** (HIGH) - calls that name a raw IPv4 or IPv6 address outside all known CIDR ranges, labeled as an unknown public host, a private network or link-local address, or a cloud metadata service; possible C2 callback, exfiltration, internal network access, or supply chain compromise. Both rules also read an address nested percent-encoded in another URL's query.
+5. **RULE_OUTBOUND_KNOWN_IP** (MEDIUM) - calls that name a raw IPv4 or IPv6 address within known cloud provider CIDR ranges (AWS, GCP, Azure IPv4, Cloudflare, Fastly).
+6. **RULE_OUTBOUND_UNKNOWN_IP** (HIGH) - calls that name a raw IPv4 or IPv6 address outside all known CIDR ranges, labeled as an unknown public host, a private network or link-local address, or a cloud metadata service; possible C2 callback, exfiltration, internal network access, or supply chain compromise. Both rules also read an address nested percent-encoded in another URL's query.
 
 Wallet and key material:
-6. **RULE_WALLET_CLI_DETECTED** (HIGH) - bash commands invoking known wallet key-generation CLIs (solana-keygen, ethkey, bitcoin-cli, etc.).
-7. **RULE_PRIVATE_KEY_MATERIAL** (HIGH) - 256-bit hex private key patterns in labeled context.
-8. **RULE_MNEMONIC_PHRASE** (HIGH) - BIP-39 mnemonic seed phrases (12+ lowercase words after a seed/mnemonic label).
+7. **RULE_WALLET_CLI_DETECTED** (HIGH) - bash commands invoking known wallet key-generation CLIs (solana-keygen, ethkey, bitcoin-cli, etc.).
+8. **RULE_PRIVATE_KEY_MATERIAL** (HIGH) - 256-bit hex private key patterns in labeled context.
+9. **RULE_MNEMONIC_PHRASE** (HIGH) - BIP-39 mnemonic seed phrases (12+ lowercase words after a seed/mnemonic label).
 
 Supply chain:
-9. **RULE_SUPPLY_CHAIN_TOOL_SHADOW** (HIGH) - tool name collisions that could shadow legitimate tools.
-10. **RULE_SUPPLY_CHAIN_NEW_MCP_SERVER** (LOW) - new MCP server registrations.
-11. **RULE_SUPPLY_CHAIN_SKILL_MANIPULATION** (HIGH) - writes to skill files or plugin manifests.
-12. **RULE_SUPPLY_CHAIN_DEP_CONFUSION** (MEDIUM) - dependency confusion patterns in package installs.
-13. **RULE_SUPPLY_CHAIN_HOOK_CONFIG_WRITE** (HIGH) - writes to hook configuration files.
-14. **RULE_SUPPLY_CHAIN_MCP_URL_MUTATION** (HIGH) - mutations to MCP server URLs or endpoints.
-15. **RULE_SUPPLY_CHAIN_PKG_CONFIG_WRITE** (HIGH) - writes to package manager config files.
-16. **RULE_SUPPLY_CHAIN_WORKSPACE_CONFIG_ACCESS** (MEDIUM) - access to workspace configuration files.
+10. **RULE_SUPPLY_CHAIN_TOOL_SHADOW** (HIGH) - tool name collisions that could shadow legitimate tools.
+11. **RULE_SUPPLY_CHAIN_NEW_MCP_SERVER** (LOW) - new MCP server registrations.
+12. **RULE_SUPPLY_CHAIN_SKILL_MANIPULATION** (HIGH) - writes to skill files or plugin manifests.
+13. **RULE_SUPPLY_CHAIN_DEP_CONFUSION** (MEDIUM) - dependency confusion patterns in package installs.
+14. **RULE_SUPPLY_CHAIN_HOOK_CONFIG_WRITE** (HIGH) - writes to hook configuration files.
+15. **RULE_SUPPLY_CHAIN_MCP_URL_MUTATION** (HIGH) - mutations to MCP server URLs or endpoints.
+16. **RULE_SUPPLY_CHAIN_PKG_CONFIG_WRITE** (HIGH) - writes to package manager config files.
+17. **RULE_SUPPLY_CHAIN_WORKSPACE_CONFIG_ACCESS** (MEDIUM) - access to workspace configuration files.
 
 Unbounded consumption:
-17. **RULE_UNBOUNDED_CONSUMPTION_BURST** (MEDIUM) - burst of tool calls exceeding a rate threshold.
-18. **RULE_UNBOUNDED_CONSUMPTION_SUSTAINED** (HIGH) - sustained high rate of tool calls over a longer window.
+18. **RULE_UNBOUNDED_CONSUMPTION_BURST** (MEDIUM) - burst of tool calls exceeding a rate threshold.
+19. **RULE_UNBOUNDED_CONSUMPTION_SUSTAINED** (HIGH) - sustained high rate of tool calls over a longer window.
 
 Input validation:
-19. **RULE_INPUT_VALIDATION_SQL_INJECTION** (HIGH) - SQL injection patterns in tool call parameters.
+20. **RULE_INPUT_VALIDATION_SQL_INJECTION** (HIGH) - SQL injection patterns in tool call parameters.
 
 The detector writes `risk.detected` events back into the event log. The `dashboard` command auto-runs detection before replaying.
 

@@ -196,6 +196,13 @@ export interface CredentialMatchCondition {
    * Applies with scope "all". Omitted: every credential counts.
    */
   provider_auth?: "skip";
+  /**
+   * Only these type labels are reported. Patterns of other types still
+   * claim the values they match first, so a rule can lead with another
+   * rule's patterns and report only what those leave. Applies with scope
+   * "all". Omitted: every type is reported.
+   */
+  report?: readonly string[];
 }
 
 export type CredentialScope = "all" | ReadonlyArray<"exec" | "staged" | "target" | "sql">;
@@ -224,9 +231,12 @@ export interface CredentialPattern {
    * whose prefix and fixed length already mark a key, some of which are
    * letters alone: it skips placeholders by their words, runs and
    * references, and documentation keys, but not identifier-like values.
+   * "generated" is for values with no vendor format: on top of "secret" it
+   * needs enough variety of characters to look machine-made, and skips
+   * hashes, UUIDs, integrity strings and file paths.
    * Omitted: every match counts.
    */
-  check?: "secret" | "placeholder" | "prefixed";
+  check?: "secret" | "placeholder" | "prefixed" | "generated";
 }
 
 /**
