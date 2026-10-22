@@ -73,10 +73,12 @@ test("a cached upstream is listed immediately even with a long cold-start window
 
 test("a failed uncached upstream returns at its first failure without awaiting retry", async (t) => {
   const proxy = await start(t, [upstream("broken", 0, { MOCK_FAIL_STARTUP: "1" })]);
-  const began = performance.now();
-  assert.equal((await proxy.names()).includes("broken__ping"), false);
-  assert.ok(performance.now() - began < 3000);
+  const listing = proxy.names();
+  await proxy.pool.waitForInitialAttempts(10000);
+  const failedAt = performance.now();
   assert.equal(proxy.pool.getUpstreamStatuses()[0].state, "failed");
+  assert.equal((await listing).includes("broken__ping"), false);
+  assert.ok(performance.now() - failedAt < 1000, "return when the attempt fails rather than at the discovery ceiling");
 });
 
 test("a short uncached override expires from proxy start and does not delay later lists", async (t) => {
