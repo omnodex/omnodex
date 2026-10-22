@@ -148,8 +148,6 @@ test("RULE_OUTBOUND_KNOWN_IP does not fire for unknown IPs", () => {
 const unknownEngine = new RuleEngine([RULE_OUTBOUND_UNKNOWN_IP]);
 
 const UNKNOWN_IP_CASES = [
-  ["private 10.x",    makeFetch("http://10.20.30.40/exfil")],
-  ["private 192.168.x (non-gateway)", makeFetch("http://192.168.1.100/data")],
   ["arbitrary public", makeFetch("http://185.220.101.1/callback")],  // Tor exit nodes, not in CDN
   ["arbitrary public 2", makeBash("curl http://45.33.32.156/c2")],
 ];
@@ -164,6 +162,21 @@ for (const [desc, event] of UNKNOWN_IP_CASES) {
       findings[0].description.includes("unknown host"),
       `description should mention unknown host: ${findings[0].description}`
     );
+  });
+}
+
+// Private addresses fire at the same severity, labeled by their class.
+const PRIVATE_IP_CASES = [
+  ["private 10.x",    makeFetch("http://10.20.30.40/exfil")],
+  ["private 192.168.x (non-gateway)", makeFetch("http://192.168.1.100/data")],
+];
+
+for (const [desc, event] of PRIVATE_IP_CASES) {
+  test(`RULE_OUTBOUND_UNKNOWN_IP fires for ${desc}, labeled private`, () => {
+    const findings = unknownEngine.evaluate(event);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].severity, "HIGH");
+    assert.ok(findings[0].description.includes("private network address"), findings[0].description);
   });
 }
 

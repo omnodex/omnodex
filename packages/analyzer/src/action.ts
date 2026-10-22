@@ -172,17 +172,26 @@ function isOutbound(opts: {
 
 const URL_RE = /\b(https?|wss?|ftps?|sftp|ssh|git|s3|gs):\/\/([^\s"'\\/?#<>()]+)/gi;
 
-/** Every destination named by a URL in the text. */
+/**
+ * Every destination named by a URL in the text, including a URL nested
+ * percent-encoded inside another one's query, as redirect and proxy
+ * parameters carry it (?url=https%3A%2F%2Fhost%2F).
+ */
 export function urlDestinations(text: string): Destination[] {
   const out: Destination[] = [];
-  URL_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = URL_RE.exec(text)) !== null) {
-    const scheme = m[1]!.toLowerCase();
-    const parsed = parseAuthority(m[2]!);
-    if (!parsed) continue;
-    out.push({ ...parsed, scheme, source: "url" });
-  }
+  const scan = (t: string): void => {
+    URL_RE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = URL_RE.exec(t)) !== null) {
+      const scheme = m[1]!.toLowerCase();
+      const parsed = parseAuthority(m[2]!);
+      if (!parsed) continue;
+      if (out.some((d) => d.host === parsed.host && d.port === parsed.port && d.scheme === scheme)) continue;
+      out.push({ ...parsed, scheme, source: "url" });
+    }
+  };
+  scan(text);
+  if (/%3a%2f%2f/i.test(text)) scan(text.replace(/%3a/gi, ":").replace(/%2f/gi, "/").replace(/%5b/gi, "[").replace(/%5d/gi, "]"));
   return out;
 }
 
@@ -198,6 +207,12 @@ function parseAuthority(authority: string): Omit<Destination, "source"> | null {
     host = rest.slice(1, close);
     const after = rest.slice(close + 1);
     if (after.startsWith(":") && /^\d+$/.test(after.slice(1))) port = Number(after.slice(1));
+  } else if (/^[0-9a-f:.]+$/i.test(rest) && (rest.includes("::") || rest.split(":").length === 8)) {
+    // An unbracketed IPv6 literal, as network programs take it: every colon
+    // is part of the address, so none of it is a port. A full address has
+    // eight groups and a shortened one has "::", which a time such as
+    // 12:30:45 does not.
+    host = rest;
   } else {
     const colon = rest.lastIndexOf(":");
     if (colon !== -1 && /^\d+$/.test(rest.slice(colon + 1))) {
