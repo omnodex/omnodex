@@ -386,10 +386,22 @@ export class UpstreamClientPool {
   /**
    * Like waitForInitialAttempts, but only for upstreams with no tools from an
    * earlier run: those with a cached list can be offered without waiting.
+   * The uncached ceiling can extend the normal window. Both are counted
+   * from this call; a settled first attempt never waits for its retries.
    */
-  async waitForDiscovery(timeoutMs: number): Promise<void> {
+  async waitForDiscovery(timeoutMs: number, uncachedTimeoutMs = timeoutMs): Promise<void> {
+    const startedAt = Date.now();
     const pending = this.entries.filter((e) => !e.knownFromCache).map((e) => e.firstAttempt);
-    await raceTimeout(Promise.all(pending), timeoutMs);
+    const settled = Promise.all(pending);
+    await raceTimeout(settled, Math.min(timeoutMs, uncachedTimeoutMs));
+    await raceTimeout(settled, Math.max(0, uncachedTimeoutMs - (Date.now() - startedAt)));
+  }
+
+  /** Upstreams still connecting without any tool list to offer the agent. */
+  getPendingDiscovery(): UpstreamStatus[] {
+    return this.entries
+      .filter((e) => e.state === "connecting" && e.knownToolsJson === null)
+      .map((e) => toStatus(e));
   }
 
   /**

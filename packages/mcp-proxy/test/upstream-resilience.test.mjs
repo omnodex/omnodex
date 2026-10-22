@@ -179,6 +179,7 @@ test("an upstream that connects inside the discovery window is in the first tool
 test("an upstream slower than the discovery window is announced with list_changed", async () => {
   const config = makeConfig([mockUpstream("slow", { MOCK_STARTUP_DELAY_MS: "3000" })], {
     discovery_window_ms: 200,
+    discovery_window_uncached_ms: 200,
     ...NO_RETRY,
   });
   const proxy = await startProxy(config);

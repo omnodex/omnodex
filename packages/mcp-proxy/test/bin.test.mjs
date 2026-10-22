@@ -144,7 +144,7 @@ test("the proxy answers the host while its upstreams are failing or still starti
           mock("broken", { MOCK_FAIL_STARTUP: "1" }),
           mock("slow", { MOCK_STARTUP_DELAY_MS: "60000" }),
         ],
-        upstream_connection: { discovery_window_ms: 300 },
+        upstream_connection: { discovery_window_ms: 300, discovery_window_uncached_ms: 300 },
       })
     );
 

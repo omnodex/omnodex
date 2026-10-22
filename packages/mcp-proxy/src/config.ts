@@ -121,14 +121,19 @@ const UpstreamConnectionSchema = z.object({
    * ignore notifications/tools/list_changed. So the proxy remembers each
    * upstream's tools between runs ($OMNODEX_HOME/proxy-tool-cache) and lists
    * them without waiting; a call to one waits for its upstream to connect.
-   * This window only matters the first time an upstream runs, or after its
-   * config entry changes: it needs to cover that upstream's start, or its
-   * tools are missing for that one session. A first run of npx or uvx takes
-   * several seconds. Raise it for slow upstreams; lower it if a hung upstream
-   * delaying the first tool listing matters more than losing that
-   * upstream's tools for a session.
+   * Cached upstreams need no wait. Failed attempts settle immediately;
+   * discovery never waits for their retries. Uncached upstreams have the
+   * longer discovery_window_uncached_ms ceiling below.
    */
   discovery_window_ms: z.number().int().min(0).default(15000),
+  /**
+   * First-list ceiling for an upstream without cached tools, also counted
+   * from proxy start. A cold npx or uvx start can exceed the normal window.
+   * If it misses this window, clients that ignore list_changed need an app
+   * restart: Cowork retains the tool list across tasks until quit and reopened.
+   * Raise this for slow upstreams, or lower it to favor a faster initial list.
+   */
+  discovery_window_uncached_ms: z.number().int().min(0).default(45000),
   /** Per-attempt limit for one upstream to start and list its tools. */
   connect_timeout_ms: z.number().int().positive().default(30000),
   /** Delay before the first retry of a failed upstream. Doubles each retry. */

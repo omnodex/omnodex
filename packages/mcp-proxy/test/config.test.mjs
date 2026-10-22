@@ -154,6 +154,7 @@ test("upstream_connection defaults apply when omitted", () => {
   const cfg = ProxyConfigSchema.parse(MINIMAL_STDIO);
   assert.deepEqual(cfg.upstream_connection, {
     discovery_window_ms: 15000,
+    discovery_window_uncached_ms: 45000,
     connect_timeout_ms: 30000,
     retry_initial_delay_ms: 1000,
     retry_give_up_delay_ms: 180000,
@@ -176,6 +177,18 @@ test("rejects a non-positive connect timeout", () => {
     upstream_connection: { connect_timeout_ms: 0 },
   });
   assert.ok(!result.success);
+});
+
+test("the uncached discovery ceiling accepts zero and overrides but rejects invalid values", () => {
+  for (const value of [0, 60000]) {
+    const cfg = ProxyConfigSchema.parse({ ...MINIMAL_STDIO,
+      upstream_connection: { discovery_window_uncached_ms: value } });
+    assert.equal(cfg.upstream_connection.discovery_window_uncached_ms, value);
+  }
+  for (const value of [-1, 0.5, "45000"]) {
+    assert.equal(ProxyConfigSchema.safeParse({ ...MINIMAL_STDIO,
+      upstream_connection: { discovery_window_uncached_ms: value } }).success, false);
+  }
 });
 
 test("rejects wrong version number", () => {

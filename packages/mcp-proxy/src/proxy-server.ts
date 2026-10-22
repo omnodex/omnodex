@@ -19,7 +19,7 @@
  *
  * The server answers the agent without waiting for upstreams. tools/list
  * offers each upstream's last known tools at once (tool-cache.ts), and waits,
- * up to discovery_window_ms from start, only for upstreams it has never seen
+ * up to discovery_window_uncached_ms from start, only for upstreams it has never seen
  * list their tools. A call to a tool whose upstream is still connecting waits
  * for that upstream. Later changes to the connected set are announced with
  * notifications/tools/list_changed.
@@ -159,7 +159,18 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   // Counted from start, so the window stays inside the host's own startup
   // timeout however late the first tools/list arrives. Upstreams whose tools
   // are known from an earlier run are listed without waiting.
-  const discovery = pool.waitForDiscovery(config.upstream_connection.discovery_window_ms);
+  const discovery = pool.waitForDiscovery(
+    config.upstream_connection.discovery_window_ms,
+    config.upstream_connection.discovery_window_uncached_ms
+  );
+  let firstListSent = false;
+  const missingFromInitialList = new Set<string>();
+  const describeMissing = (name: string, connected: boolean): string =>
+    connected
+      ? `${name}: connected after the tool list was sent; quit and reopen the agent app ` +
+        `(including Cowork) to use its tools.`
+      : `${name}: tools were missing when the tool list was sent; the upstream is ` +
+        `still connecting or unavailable. Restart the agent app once it connects to use its tools.`;
 
   // ── Session start, once the client has said who it is ─────────────────────
   // session.started waits for the MCP initialize handshake so it can record
@@ -246,7 +257,17 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   // ── tools/list ────────────────────────────────────────────────────────────
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     await discovery;
-    const tools = pool.getListedTools().map((t) => t.definition);
+    const listed = pool.getListedTools();
+    if (!firstListSent) {
+      firstListSent = true;
+      for (const upstream of pool.getPendingDiscovery()) {
+        missingFromInitialList.add(upstream.name);
+        process.stderr.write(`[omnodex-mcp-proxy] WARNING: ${describeMissing(upstream.name, false)}\n`);
+      }
+    }
+    // A client that explicitly refreshes has received these tools after all.
+    for (const tool of listed) missingFromInitialList.delete(tool.serverName);
+    const tools = listed.map((t) => t.definition);
     return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, RESUME_TOOL, ...tools] };
   });
 
@@ -262,6 +283,9 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       const warnings = upstreams
         .filter((u) => u.retries_exhausted)
         .map((u) => describeUnavailable(u));
+      for (const name of missingFromInitialList) {
+        warnings.push(describeMissing(name, upstreams.some((u) => u.name === name && u.state === "connected")));
+      }
       const status = {
         proxy: "omnodex-mcp-proxy",
         version: "0.1.0",

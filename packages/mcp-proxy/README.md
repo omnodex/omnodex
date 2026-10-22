@@ -1,5 +1,7 @@
 # @omnodex/mcp-proxy
 
+**Last updated:** 2026-10-22 16:59 EDT
+
 An MCP (Model Context Protocol) proxy that sits between any MCP-capable agent and
 its upstream MCP servers. Intercepts tool calls, logs them to the local Omnodex
 event log, and forwards them transparently to the upstream server.
@@ -207,6 +209,7 @@ Full schema for `omnodex-proxy.json`:
   ],
   "upstream_connection": {
     "discovery_window_ms": 15000,
+    "discovery_window_uncached_ms": 45000,
     "connect_timeout_ms": 30000,
     "retry_initial_delay_ms": 1000,
     "retry_give_up_delay_ms": 180000
@@ -230,7 +233,8 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].bearer_token_env_var` | string | (none) | Env var holding a bearer token, sent as `Authorization: Bearer <token>`. Overrides any `Authorization` header from the two fields below. The upstream fails to connect if the variable is unset |
 | `upstream_servers[].http_headers` | object | (none) | Static request headers. Not for secrets |
 | `upstream_servers[].env_http_headers` | object | (none) | Headers read from env vars, as `{ "Header-Name": "ENV_VAR" }`. A header whose variable is unset is not sent |
-| `upstream_connection.discovery_window_ms` | number | `15000` | Ceiling on how long the first `tools/list` waits for upstreams still connecting, from proxy start. See [Sizing the discovery window](#sizing-the-discovery-window) |
+| `upstream_connection.discovery_window_ms` | number | `15000` | Normal discovery ceiling from proxy start. Cached tools are listed immediately and failed first attempts do not wait for retries |
+| `upstream_connection.discovery_window_uncached_ms` | number | `45000` | First-list ceiling for upstreams without cached tools, from proxy start. See [Sizing the discovery window](#sizing-the-discovery-window) |
 | `upstream_connection.connect_timeout_ms` | number | `30000` | Limit for one connection attempt (start plus tool listing) |
 | `upstream_connection.retry_initial_delay_ms` | number | `1000` | First retry delay for a failed upstream; doubles on each retry |
 | `upstream_connection.retry_give_up_delay_ms` | number | `180000` | Retries stop once the next delay would reach this |
@@ -263,7 +267,9 @@ through it. MCP servers the agent connects to directly are not monitored.
 **Late upstreams.** The proxy answers the agent right away and connects upstreams in
 the background. Upstreams that connect after the discovery window are announced with
 `notifications/tools/list_changed`; agents that ignore that notification see their tools
-after a reconnect or a new conversation.
+after restarting the agent app. Cowork keeps the list across new tasks until the app
+is quit and reopened. If an uncached upstream is still connecting when the first
+list is sent, stderr and `omnodex_status` name it and explain when to restart.
 
 **HTTP upstreams.** Remote servers are supported over Streamable HTTP with bearer
 tokens and headers from environment variables. OAuth sign-in for remote servers is
@@ -309,10 +315,11 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   full lists are kept in `$OMNODEX_HOME/proxy-tool-snapshots/` for a before-and-after
   view. Comparing a server's observations shows when it changed. A new list announced
   mid-session is also offered to the agent, though most clients read the list once.
-- **Discovery window.** The first `tools/list` waits up to `discovery_window_ms` from
+- **Discovery window.** The first `tools/list` waits up to `discovery_window_uncached_ms` from
   proxy start for upstreams whose tools are not known yet: the first run of a new
   upstream, or one whose entry changed. The wait ends as soon as those have settled,
-  so the setting is a ceiling, not a delay. See
+  so the setting is a ceiling, not a delay. Cached tools are offered immediately;
+  a failed first attempt never holds the list for a retry. See
   [Sizing the discovery window](#sizing-the-discovery-window).
 - **Changes.** When an upstream connects or disconnects later, the proxy sends
   `notifications/tools/list_changed`. Claude Code acts on it and picks the tools up
@@ -351,8 +358,10 @@ behavior with an upstream that connects 12s after start:
 | Cowork Desktop | No |
 
 For the clients that answer no, an upstream whose tools the proxy has never seen,
-and that connects after the window, is missing for the rest of that session, even
-though the proxy has it connected and `omnodex_status` shows it. From the next run on
+and that connects after the window, is missing until the agent app restarts, even
+though the proxy has it connected and `omnodex_status` shows it. In Cowork this
+persists across new tasks until the app is quit and reopened. Status keeps restart
+guidance for these upstreams, including after they connect. From the next run on
 its tools are known and listed at once, however slowly it starts.
 
 So the window has to cover your slowest upstream's first run. To measure one, start the proxy by
@@ -368,7 +377,7 @@ look for any upstream still `connecting`, or any tool missing from the list. The
 the window above that time:
 
 ```json
-{ "upstream_connection": { "discovery_window_ms": 25000 } }
+{ "upstream_connection": { "discovery_window_uncached_ms": 60000 } }
 ```
 
 Rules of thumb:
@@ -384,13 +393,15 @@ first tool listing can block for up to the window. `initialize` is answered imme
 either way, so the agent still starts; Codex answered normally with a 12s first listing.
 
 **Lowering it** makes a first run's listing quicker at the cost of dropping any new
-upstream that has not connected yet for that session. Use a low value only when every
+upstream that has not connected yet until the app restarts. Use a low value only when every
 upstream is a fast local process, or when you would rather the agent start with fewer
 tools than wait.
 
-`connect_timeout_ms` is a separate, longer limit on one connection attempt. A new
-upstream can still be connecting when the window closes; it is simply not in the first
-listing.
+`connect_timeout_ms` separately limits each connection step (initialization, then
+tool listing), and remains 30000 ms by default. A failed attempt ends discovery
+early; increasing the discovery window does not increase the connection timeout.
+If an upstream is still connecting when the window closes, it is not in the first
+listing and the proxy reports restart guidance.
 
 ---
 
