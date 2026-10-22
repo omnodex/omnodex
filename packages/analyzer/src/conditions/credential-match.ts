@@ -19,7 +19,7 @@
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { CredentialMatchCondition, MatchContext } from "../types.js";
 import { compiled } from "./regex-cache.js";
-import { normalizeAction } from "../action.js";
+import { credentialRole, isCredentialProvider, normalizeAction } from "../action.js";
 import { extractStagedContent } from "./scope.js";
 
 /**
@@ -45,9 +45,12 @@ export interface CredentialSighting {
 }
 
 /**
- * The credentials in a text, in order of appearance, with their values. For
- * showing a user their own data locally (the dashboard masks the value);
- * risk findings record only the type labels.
+ * The credentials in a text, with their values, by pattern and then by
+ * position. A value is reported once, under the first pattern that matches
+ * it, so a list that puts vendor formats before generic ones labels a key
+ * by its vendor rather than as a bearer token or assignment. For showing a
+ * user their own data locally (the dashboard masks the value); risk
+ * findings record only the type labels.
  */
 export function findCredentials(
   text: string,
@@ -63,6 +66,8 @@ export function findCredentials(
       if (value.length < 4) continue;
       if (check === "secret" && !looksLikeSecret(value)) continue;
       if (check === "placeholder" && isPlaceholder(value)) continue;
+      if (check === "prefixed" && !looksLikeVendorKey(value)) continue;
+      if (found.some((c) => c.value === value)) continue;
       found.push({ type, value });
     }
   }
@@ -140,6 +145,20 @@ export function looksLikeSecret(value: string): boolean {
 }
 
 /**
+ * True when a vendor-format match plausibly is a live key. The prefix and
+ * fixed length already rule out prose, so only stand-ins are skipped:
+ * references, runs, placeholder words and documentation keys. Unlike
+ * looksLikeSecret it accepts letters alone, as Hugging Face tokens are.
+ */
+export function looksLikeVendorKey(value: string): boolean {
+  if (/\$\{|\$\(|\{\{|<|>/.test(value)) return false;
+  if (/(.)\1{5,}/.test(value) || hasSequentialRun(value, 6)) return false;
+  if (DOCUMENTATION_KEYS.some((k) => value.includes(k))) return false;
+  const lower = value.toLowerCase();
+  return !PLACEHOLDER_WORDS.some((w) => lower.includes(w));
+}
+
+/**
  * Evaluate a credential_match condition against a tool.invoked event.
  *
  * Returns a single-element array with the matched credential types when
@@ -157,7 +176,8 @@ export function evaluateCredentialMatch(
 ): Partial<MatchContext>[] {
   const scope = condition.scope ?? "all";
   if (scope === "all") {
-    return found(findCredentials(JSON.stringify(event.parameters), condition.patterns));
+    const sightings = findCredentials(JSON.stringify(event.parameters), condition.patterns);
+    return found(condition.provider_auth === "skip" ? withoutProviderAuth(event, sightings) : sightings);
   }
 
   if (scope.includes("sql")) {
@@ -193,6 +213,26 @@ export function evaluateCredentialMatch(
     }
   }
   return [];
+}
+
+/**
+ * The sightings left once credentials the call sends as authentication (a
+ * header or the URL) to their own service are dropped. Every host the call
+ * reaches must belong to that service, and every label for the same value
+ * goes with it.
+ */
+function withoutProviderAuth(event: ToolInvokedEvent, sightings: CredentialSighting[]): CredentialSighting[] {
+  const hosts = normalizeAction(event).destinations
+    .filter((d) => d.ipClass !== "loopback")
+    .map((d) => d.host);
+  if (hosts.length === 0) return sightings;
+  const routine = new Set<string>();
+  for (const { type, value } of sightings) {
+    if (!hosts.every((h) => isCredentialProvider(type, h))) continue;
+    const role = credentialRole(event, value);
+    if (role === "auth-header" || role === "url") routine.add(value);
+  }
+  return sightings.filter((s) => !routine.has(s.value));
 }
 
 /**
