@@ -174,13 +174,13 @@ export function extractStagedContent(event: ToolInvokedEvent): StagedContent[] {
     return patch ? stagedFromPatch(patch) : [];
   }
 
-  const path = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile"]
+  const path = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile", "Path"]
     .map((k) => params[k])
     .find((v): v is string => typeof v === "string");
   if (!path || !isStagedTarget(path)) return [];
 
   const parts: string[] = [];
-  for (const key of ["content", "new_string", "new_source", "text", "CodeContent", "ReplacementContent"]) {
+  for (const key of ["content", "new_string", "new_source", "text", "CodeContent", "ReplacementContent", "Content", "Replacement"]) {
     const text = asText(params[key]);
     if (text) parts.push(text);
   }

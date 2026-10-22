@@ -20,6 +20,7 @@ import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext, PathMatchCondition } from "../types.js";
 import { normalizeAction } from "../action.js";
 import { compiled } from "./regex-cache.js";
+import { isWriteTool, patchTargets } from "./scope.js";
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -42,9 +43,18 @@ export function extractPaths(event: ToolInvokedEvent): string[] {
 
   // Standard parameter keys across builtin and MCP filesystem tools.
   // Standard keys (Claude Code, Codex) and Antigravity file and directory keys.
-  for (const key of ["file_path", "path", "filePath", "filename", "pattern", "DirectoryPath", "directory_path", "TargetFile", "AbsolutePath"]) {
+  for (const key of ["file_path", "path", "filePath", "filename", "pattern", "DirectoryPath", "directory_path", "TargetFile", "AbsolutePath", "Path"]) {
     const val = params[key];
     if (typeof val === "string" && val.length > 0) paths.push(val);
+  }
+
+  // Patch targets are file references even when the sandbox denies the write.
+  // Gate on the tool so quoted patch examples never become file operations.
+  if (isWriteTool(event)) {
+    const patch = [params.command, params.input, params.patch].find(
+      (v): v is string => typeof v === "string" && v.includes("*** "),
+    );
+    if (patch) return [...new Set([...paths, ...patchTargets(patch)])];
   }
 
   // Bash/shell commands: extract paths from command strings heuristically.

@@ -39,13 +39,13 @@ import type { RuleDefinition } from "../../types.js";
 
 export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
   rule_id: "RULE_SANDBOX_DISABLE_SETTINGS_WRITE",
-  version: "1.1.0",
+  version: "1.2.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
     {
-      type: "path_match",
-      patterns: [
+      type: "file_edit",
+      paths: [
         {
           // Claude Code settings files
           regex: "(?:^|[/\\\\])\\.claude[/\\\\]settings(?:\\.local)?\\.json$",
@@ -62,31 +62,28 @@ export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
           label: "Gemini CLI config file",
         },
       ],
-    },
-    {
-      type: "credential_match",
-      // Secrets and payloads: a match in any field is the risk.
-      scope: "all",
+      change: "added",
+      // Match new content to its own file, including multi-file patches.
       patterns: [
         {
           // Claude Code sandbox settings: "sandbox": false, "toolSandboxing": false
           regex: "(?:sandbox|toolSandboxing|allowUnsandboxed)\\b[^\\n]*(?:false|0|null|disabled|none)",
-          type: "sandbox-disable-value",
+          label: "sandbox-disable-value",
         },
         {
           // Codex: --dangerously-skip-permissions or equivalent config
           regex: "(?:dangerously.?skip.?permissions|bypass.?permissions|skip.?sandbox)",
-          type: "codex-permission-bypass",
+          label: "codex-permission-bypass",
         },
         {
           // Codex: sandbox_mode = "danger-full-access" in config.toml
           regex: "\\bsandbox_mode\\b[^\\n,]{0,8}danger-full-access",
-          type: "codex-sandbox-full-access",
+          label: "codex-sandbox-full-access",
         },
         {
           // Gemini: sandbox_mode: none/disabled/false
           regex: "(?:sandbox_mode|execution_mode)\\b[^\\n]*(?:none|disabled|false|unrestricted)",
-          type: "gemini-sandbox-disable",
+          label: "gemini-sandbox-disable",
         },
       ],
     },
@@ -94,7 +91,7 @@ export const RULE_SANDBOX_DISABLE_SETTINGS_WRITE: RuleDefinition = {
   severity: "HIGH",
   category: "sandbox_disable",
   description_template:
-    "Sandbox disable attempt detected in {{matched_label}} ({{matched_path}}) via {{tool_name}}: {{credential_types}}. " +
+    "Sandbox disable attempt detected in {{matched_path}} via {{tool_name}}: {{matched_label}}. " +
     "Disabling the agent sandbox removes a critical security boundary.",
   blocking_hint: "deny",
 };
