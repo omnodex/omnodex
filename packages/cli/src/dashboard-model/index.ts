@@ -17,3 +17,4 @@ export * from "./sort.js";
 export * from "./params.js";
 export * from "./timeline.js";
 export * from "./pauses.js";
+export * from "./drift.js";

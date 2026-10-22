@@ -65,6 +65,8 @@ export interface ServerDrift {
   removed: string[];
   /** Tools whose description or input schema changed. */
   changed: string[];
+  /** Tool list fingerprints, before and after, when the list changed. */
+  toolList?: { from: string; to: string };
   /** The change was announced while the server was in use. */
   midSession: boolean;
 }
@@ -285,6 +287,7 @@ export function compareObservations(before: FingerprintRecord, now: FingerprintR
     added,
     removed,
     changed,
+    ...(before.list !== now.list ? { toolList: { from: before.list, to: now.list } } : {}),
     midSession,
   };
 }

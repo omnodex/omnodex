@@ -55,7 +55,7 @@ import {
   ANTIGRAVITY_HOOK_SHIM_PATH,
   AntigravityInterceptor,
 } from "@omnodex/antigravity-provider";
-import { MCPProxy, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
+import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
@@ -631,9 +631,19 @@ async function cmdDashboard(args: string[]): Promise<void> {
   // Capture pauses live in their own session file in each root's log.
   const pauses = async () =>
     pauseRows((await Promise.all(logs.map(({ log }) => log.readSession(CAPTURE_CONTROL_SESSION_ID)))).flat());
+  // Tool lists the MCP proxy kept, in whichever root's home it ran from.
+  const toolLists = resolved.all.map((root) => createToolListSnapshots(path.join(root, "proxy-tool-snapshots")));
+  const toolList = (fingerprint: string) => {
+    for (const lists of toolLists) {
+      const tools = lists.load(fingerprint);
+      if (tools) return tools;
+    }
+    return undefined;
+  };
   const server = new DashboardServer({
     store, port, assetsDir, pauses, version: getInstalledVersion(),
     advancedEntitled: () => advancedEntitled(resolvePaths().home),
+    toolList,
   });
   try {
     await server.ready;

@@ -51,6 +51,11 @@ export interface DashboardServerOptions {
    * them says. Asked on each request, since a plan can change.
    */
   advancedEntitled?: () => boolean;
+  /**
+   * A tool list the MCP proxy kept under its fingerprint, for the before and
+   * after of a drift finding. Undefined when no root holds it.
+   */
+  toolList?: (fingerprint: string) => unknown[] | undefined;
 }
 
 /**
@@ -213,6 +218,7 @@ export class DashboardServer {
   private readonly pauses: (() => Promise<PauseRow[]>) | null;
   private readonly version: string | null;
   private readonly advancedEntitled: () => boolean;
+  private readonly toolList: (fingerprint: string) => unknown[] | undefined;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -230,6 +236,7 @@ export class DashboardServer {
     this.pauses = options.pauses ?? null;
     this.version = options.version ?? null;
     this.advancedEntitled = options.advancedEntitled ?? (() => false);
+    this.toolList = options.toolList ?? (() => undefined);
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -403,6 +410,15 @@ export class DashboardServer {
     if (riskEventsMatch) {
       const rows = await this.store.listRiskEvents(riskEventsMatch[1]);
       return sendJson(res, shownFindings(rows));
+    }
+
+    // A tool list kept by the MCP proxy, by its fingerprint: the before and
+    // after of a drift finding.
+    const toolListMatch = pathname.match(/^\/api\/tool-lists\/([0-9a-f]{32})$/);
+    if (toolListMatch) {
+      const tools = this.toolList(toolListMatch[1]);
+      if (!tools) return send404(res);
+      return sendJson(res, { tools });
     }
 
     // --- Static: serve dashboard.html at root ---
