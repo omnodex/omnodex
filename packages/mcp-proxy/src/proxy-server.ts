@@ -46,10 +46,12 @@ import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
 import { RESUME_TOOL, captureHome, captureStatus, handleResume } from "./capture-tool.js";
 import {
   asPlatform,
+  buildServerObservedEvent,
   buildSessionEndedEvent,
   buildSessionStartedEvent,
   platformForClient,
 } from "./core/events.js";
+import type { ServerObservation } from "./server-observation.js";
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -191,9 +193,24 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         platform,
         mcpClient,
       }));
+      // What each upstream that has already listed its tools looked like.
+      // Upstreams that list later are recorded as they do (below).
+      for (const observation of pool.getServerObservations()) await emitObservation(observation);
     })();
     return started;
   };
+
+  const emitObservation = async (observation: ServerObservation): Promise<void> => {
+    await tagged(buildServerObservedEvent({ sessionId, at: new Date().toISOString(), observation }));
+  };
+
+  // An upstream that connects, or lists new tools, after the session has
+  // started is recorded once session.started is written. One that lists
+  // them before is picked up by startSession.
+  const unsubscribeObserved = pool.onServerObserved((observation) => {
+    if (!started) return;
+    void started.then(() => emitObservation(observation)).catch(() => undefined);
+  });
 
   let initialized = false;
   server.oninitialized = () => {
@@ -374,6 +391,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
   await closed;
   unsubscribeTools();
   unsubscribeExhausted();
+  unsubscribeObserved();
 
   // A client that disconnected without initializing still gets a start.
   await startSession();

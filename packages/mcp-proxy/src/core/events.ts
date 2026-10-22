@@ -18,11 +18,27 @@ import {
   SCHEMA_VERSION,
   type McpServerTransport,
   type PlatformKind,
+  type ServerObservedEvent,
   type SessionEndedEvent,
   type SessionStartedEvent,
   type ToolCompletedEvent,
   type ToolInvokedEvent,
 } from "@omnodex/shared";
+
+/**
+ * One upstream as observed when it listed its tools: what server.observed
+ * records. Computed by server-observation.ts.
+ */
+export interface ServerObservation {
+  server: string;
+  transport: "stdio" | "http";
+  trigger: "connect" | "list_changed";
+  configFingerprint: string;
+  reported?: { name: string; version?: string };
+  installedVersion?: string;
+  toolListFingerprint: string;
+  tools: { name: string; fingerprint: string }[];
+}
 
 const PLATFORMS: readonly PlatformKind[] = ["claude-code", "codex", "cowork", "web", "antigravity", "copilot"];
 
@@ -111,6 +127,31 @@ export function buildSessionEndedEvent(fields: {
     event_type: "session.ended",
     duration_ms: fields.durationMs,
     status: "completed",
+  };
+}
+
+export function buildServerObservedEvent(fields: {
+  sessionId: string;
+  at: string;
+  observation: ServerObservation;
+}): ServerObservedEvent {
+  const o = fields.observation;
+  return {
+    schema_version: SCHEMA_VERSION,
+    event_id: newEventId(),
+    session_id: fields.sessionId,
+    occurred_at: fields.at,
+    recorded_at: fields.at,
+    interceptor: "mcp-proxy",
+    event_type: "server.observed",
+    mcp_server: o.server,
+    transport: o.transport,
+    trigger: o.trigger,
+    config_fingerprint: o.configFingerprint,
+    ...(o.reported ? { reported: o.reported } : {}),
+    ...(o.installedVersion ? { installed_version: o.installedVersion } : {}),
+    tool_list_fingerprint: o.toolListFingerprint,
+    tools: o.tools,
   };
 }
 

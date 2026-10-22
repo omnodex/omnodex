@@ -68,6 +68,7 @@ export {
   redactParameters,
   buildSessionStartedEvent,
   buildSessionEndedEvent,
+  buildServerObservedEvent,
   buildToolInvokedEvent,
   buildToolCompletedEvent,
 } from "./core/events.js";
@@ -90,3 +91,15 @@ export type {
   HttpUpstream,
   UpstreamConnectionSettings,
 } from "./config.js";
+export {
+  canonicalJson,
+  configFingerprint,
+  createToolListSnapshots,
+  fingerprint,
+  npxInstalledVersion,
+  npxPackageName,
+  observeServer,
+  toolFingerprint,
+  toolFingerprints,
+} from "./server-observation.js";
+export type { ServerObservation, ToolListSnapshots } from "./server-observation.js";

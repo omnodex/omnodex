@@ -300,6 +300,15 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   (up to its connection attempt). An upstream that goes down keeps its tools listed,
   and calls to them say why it is unavailable. Changing an upstream's config entry
   starts it fresh.
+- **Server observations.** Each time an upstream lists its tools, at connect or after
+  it announces a change with `notifications/tools/list_changed`, the proxy writes a
+  `server.observed` event: fingerprints of the upstream's config entry (environment
+  and header names, never values), the name and version it reports, the installed
+  package version for `npx` upstreams when the npx cache shows it, and each tool's
+  name, description and input schema. The event holds hashes and tool names only; the
+  full lists are kept in `$OMNODEX_HOME/proxy-tool-snapshots/` for a before-and-after
+  view. Comparing a server's observations shows when it changed. A new list announced
+  mid-session is also offered to the agent, though most clients read the list once.
 - **Discovery window.** The first `tools/list` waits up to `discovery_window_ms` from
   proxy start for upstreams whose tools are not known yet: the first run of a new
   upstream, or one whose entry changed. The wait ends as soon as those have settled,
