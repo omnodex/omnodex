@@ -27,6 +27,7 @@ import type { ReadModelStore } from "@omnodex/projection";
 import type { EventLog } from "@omnodex/event-log";
 import type { SyncPushedEvent, InterceptorKind } from "@omnodex/shared";
 import type { CapturePauseRow } from "@omnodex/event-log";
+import type { MonitoringChangeRow } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 import { randomUUID } from "node:crypto";
 
@@ -56,6 +57,8 @@ export interface SyncEncryptorOptions {
   machineLabel?: string;
   /** Pauses of recording or uploads, carried in the payload so the dashboard shows them later. */
   pauses?: CapturePauseRow[];
+  /** Changes to Omnodex on this machine, carried as they are. */
+  monitoringChanges?: MonitoringChangeRow[];
 }
 
 export interface SyncResult {
@@ -85,6 +88,7 @@ export class SyncEncryptor {
   private readonly machineId: string;
   private readonly machineLabel: string | undefined;
   private readonly pauses: CapturePauseRow[] | undefined;
+  private readonly monitoringChanges: MonitoringChangeRow[] | undefined;
   private kdfSalt: Uint8Array;
 
   constructor(options: SyncEncryptorOptions) {
@@ -97,6 +101,7 @@ export class SyncEncryptor {
     this.machineId = options.machineId;
     this.machineLabel = options.machineLabel;
     this.pauses = options.pauses;
+    this.monitoringChanges = options.monitoringChanges;
     this.kdfSalt = options.kdfSalt ?? randomSalt();
   }
 
@@ -108,7 +113,7 @@ export class SyncEncryptor {
    */
   async sync(sessionIds?: string[]): Promise<SyncResult> {
     // 1. Serialize projection data
-    const payload = await serializeReadModel(this.store, sessionIds, this.pauses);
+    const payload = await serializeReadModel(this.store, sessionIds, this.pauses, this.monitoringChanges);
     const plaintext = encodePayload(payload);
 
     // 2. Compress, derive key and encrypt. The JSON compresses about 4.5x

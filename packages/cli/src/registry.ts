@@ -21,6 +21,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import type { LauncherPlatform } from "./launcher-template.js";
+import { recordMonitoringChange } from "./monitoring-markers.js";
 
 /** What was installed. */
 export type InstallComponent = "hooks" | "plugin" | "mcp";
@@ -148,9 +149,23 @@ export async function addInstallation(install: Installation): Promise<void> {
   const entry = normalizeEntry(install);
   if (!entry) throw new Error(`invalid installation record for ${install.target}`);
   const registry = await readRegistry();
+  const previous = registry.installations.find((i) => sameSlot(i, entry));
   registry.installations = registry.installations.filter((i) => !sameSlot(i, entry));
   registry.installations.push(entry);
   await writeRegistry(registry);
+
+  // A marker for every change; reinstalling the same version changes nothing.
+  const version = (i: Installation) => i.pluginVersion ?? i.installedVersion;
+  if (previous && version(previous) === version(entry)) return;
+  await recordMonitoringChange({
+    action: previous ? "update" : "install",
+    target: entry.target,
+    component: entry.component,
+    scope: entry.scope,
+    project_path: entry.projectPath,
+    from: previous ? version(previous) : null,
+    to: version(entry),
+  });
 }
 
 /**
@@ -171,9 +186,19 @@ export async function removeInstallation(
     scope: (projectPath === undefined ? "user" : "project") as InstallScope,
     projectPath,
   };
+  const removed = registry.installations.find((i) => sameSlot(i, slot));
   registry.installations = registry.installations.filter((i) => !sameSlot(i, slot));
   if (registry.installations.length < before) {
     await writeRegistry(registry);
+    await recordMonitoringChange({
+      action: "uninstall",
+      target,
+      component,
+      scope: slot.scope,
+      project_path: projectPath,
+      from: removed?.pluginVersion ?? removed?.installedVersion ?? null,
+      to: null,
+    });
     return true;
   }
   return false;

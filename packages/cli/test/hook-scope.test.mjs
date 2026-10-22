@@ -178,13 +178,13 @@ test("uninstall in a project leaves it out, status says so, and install records 
   const m = await machine(t);
   assert.equal((await run(["install", "--hooks", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
 
-  const out = await run(["uninstall", "codex", m.project, "--confirm"], m.env);
+  const out = await run(["uninstall", "codex", m.project, "--confirm", "--unattended"], m.env);
   assert.equal(out.code, 0, out.out);
   assert.match(out.out, /Codex no longer records/);
   assert.ok(existsSync(path.join(m.home, ".codex", "hooks.json")), "user-level hooks stay");
   assert.ok(exclusionFor(await readHookScope(m.omnodexHome), "codex", m.project));
 
-  const again = await run(["uninstall", "codex", m.project, "--confirm"], m.env);
+  const again = await run(["uninstall", "codex", m.project, "--confirm", "--unattended"], m.env);
   assert.match(again.out, /already left out for Codex/);
 
   const here = await run(["status", m.project], m.env);
@@ -211,9 +211,9 @@ test("uninstall --everywhere removes only Omnodex's user-level hooks and stops e
     hooks: { Stop: [{ hooks: [{ type: "command", command: "notify" }] }] },
   }));
   assert.equal((await run(["install", "--hooks", "codex", m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
-  await run(["uninstall", "codex", m.other, "--confirm"], m.env);
+  await run(["uninstall", "codex", m.other, "--confirm", "--unattended"], m.env);
 
-  const r = await run(["uninstall", "codex", "--everywhere", "--confirm"], m.env);
+  const r = await run(["uninstall", "codex", "--everywhere", "--confirm", "--unattended"], m.env);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /removed Codex every-project hooks/);
   const left = await readJson(path.join(m.home, ".codex", "hooks.json"));
@@ -228,7 +228,7 @@ test("uninstall with no target and nothing in the project leaves the project out
   for (const target of ["claude-code", "codex"]) {
     assert.equal((await run(["install", "--hooks", target, m.project, "--everywhere", "--no-connect"], m.env)).code, 0);
   }
-  const r = await run(["uninstall", m.other, "--confirm"], m.env);
+  const r = await run(["uninstall", m.other, "--confirm", "--unattended"], m.env);
   assert.equal(r.code, 0, r.out);
   const scope = await readHookScope(m.omnodexHome);
   assert.deepEqual(Object.values(scope.excluded), [["claude-code", "codex"]]);
@@ -325,7 +325,7 @@ test("in the home folder, the user-level files are not mistaken for project hook
   }
   const status = await run(["status", m.home], m.env);
   assert.doesNotMatch(status.out, /installed\n/);
-  const r = await run(["uninstall", m.home, "--confirm"], m.env);
+  const r = await run(["uninstall", m.home, "--confirm", "--unattended"], m.env);
   assert.equal(r.code, 0, r.out);
   assert.doesNotMatch(r.out, /remove this project's hooks/);
   assert.ok((await fs.readFile(path.join(m.home, ".claude", "settings.json"), "utf8")).includes("--user-scope"));

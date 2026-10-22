@@ -39,6 +39,7 @@ import { gzipSync } from "node:zlib";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { ReadModelStore, SessionRow } from "@omnodex/projection";
 import type { CapturePauseRow, EventLog } from "@omnodex/event-log";
+import type { MonitoringChangeRow } from "@omnodex/shared";
 import type { SyncPushedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 import { deriveKey, encrypt, sha256Hex } from "./crypto.js";
@@ -107,6 +108,8 @@ export interface SegmentSyncOptions {
    * session changed and stays until it ages out of the window.
    */
   pauses?: CapturePauseRow[];
+  /** Changes to Omnodex on this machine; each travels as its own slice, like a pause. */
+  monitoringChanges?: MonitoringChangeRow[];
   /** Overrides for tests. */
   now?: number;
   sealBytes?: number;
@@ -174,6 +177,10 @@ async function runOnce(
     const slice = pauseSlice(pause, nowIso);
     if (slice.lastAt >= cutoff) slices.set(slice.id, slice);
   }
+  for (const change of opts.monitoringChanges ?? []) {
+    const slice = changeSlice(change);
+    if (slice.lastAt >= cutoff) slices.set(slice.id, slice);
+  }
 
   // 2. Classify against the manifest, and 3. take changed and gone sessions
   // out of their segments.
@@ -223,7 +230,7 @@ async function runOnce(
     const bytes = await opts.transport.putSegment(id, envelope, {
       machineId: opts.machineId,
       machineLabel: opts.machineLabel,
-      sessions: parts.filter((p) => !isPauseSlice(p.id)).length,
+      sessions: parts.filter((p) => !isMarkerSlice(p.id)).length,
       firstAt: parts.reduce((m, p) => (p.firstAt < m ? p.firstAt : m), parts[0]!.firstAt),
       lastAt: parts.reduce((m, p) => (p.lastAt > m ? p.lastAt : m), parts[0]!.lastAt),
     });
@@ -254,7 +261,7 @@ async function runOnce(
   };
   await writeManifest(manifestPath, next);
 
-  const sessionsIncluded = [...slices.keys()].filter((id) => !isPauseSlice(id));
+  const sessionsIncluded = [...slices.keys()].filter((id) => !isMarkerSlice(id));
   const uploadedBytes = uploads.reduce((n, u) => n + u.bytes, 0);
   if (opts.eventLog && uploads.length > 0) {
     const at = new Date().toISOString();
@@ -310,8 +317,9 @@ async function sliceOf(store: ReadModelStore, row: SessionRow): Promise<Slice> {
 /** Slice ids of pauses; they can never collide with a session id. */
 const PAUSE_SLICE_PREFIX = "capture-pause:";
 
-function isPauseSlice(id: string): boolean {
-  return id.startsWith(PAUSE_SLICE_PREFIX);
+/** True for pause and monitoring-change slices, which are not sessions. */
+function isMarkerSlice(id: string): boolean {
+  return id.startsWith(PAUSE_SLICE_PREFIX) || id.startsWith(CHANGE_SLICE_PREFIX);
 }
 
 /** One pause as a slice. A pause still in force counts as active now. */
@@ -328,6 +336,26 @@ function pauseSlice(pause: CapturePauseRow, nowIso: string): Slice {
     hash: createHash("sha256").update(json).digest("hex"),
     firstAt: pause.paused_at,
     lastAt: pause.resumed_at ?? nowIso,
+  };
+}
+
+/** Slice ids of monitoring changes; they can never collide with a session id. */
+const CHANGE_SLICE_PREFIX = "monitoring-change:";
+
+/** One monitoring change as a slice. */
+function changeSlice(change: MonitoringChangeRow): Slice {
+  const part: Slice["part"] = {
+    session_ids: [], sessions: [], tool_calls: {}, file_events: {}, risk_events: {},
+    prompts: {}, subagents: {}, monitoring_changes: [change],
+  };
+  const json = JSON.stringify(part);
+  return {
+    id: CHANGE_SLICE_PREFIX + change.event_id,
+    part,
+    json,
+    hash: createHash("sha256").update(json).digest("hex"),
+    firstAt: change.at,
+    lastAt: change.at,
   };
 }
 
@@ -353,6 +381,7 @@ function assemble(parts: Slice[], serializedAt: string): SyncPayload {
     Object.assign(payload.prompts, part.prompts);
     Object.assign(payload.subagents, part.subagents);
     if (part.capture_pauses?.length) (payload.capture_pauses ??= []).push(...part.capture_pauses);
+    if (part.monitoring_changes?.length) (payload.monitoring_changes ??= []).push(...part.monitoring_changes);
   }
   return payload;
 }

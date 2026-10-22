@@ -325,6 +325,34 @@ describe("segmented sync: capture pauses", () => {
   });
 });
 
+describe("segmented sync: monitoring changes", () => {
+  const change = (over = {}) => ({
+    event_id: "c1", at: iso(NOW - DAY), action: "uninstall", target: "codex", component: "hooks",
+    scope: "project", project_path: "/home/case/project", from: "0.9.0", to: null,
+    cli_version: "0.9.0", actor: "unattended", machine_label: "case laptop", ...over,
+  });
+
+  it("a change goes up on its own slice, without counting as a session, and only once", async () => {
+    await addSession(projector, "s1", NOW - 3 * DAY);
+    await sync();
+    const before = cloud.uploads.length;
+
+    const r = await sync({ monitoringChanges: [change()] });
+    const ups = newUploads(before);
+    assert.equal(ups.length, 1);
+    assert.deepEqual((await open(ups[0].envelope)).monitoring_changes, [change()]);
+    assert.deepEqual(r.sessionsIncluded, ["s1"]);
+    assert.equal(ups[0].meta.sessions, 1);
+    assert.equal((await sync({ monitoringChanges: [change()] })).uploaded, 0);
+  });
+
+  it("an old change leaves the window", async () => {
+    await sync({ monitoringChanges: [change({ event_id: "old", at: iso(NOW - 200 * DAY) }), change()] });
+    const payload = await open(cloud.uploads.at(-1).envelope);
+    assert.deepEqual(payload.monitoring_changes.map((c) => c.event_id), ["c1"]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Through the sync runner, against a local stand-in for the API
 // ---------------------------------------------------------------------------

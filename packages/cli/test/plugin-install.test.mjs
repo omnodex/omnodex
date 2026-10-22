@@ -255,13 +255,13 @@ test("uninstall leaves the plugin unless --plugin is given, which removes only O
   const install = await run(["install", "codex", m.project, "--this-project", "--plugin-version", "9.9.9", "--no-connect"], m.env);
   assert.equal(install.code, 0, install.out);
 
-  const hooksOnly = await run(["uninstall", "codex", m.project, "--confirm"], m.env);
+  const hooksOnly = await run(["uninstall", "codex", m.project, "--confirm", "--unattended"], m.env);
   assert.equal(hooksOnly.code, 0, hooksOnly.out);
   assert.match(hooksOnly.out, /the Codex plugin stays installed for every project; `omnodex uninstall codex --plugin` removes it/);
   const dir = path.join(m.home, ".codex", "plugins", "omnodex-codex");
   assert.ok(existsSync(dir));
 
-  const r = await run(["uninstall", "codex", "--plugin", "--confirm"], m.env);
+  const r = await run(["uninstall", "codex", "--plugin", "--confirm", "--unattended"], m.env);
   assert.equal(r.code, 0, r.out);
   assert.ok(!existsSync(dir));
   const market = await readJson(path.join(m.home, ".agents", "plugins", "marketplace.json"));
@@ -270,7 +270,7 @@ test("uninstall leaves the plugin unless --plugin is given, which removes only O
   const registry = await readJson(path.join(m.omnodexHome, "installations.json"));
   assert.equal(registry.installations.filter((i) => i.component === "plugin").length, 0);
 
-  const nothing = await run(["uninstall", "codex", "--plugin", "--confirm"], m.env);
+  const nothing = await run(["uninstall", "codex", "--plugin", "--confirm", "--unattended"], m.env);
   assert.match(nothing.out, /no Omnodex plugin installed for Codex/);
 });
 

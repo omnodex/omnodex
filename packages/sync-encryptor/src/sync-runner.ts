@@ -25,7 +25,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { EventLog, capturePauseRows, localOnlySeen, markLocalOnlySeen } from "@omnodex/event-log";
-import { CAPTURE_CONTROL_SESSION_ID, type TraceEvent } from "@omnodex/shared";
+import { CAPTURE_CONTROL_SESSION_ID, monitoringChangeRows, type TraceEvent } from "@omnodex/shared";
 import { Projector, SqliteReadModelStore, runCorrelation } from "@omnodex/projection";
 import { SyncEncryptor } from "./sync-encryptor.js";
 import type { SyncResult } from "./sync-encryptor.js";
@@ -167,7 +167,9 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
     const machineLabel = await readMachineLabel(opts.home);
     // Pauses go up with every sync, so the dashboard shows them later even
     // if it was not open (live push is its only other source).
-    const pauses = capturePauseRows(await log.readSession(CAPTURE_CONTROL_SESSION_ID));
+    const controlEvents = await log.readSession(CAPTURE_CONTROL_SESSION_ID);
+    const pauses = capturePauseRows(controlEvents);
+    const monitoringChanges = monitoringChangeRows(controlEvents);
     const blobTransport = new HttpSyncTransport({ baseUrl: opts.apiUrl, apiToken: opts.apiToken });
     const encryptor = new SyncEncryptor({
       passphrase: opts.passphrase,
@@ -179,6 +181,7 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
       machineId,
       machineLabel,
       pauses,
+      monitoringChanges,
     });
     // The salt is persisted before any upload, so every segment and blob
     // this machine writes shares it and the dashboard derives one key.
@@ -200,6 +203,7 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
           home: opts.home,
           eventLog: log,
           pauses,
+          monitoringChanges,
         });
         return {
           blobId: r.commitId,

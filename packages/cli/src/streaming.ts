@@ -188,9 +188,9 @@ export async function tailSession(
       if (processedIds.has(event.event_id)) continue;
       processedIds.add(event.event_id);
 
-      // A pause marker is not in the read model; the page reloads its
-      // snapshot, which carries the pauses.
-      if (event.event_type === "capture.paused" || event.event_type === "capture.resumed") {
+      // Pause and monitoring markers are not in the read model; the page
+      // reloads its snapshot, which carries the pauses.
+      if (event.event_type === "capture.paused" || event.event_type === "capture.resumed" || event.event_type === "monitoring.changed") {
         server.broadcast({ type: "read_model.changed" });
         continue;
       }

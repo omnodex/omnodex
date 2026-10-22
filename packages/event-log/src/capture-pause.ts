@@ -116,6 +116,14 @@ export function isPauseMarker(event: TraceEvent): boolean {
   return event.event_type === "capture.paused" || event.event_type === "capture.resumed";
 }
 
+/**
+ * Markers about capture itself: pauses and monitoring changes. They carry
+ * no captured content, so they are kept and uploaded under every pause.
+ */
+export function isControlMarker(event: TraceEvent): boolean {
+  return isPauseMarker(event) || event.event_type === "monitoring.changed";
+}
+
 function markerBase(at: string, now: string) {
   return {
     schema_version: SCHEMA_VERSION,
@@ -234,11 +242,11 @@ export async function applyCapturePause(
   try {
     const markers = await settleExpiredPauses(home, now);
     const active = activePauses(await readPauseState(home), now);
-    if (active.record) return [...markers, ...events.filter(isPauseMarker)];
+    if (active.record) return [...markers, ...events.filter(isControlMarker)];
     if (active.sync) {
       let flagged = false;
       for (const e of events) {
-        if (!isPauseMarker(e)) {
+        if (!isControlMarker(e)) {
           e.local_only = true;
           flagged = true;
         }
@@ -253,7 +261,8 @@ export async function applyCapturePause(
 
 /**
  * The events that may leave the machine: no local_only events, and while a
- * record or sync pause is in force, only pause markers. Every upload path
+ * record or sync pause is in force, only control markers (pauses and
+ * monitoring changes). Every upload path
  * runs its events through this, so a writer that missed applyCapturePause
  * still cannot leak an event recorded under a pause.
  */
@@ -261,7 +270,7 @@ export async function outboundEvents(events: TraceEvent[], home: string | null, 
   let out = events.filter((e) => !e.local_only);
   if (home && out.length > 0) {
     const active = activePauses(await readPauseState(home), now);
-    if (active.record || active.sync) out = out.filter(isPauseMarker);
+    if (active.record || active.sync) out = out.filter(isControlMarker);
   }
   return out;
 }
