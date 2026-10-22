@@ -33,6 +33,7 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { parseEnforcementConfig, type EnforcementMode } from "@omnodex/shared";
 import type { ControlIo } from "./capture-controls.js";
+import { recordMonitoringChange } from "./monitoring-markers.js";
 
 export const USER_CONFIG_FILE = "omnodex-config.json";
 
@@ -130,6 +131,7 @@ export async function setMode(home: string, mode: EnforcementMode): Promise<Enfo
       : {};
   const previous = parseEnforcementConfig(section).mode ?? "monitor";
   await writeConfig(file, { ...config, enforcement: { ...section, mode } });
+  if (previous !== mode) await recordMonitoringChange({ action: "enforce_mode", from: previous, to: mode }, home);
   return previous;
 }
 

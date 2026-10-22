@@ -51,7 +51,8 @@ async function scratch(t, api) {
 
 /** Run the CLI without blocking the event loop, so the local API can answer. */
 function run(env, args) {
-  const childEnv = { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1" };
+  // No update check: its detached child writes into HOME after the command exits.
+  const childEnv = { ...process.env, HOME: env.home, USERPROFILE: env.home, OMNODEX_HOME: env.omnodexHome, OMNODEX_SINGLE_ROOT: "1", OMNODEX_NO_UPDATE_CHECK: "1" };
   delete childEnv.OMNODEX_API_TOKEN;
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [CLI, "license", ...args], { cwd: env.home, env: childEnv });

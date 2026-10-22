@@ -29,6 +29,7 @@ import { promises as fs, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { LauncherPlatform } from "./launcher-template.js";
+import { recordMonitoringChange } from "./monitoring-markers.js";
 
 export const HOOK_SCOPE_FILE = "hook-scope.json";
 
@@ -123,8 +124,9 @@ export function isEverywhere(scope: HookScope, target: LauncherPlatform): boolea
 /** Turn every-project recording on or off for a target. Off also drops its exclusions. */
 export async function setEverywhere(omnodexHome: string, target: LauncherPlatform, on: boolean): Promise<void> {
   const scope = await readHookScope(omnodexHome);
+  const was = scope.everywhere.includes(target);
   if (on) {
-    scope.everywhere.push(target);
+    if (!was) scope.everywhere.push(target);
   } else {
     scope.everywhere = scope.everywhere.filter((t) => t !== target);
     for (const [p, targets] of Object.entries(scope.excluded)) {
@@ -132,6 +134,7 @@ export async function setEverywhere(omnodexHome: string, target: LauncherPlatfor
     }
   }
   await writeHookScope(omnodexHome, scope);
+  if (was !== on) await recordMonitoringChange({ action: on ? "everywhere_on" : "everywhere_off", target, scope: "user" }, omnodexHome);
 }
 
 export async function addExclusion(omnodexHome: string, target: LauncherPlatform, projectPath: string): Promise<void> {
@@ -139,6 +142,7 @@ export async function addExclusion(omnodexHome: string, target: LauncherPlatform
   const key = canonicalProjectPath(projectPath);
   scope.excluded[key] = [...(scope.excluded[key] ?? []), target];
   await writeHookScope(omnodexHome, scope);
+  await recordMonitoringChange({ action: "exclude", target, scope: "project", project_path: key }, omnodexHome);
 }
 
 /**
@@ -153,6 +157,7 @@ export async function removeExclusion(omnodexHome: string, target: LauncherPlatf
   if (!root) return null;
   scope.excluded[root] = scope.excluded[root].filter((t) => t !== target);
   await writeHookScope(omnodexHome, scope);
+  await recordMonitoringChange({ action: "include", target, scope: "project", project_path: root }, omnodexHome);
   return root;
 }
 

@@ -748,6 +748,101 @@ export function capturePauseRows(events: Iterable<TraceEvent>): CapturePauseRow[
   return [...rows.values()].sort((a, b) => a.paused_at.localeCompare(b.paused_at));
 }
 
+// ---------------------------------------------------------------------------
+// Monitoring change markers (written when Omnodex itself is installed,
+// removed or reconfigured)
+// ---------------------------------------------------------------------------
+
+/**
+ * What changed about monitoring on this machine. `exclude` and `include`
+ * leave a project out of, or bring it back into, every-project recording;
+ * `everywhere_on` and `everywhere_off` switch every-project recording.
+ */
+export type MonitoringAction =
+  | "install"
+  | "uninstall"
+  | "update"
+  | "exclude"
+  | "include"
+  | "everywhere_on"
+  | "everywhere_off"
+  | "connect"
+  | "disconnect"
+  | "enforce_mode";
+
+/**
+ * Who made the change: a person at an interactive terminal, or a process
+ * without one (a script, a fleet tool, or an agent's shell).
+ */
+export type MonitoringActor = "terminal" | "unattended";
+
+/**
+ * Omnodex was installed, removed or reconfigured. Written by the CLI for
+ * every change it makes, under the capture-control session, so a removal
+ * or a silence with no marker can be told apart from one that was made on
+ * purpose. Carries no captured content and, like pause markers, is kept
+ * and uploaded under every pause.
+ */
+export interface MonitoringChangedEvent extends BaseEvent {
+  event_type: "monitoring.changed";
+  action: MonitoringAction;
+  /** Agent platform the change applies to, when it applies to one. */
+  target?: string;
+  /** Which part was installed or removed. */
+  component?: "hooks" | "plugin" | "mcp";
+  /** One project, or every project for this user. */
+  scope?: "project" | "user";
+  /** The project, for project-scope changes and exclusions. */
+  project_path?: string;
+  /** Value before and after: a version, an enforcement mode. */
+  from?: string | null;
+  to?: string | null;
+  /** Omnodex version that made the change. */
+  cli_version: string;
+  actor: MonitoringActor;
+  /** Host name of the machine. */
+  machine_label?: string;
+}
+
+/** A monitoring change as the dashboards and the synced payload carry it. */
+export interface MonitoringChangeRow {
+  event_id: string;
+  at: string;
+  action: MonitoringAction;
+  target: string | null;
+  component: "hooks" | "plugin" | "mcp" | null;
+  scope: "project" | "user" | null;
+  project_path: string | null;
+  from: string | null;
+  to: string | null;
+  cli_version: string;
+  actor: MonitoringActor;
+  machine_label: string | null;
+}
+
+/** One row per monitoring.changed marker, oldest first. */
+export function monitoringChangeRows(events: Iterable<TraceEvent>): MonitoringChangeRow[] {
+  const rows: MonitoringChangeRow[] = [];
+  for (const e of events) {
+    if (e.event_type !== "monitoring.changed") continue;
+    rows.push({
+      event_id: e.event_id,
+      at: e.occurred_at,
+      action: e.action,
+      target: e.target ?? null,
+      component: e.component ?? null,
+      scope: e.scope ?? null,
+      project_path: e.project_path ?? null,
+      from: e.from ?? null,
+      to: e.to ?? null,
+      cli_version: e.cli_version,
+      actor: e.actor,
+      machine_label: e.machine_label ?? null,
+    });
+  }
+  return rows.sort((a, b) => a.at.localeCompare(b.at));
+}
+
 /** Discriminated union of every event type accepted by the event log. */
 export type TraceEvent =
   | SessionStartedEvent
@@ -768,7 +863,8 @@ export type TraceEvent =
   | FeatureExtractedEvent
   | RuleUpdatedEvent
   | CapturePausedEvent
-  | CaptureResumedEvent;
+  | CaptureResumedEvent
+  | MonitoringChangedEvent;
 
 export type EventType = TraceEvent["event_type"];
 

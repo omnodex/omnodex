@@ -48,7 +48,7 @@ async function installWith(target) {
   const project = path.join(root, "project");
   await fs.mkdir(project, { recursive: true });
   // An isolated home: never the developer's real ~/.omnodex.
-  const env = { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex") };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex"), OMNODEX_NO_UPDATE_CHECK: "1" };
   const result = await run(["install", "--hooks", target, project, "--no-connect"], env);
   const hooks = await fs.readFile(path.join(project, ".agents", "hooks.json"), "utf8");
   const registry = JSON.parse(await fs.readFile(path.join(home, ".omnodex", "installations.json"), "utf8"));
@@ -80,7 +80,7 @@ test("uninstall agy removes Antigravity hooks", async (t) => {
   const installed = await installWith("agy");
   t.after(() => fs.rm(installed.root, { recursive: true, force: true }));
 
-  const result = await run(["uninstall", "agy", installed.project, "--confirm"], installed.env);
+  const result = await run(["uninstall", "agy", installed.project, "--confirm", "--unattended"], installed.env);
   assert.equal(result.code, 0, result.out);
   assert.match(result.out, /removed Antigravity hooks/);
   const registry = JSON.parse(await fs.readFile(path.join(installed.home, ".omnodex", "installations.json"), "utf8"));

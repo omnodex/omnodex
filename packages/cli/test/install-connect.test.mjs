@@ -29,7 +29,7 @@ test("install without a terminal finishes and says how to connect later", async 
   const project = path.join(root, "project");
   await fs.mkdir(project, { recursive: true });
   // An isolated home: never the developer's real ~/.omnodex.
-  const env = { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex") };
+  const env = { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex"), OMNODEX_NO_UPDATE_CHECK: "1" };
 
   const child = spawn(process.execPath, [CLI, "install", "--hooks", "claude-code", project], { env, stdio: ["pipe", "pipe", "pipe"] });
   child.stdin.end();

@@ -27,6 +27,7 @@
 import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { recordMonitoringChange } from "./monitoring-markers.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -133,6 +134,9 @@ export async function updateStreamConfig(
   };
   const merged = { ...existing, ...update };
   await writeStreamConfig(omnodexHome, merged);
+  // Connecting a machine that had no stream; token rotation is not a change.
+  if (!existing.api_token && merged.api_token) await recordMonitoringChange({ action: "connect" }, omnodexHome);
+  else if (existing.api_token && update.api_token === "") await recordMonitoringChange({ action: "disconnect" }, omnodexHome);
   return merged;
 }
 

@@ -18,6 +18,7 @@
  */
 
 import type { CapturePauseRow } from "@omnodex/event-log";
+import type { MonitoringChangeRow } from "@omnodex/shared";
 import type {
   ReadModelStore,
   SessionRow,
@@ -144,6 +145,12 @@ export interface SyncPayload {
   subagents: Record<string, SubagentRow[]>;
   /** Pauses of recording or uploads on this machine. Absent before pauses existed. */
   capture_pauses?: CapturePauseRow[];
+  /**
+   * Installs, removals and other changes to Omnodex on this machine, so the
+   * hosted dashboard can tell a planned change from an unexplained one.
+   * Absent before monitoring markers existed.
+   */
+  monitoring_changes?: MonitoringChangeRow[];
 }
 
 /**
@@ -157,6 +164,7 @@ export async function serializeReadModel(
   store: ReadModelStore,
   sessionIds?: string[],
   pauses?: CapturePauseRow[],
+  monitoringChanges?: MonitoringChangeRow[],
 ): Promise<SyncPayload> {
   const sessions = sessionIds
     ? await Promise.all(
@@ -194,6 +202,7 @@ export async function serializeReadModel(
     prompts,
     subagents,
     ...(pauses?.length ? { capture_pauses: pauses } : {}),
+    ...(monitoringChanges?.length ? { monitoring_changes: monitoringChanges } : {}),
   };
 }
 

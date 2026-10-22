@@ -29,6 +29,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
+import { setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
 import { describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
@@ -2066,7 +2067,19 @@ async function cmdUninstall(args: string[]): Promise<void> {
   }
   console.log("");
 
-  if (!confirmed) {
+  // Removing monitoring is for a person: an agent's shell has no terminal.
+  const unattended = args.includes("--unattended");
+  if (!unattended && !(process.stdin.isTTY && process.stdout.isTTY)) {
+    console.error(
+      "[uninstall] removing Omnodex needs a person at an interactive terminal, so an agent cannot switch it off. " +
+        "Run it yourself in a terminal, or pass --unattended for a scripted removal (it is recorded and raises a finding).",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (unattended) setMonitoringActor("unattended");
+
+  if (!confirmed && !unattended) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     const answer = await rl.question("Proceed? (Y/n) ");
     rl.close();
@@ -2936,6 +2949,7 @@ export function syncWaitMessage(until: number, now = Date.now()): string {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
+  setMarkerPush(pushEventsToCloud);
 
   // Detached sync child spawned by a running MCP proxy. Handled before
   // anything else: it has no command, and the update check below would print
@@ -3111,8 +3125,14 @@ commands:
                      records every project, leaves this project out
                      instead (\`omnodex install\` here records it again).
                      If target is omitted, applies to every agent.
-                     Asks first; --confirm skips the question.
+                     Asks first; --confirm skips the question. Needs a
+                     person at an interactive terminal, so an agent cannot
+                     remove its own monitoring.
                      Flags:
+                       --unattended          remove without a terminal, for
+                                             scripts and fleet tools; the
+                                             removal is recorded and raises
+                                             a finding
                        --everywhere          stop recording every project
                        --plugin              remove the agent's plugin (it
                                              covers every project, so plain

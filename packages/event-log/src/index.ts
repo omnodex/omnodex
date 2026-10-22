@@ -310,6 +310,7 @@ export {
   applyCapturePause,
   endPause,
   isPauseMarker,
+  isControlMarker,
   LOCAL_ONLY_SEEN_FILE,
   localOnlySeen,
   markLocalOnlySeen,
