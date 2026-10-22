@@ -43,6 +43,7 @@ async function machine(t) {
     HOME: home,
     USERPROFILE: home,
     OMNODEX_HOME: omnodexHome,
+    OMNODEX_NO_UPDATE_CHECK: "1",
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
     CODEX_HOME: path.join(home, ".codex"),
     WSL_DISTRO_NAME: "",

@@ -57,6 +57,7 @@ function sync(env, waitMs, onStdout = () => {}) {
         HOME: env.home,
         USERPROFILE: env.home,
         OMNODEX_HOME: env.omnodexHome,
+        OMNODEX_NO_UPDATE_CHECK: "1",
         OMNODEX_SINGLE_ROOT: "1",
         OMNODEX_AUTO_SYNC: "0",
         OMNODEX_SYNC_LOCK_WAIT_MS: String(waitMs),

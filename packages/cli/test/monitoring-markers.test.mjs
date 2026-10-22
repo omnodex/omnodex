@@ -32,6 +32,8 @@ async function machine(t) {
     CODEX_HOME: path.join(home, ".codex"),
     WSL_DISTRO_NAME: "",
     OMNODEX_WSL_MOUNT_ROOT: path.join(root, "no-windows-mount"),
+    // No update check: its detached child writes into HOME after the command exits.
+    OMNODEX_NO_UPDATE_CHECK: "1",
   };
   return { root, home, omnodexHome, project, env };
 }
