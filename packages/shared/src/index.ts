@@ -875,6 +875,34 @@ export interface MonitoringChangedEvent extends BaseEvent {
   machine_label?: string;
 }
 
+/** What the config check found wrong with one installation. */
+export type MonitoringProblem =
+  | "hooks_missing"
+  | "hooks_disabled"
+  | "plugin_missing"
+  | "plugin_disabled"
+  | "mcp_missing";
+
+/**
+ * An installation Omnodex recorded no longer matches the agent's real
+ * config (our hook entry gone, hooks switched off, the plugin or MCP entry
+ * removed), and no monitoring.changed marker explains it. Written by the
+ * background config check under the capture-control session, kept and
+ * uploaded under every pause. Names only Omnodex's own config locations.
+ */
+export interface MonitoringUnexplainedChangeEvent extends BaseEvent {
+  event_type: "monitoring.unexplained_change";
+  problem: MonitoringProblem;
+  target: string;
+  component: "hooks" | "plugin" | "mcp";
+  scope: "project" | "user";
+  project_path?: string;
+  /** The agent config file or plugin directory that was checked. */
+  file: string;
+  /** Host name of the machine. */
+  machine_label?: string;
+}
+
 /** A monitoring change as the dashboards and the synced payload carry it. */
 export interface MonitoringChangeRow {
   event_id: string;
@@ -936,6 +964,7 @@ export type TraceEvent =
   | CapturePausedEvent
   | CaptureResumedEvent
   | MonitoringChangedEvent
+  | MonitoringUnexplainedChangeEvent
   | ServerObservedEvent;
 
 export type EventType = TraceEvent["event_type"];

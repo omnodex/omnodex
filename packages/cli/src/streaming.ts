@@ -37,7 +37,7 @@
  *     API would return, ensuring the dashboard's state is always consistent.
  */
 
-import { EventLog, newEventId } from "@omnodex/event-log";
+import { EventLog, isControlMarker, newEventId } from "@omnodex/event-log";
 import { Projector, runCorrelation } from "@omnodex/projection";
 import type { ReadModelStore } from "@omnodex/projection";
 import {
@@ -190,7 +190,7 @@ export async function tailSession(
 
       // Pause and monitoring markers are not in the read model; the page
       // reloads its snapshot, which carries the pauses.
-      if (event.event_type === "capture.paused" || event.event_type === "capture.resumed" || event.event_type === "monitoring.changed") {
+      if (isControlMarker(event)) {
         server.broadcast({ type: "read_model.changed" });
         continue;
       }

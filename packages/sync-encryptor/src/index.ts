@@ -114,6 +114,8 @@ export {
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
 export type { AcquireSyncLockOptions, AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions, DetectResult } from "./auto-sync.js";
+export { checkMonitoringConfig, codexHooksOff, MONITORING_CHECK_INTERVAL_MS, UNEXPLAINED_CHANGE_RULE_ID } from "./monitoring-check.js";
+export type { InstallationCheck, InstallationState, MonitoringCheckOptions, MonitoringCheckResult } from "./monitoring-check.js";
 
 // Advanced (Pro) rule usage: counted in the background pass, submitted in batches
 export { readAdvancedUsage, ADVANCED_USAGE_FILE, MAX_AGE_DAYS as ADVANCED_USAGE_MAX_AGE_DAYS } from "./advanced-usage.js";
