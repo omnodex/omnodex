@@ -41,7 +41,7 @@ interface FileChange {
   whole: boolean;
 }
 
-const PATH_KEYS = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile"];
+const PATH_KEYS = ["file_path", "path", "filePath", "filename", "notebook_path", "TargetFile", "Path"];
 
 function str(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -51,11 +51,17 @@ function str(value: unknown): string | null {
 function patchChanges(patch: string): FileChange[] {
   const out: FileChange[] = [];
   let current: FileChange | null = null;
-  for (const line of patch.split("\n")) {
+  for (const line of patch.split(/\r?\n/)) {
     const header = /^\*\*\* (Add|Update|Delete) File: (.+)$/.exec(line);
     if (header) {
       current = { path: header[2].trim(), before: "", after: "", whole: header[1] !== "Update" };
       out.push(current);
+      continue;
+    }
+    const move = /^\*\*\* Move to: (.+)$/.exec(line);
+    if (move && current) {
+      // Added content belongs to the destination, not the removed source path.
+      current.path = move[1].trim();
       continue;
     }
     if (/^\*\*\* /.test(line)) {
@@ -82,12 +88,13 @@ export function extractFileChanges(event: ToolInvokedEvent): FileChange[] {
   const path = PATH_KEYS.map((k) => str(params[k])).find((v): v is string => v !== null);
   if (!path) return [];
 
-  const content = str(params.content) ?? str(params.text) ?? str(params.CodeContent);
+  const content = str(params.content) ?? str(params.text) ?? str(params.CodeContent) ?? str(params.Content);
   if (content !== null) return [{ path, before: "", after: content, whole: true }];
 
   const pairs: [unknown, unknown][] = [
     [params.old_string, params.new_string],
     [params.TargetContent, params.ReplacementContent],
+    [params.Target, params.Replacement],
   ];
   if (Array.isArray(params.edits)) {
     for (const edit of params.edits as Record<string, unknown>[]) pairs.push([edit?.old_string, edit?.new_string]);
