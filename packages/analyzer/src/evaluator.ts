@@ -32,7 +32,7 @@
  * does not load the event log or batch helpers.
  */
 
-import type { RiskDetectedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
+import type { RiskDetectedEvent, ServerObservedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 export { RULE_FORMAT_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
@@ -41,7 +41,7 @@ import { RuleRegistry } from "./registry.js";
 import { COMMUNITY_RULES } from "./rules/index.js";
 import type { Condition, EvaluationContext, RiskFinding, RuleDefinition } from "./types.js";
 import { createWorkspaceResolver, type WorkspaceRootsFn } from "./workspace.js";
-import { reachedHosts, type MachineState } from "./machine-state.js";
+import { memoryMachineState, reachedHosts, type MachineState } from "./machine-state.js";
 import type { McpServerTransport } from "@omnodex/shared";
 import { CAPTURE_HOSTS } from "./capture.js";
 import { loadAdvancedRules } from "./bundle.js";
@@ -101,6 +101,7 @@ const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
   staging: true,
   destination_first_seen: true,
   file_edit: true,
+  server_drift: true,
 };
 
 const EVIDENCE_ROLES = new Set(["source", "staging", "sink", "context"]);
@@ -163,6 +164,7 @@ export function classifyRule(rule: RuleDefinition): EvaluationClass {
         raise(condition.scope === "machine" ? "machine" : "session");
         break;
       case "destination_first_seen":
+      case "server_drift":
         raise("machine");
         break;
       default:
@@ -335,8 +337,11 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     recorded.add(`${event.rule_id}::${event.related_event_id}`);
   }
 
-  function emit(event: ToolInvokedEvent, finding: RiskFinding): RiskDetectedEvent | null {
-    const key = `${finding.rule_id}::${event.tool_call_id}`;
+  function emit(event: ToolInvokedEvent | ServerObservedEvent, finding: RiskFinding): RiskDetectedEvent | null {
+    // A finding on a call points at the call; one on a server observation,
+    // which has no call, at the observation event.
+    const related = event.event_type === "tool.invoked" ? event.tool_call_id : event.event_id;
+    const key = `${finding.rule_id}::${related}`;
     if (recorded.has(key)) {
       stats.skipped++;
       return null;
@@ -355,12 +360,12 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
       severity: finding.severity,
       category: finding.category,
       description: finding.description,
-      related_event_id: event.tool_call_id,
+      related_event_id: related,
       rule_id: finding.rule_id,
       rule_tier: finding.tier,
     };
     if (finding.related_event_ids?.length) {
-      risk.related_event_ids = [...finding.related_event_ids, event.tool_call_id];
+      risk.related_event_ids = [...finding.related_event_ids, related];
     }
     if (finding.evidence) {
       risk.evidence = { ...finding.evidence, found_at: opts.host === "proxy" ? "capture" : "background" };
@@ -375,6 +380,11 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   // After every rule has judged a call, so the call that first reaches a
   // host reads as new to all of them, and whether or not any rule looked.
   const tracksDestinations = rules.some((r) => r.conditions.some((c) => c.type === "destination_first_seen"));
+  // Server observations are recorded once per event, for every drift rule.
+  // Without machine state they are compared within this evaluator's run, as
+  // machine-scope first-seen rules fall back to session scope.
+  const tracksServers = rules.some((r) => r.conditions.some((c) => c.type === "server_drift"));
+  const serverState = opts.machineState ?? memoryMachineState();
   function noteReached(event: ToolInvokedEvent): void {
     if (!tracksDestinations || !opts.machineState) return;
     const hosts = reachedHosts(event);
@@ -415,6 +425,19 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
           findings.sort((a, b) => (order.get(a.rule_id) ?? 0) - (order.get(b.rule_id) ?? 0));
           const out: RiskDetectedEvent[] = [];
           for (const finding of findings) {
+            const risk = emit(event, finding);
+            if (risk) out.push(risk);
+          }
+          return out;
+        }
+        case "server.observed": {
+          // A host told to leave machine rules to the capture path does not
+          // record the observation either: recording it first would make
+          // the capture path's comparison see no change.
+          if (!tracksServers || (options.classes && !options.classes.includes("machine"))) return [];
+          const drift = serverState.noteServerObservation(event);
+          const out: RiskDetectedEvent[] = [];
+          for (const finding of statefulEngine.evaluateObservation(event, drift)) {
             const risk = emit(event, finding);
             if (risk) out.push(risk);
           }

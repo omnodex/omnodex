@@ -25,7 +25,19 @@
  *   { "version": 1, "hosts": { "<host>": { "first_seen": "..." } } }
  *
  * so a rule can say a call goes somewhere this machine has never sent
- * anything. Nothing in either file leaves the machine.
+ * anything.
+ *
+ * And it keeps the last observation of each MCP server (from the proxy's
+ * server.observed events), in $OMNODEX_HOME/known-server-fingerprints.json:
+ *
+ *   { "version": 1, "servers": { "<name>|<transport>": { "seen_at": "...",
+ *       "config": "<fp>", "reported_version": "1.0.15",
+ *       "installed_version": "1.0.15", "list": "<fp>",
+ *       "tools": { "<tool>": "<fp>" } } } }
+ *
+ * so a rule can say a server changed since this machine last saw it. The
+ * newest observation always replaces the record. Nothing in any of these
+ * files leaves the machine.
  *
  * On first use each file is seeded from the event logs, so upgrading does
  * not report every server or host already in use as new. Writes merge with
@@ -35,11 +47,27 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { McpServerTransport, ToolInvokedEvent, TraceEvent } from "@omnodex/shared";
+import type { McpServerTransport, ServerObservedEvent, ToolInvokedEvent, TraceEvent } from "@omnodex/shared";
 import { normalizeAction } from "./action.js";
 
 export const KNOWN_MCP_SERVERS_FILE = "known-mcp-servers.json";
 export const KNOWN_DESTINATIONS_FILE = "known-destinations.json";
+export const KNOWN_SERVER_FINGERPRINTS_FILE = "known-server-fingerprints.json";
+
+/** How an MCP server differs from the last time this machine observed it. */
+export interface ServerDrift {
+  /** Reported version, before and after, when both are known and differ. */
+  reportedVersion?: { from: string; to: string };
+  /** Installed package version, before and after, when both are known and differ. */
+  installedVersion?: { from: string; to: string };
+  configChanged: boolean;
+  added: string[];
+  removed: string[];
+  /** Tools whose description or input schema changed. */
+  changed: string[];
+  /** The change was announced while the server was in use. */
+  midSession: boolean;
+}
 
 export type SeenResult = "new" | "changed" | "known";
 
@@ -53,6 +81,12 @@ export interface MachineState {
   knowsDestination(host: string): boolean;
   /** Record the hosts a call reached. */
   noteDestinations(hosts: readonly string[], at: string): void;
+  /**
+   * Record an MCP server observation and say how the server differs from
+   * the last one recorded. Null for the first observation of a server, for
+   * an identical one, and for one older than the record.
+   */
+  noteServerObservation(event: ServerObservedEvent): ServerDrift | null;
 }
 
 /** The external hosts a call reaches: what known-destinations.json records. */
@@ -201,6 +235,98 @@ function writeHosts(file: string, hosts: Record<string, HostRecord>): void {
   fs.renameSync(tmp, file);
 }
 
+interface FingerprintRecord {
+  seen_at: string;
+  config: string;
+  reported_version?: string;
+  installed_version?: string;
+  list: string;
+  tools: Record<string, string>;
+}
+
+interface FingerprintsFile {
+  version: 1;
+  servers: Record<string, FingerprintRecord>;
+}
+
+function serverKey(event: ServerObservedEvent): string {
+  return `${event.mcp_server}|${event.transport}`;
+}
+
+function toFingerprintRecord(event: ServerObservedEvent): FingerprintRecord {
+  return {
+    seen_at: event.occurred_at,
+    config: event.config_fingerprint,
+    ...(event.reported?.version ? { reported_version: event.reported.version } : {}),
+    ...(event.installed_version ? { installed_version: event.installed_version } : {}),
+    list: event.tool_list_fingerprint,
+    tools: Object.fromEntries(event.tools.map((t) => [t.name, t.fingerprint])),
+  };
+}
+
+/** How `now` differs from `before`, or null when nothing compared differs. */
+export function compareObservations(before: FingerprintRecord, now: FingerprintRecord, midSession: boolean): ServerDrift | null {
+  const version = (from?: string, to?: string) => (from && to && from !== to ? { from, to } : undefined);
+  const reportedVersion = version(before.reported_version, now.reported_version);
+  const installedVersion = version(before.installed_version, now.installed_version);
+  const configChanged = before.config !== now.config;
+  const added = Object.keys(now.tools).filter((t) => !Object.hasOwn(before.tools, t)).sort();
+  const removed = Object.keys(before.tools).filter((t) => !Object.hasOwn(now.tools, t)).sort();
+  const changed = Object.keys(now.tools)
+    .filter((t) => Object.hasOwn(before.tools, t) && before.tools[t] !== now.tools[t])
+    .sort();
+  if (!reportedVersion && !installedVersion && !configChanged && !added.length && !removed.length && !changed.length) {
+    return null;
+  }
+  return {
+    ...(reportedVersion ? { reportedVersion } : {}),
+    ...(installedVersion ? { installedVersion } : {}),
+    configChanged,
+    added,
+    removed,
+    changed,
+    midSession,
+  };
+}
+
+function seedFingerprints(roots: readonly string[]): Record<string, FingerprintRecord> {
+  const servers: Record<string, FingerprintRecord> = {};
+  eachLoggedSession(roots, (events) => {
+    for (const e of events) {
+      if (e.event_type !== "server.observed") continue;
+      const key = serverKey(e);
+      if (!servers[key] || servers[key].seen_at <= e.occurred_at) servers[key] = toFingerprintRecord(e);
+    }
+  });
+  return servers;
+}
+
+function readFingerprints(file: string): FingerprintsFile | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<FingerprintsFile>;
+    if (parsed?.version === 1 && parsed.servers && typeof parsed.servers === "object") {
+      return { version: 1, servers: parsed.servers };
+    }
+  } catch {
+    // Missing or unreadable.
+  }
+  return null;
+}
+
+function writeFingerprints(file: string, changed: Record<string, FingerprintRecord>): void {
+  const onDisk = readFingerprints(file);
+  const merged: FingerprintsFile = { version: 1, servers: { ...(onDisk?.servers ?? {}) } };
+  // Another process may have recorded a newer observation since we loaded.
+  for (const [key, record] of Object.entries(changed)) {
+    const current = merged.servers[key];
+    if (!current || current.seen_at <= record.seen_at) merged.servers[key] = record;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(merged, null, 2) + "\n");
+  fs.renameSync(tmp, file);
+}
+
 /**
  * The machine state for an installation. A file that does not exist yet
  * is seeded from the event logs under `seedRoots` (event-log root
@@ -231,17 +357,30 @@ export function openMachineState(
       // Unwritable home: keep working in memory.
     }
   }
+  const fingerprintsFile = path.join(home, KNOWN_SERVER_FINGERPRINTS_FILE);
+  let fingerprints = readFingerprints(fingerprintsFile)?.servers;
+  if (!fingerprints) {
+    fingerprints = seedFingerprints(roots);
+    try {
+      writeFingerprints(fingerprintsFile, fingerprints);
+    } catch {
+      // Unwritable home: keep working in memory.
+    }
+  }
+  const knownFingerprints = fingerprints;
   return makeState(
     state.servers,
     (name) => writeState(file, { version: 1, servers: { [name]: state.servers[name] } }),
     hosts,
     (added) => writeHosts(hostsFile, added),
+    knownFingerprints,
+    (key) => writeFingerprints(fingerprintsFile, { [key]: knownFingerprints[key]! }),
   );
 }
 
 /** An in-memory machine state, for tests and hosts with nowhere to persist. */
 export function memoryMachineState(): MachineState {
-  return makeState({}, () => undefined, {}, () => undefined);
+  return makeState({}, () => undefined, {}, () => undefined, {}, () => undefined);
 }
 
 function makeState(
@@ -249,8 +388,24 @@ function makeState(
   persist: (name: string) => void,
   hosts: Record<string, HostRecord>,
   persistHosts: (added: Record<string, HostRecord>) => void,
+  fingerprints: Record<string, FingerprintRecord>,
+  persistFingerprint: (key: string) => void,
 ): MachineState {
   return {
+    noteServerObservation(event): ServerDrift | null {
+      const key = serverKey(event);
+      const before = fingerprints[key];
+      const now = toFingerprintRecord(event);
+      if (before && event.occurred_at < before.seen_at) return null;
+      fingerprints[key] = now;
+      try {
+        persistFingerprint(key);
+      } catch {
+        // Keep the in-memory answer; the next writer will persist it.
+      }
+      return before ? compareObservations(before, now, event.trigger === "list_changed") : null;
+    },
+
     knowsDestination(host): boolean {
       return Object.hasOwn(hosts, host.toLowerCase());
     },
