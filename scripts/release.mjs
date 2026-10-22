@@ -106,7 +106,7 @@ export function composeNotes(generated, highlights = "") {
   return [
     ...(lead ? [`## Highlights\n\n${lead}\n`] : []),
     generated.trimEnd() + "\n",
-    `Release notes for everything Omnodex ships, including the hosted dashboard and paid plans: ${RELEASE_NOTES_URL}\n`,
+    `What's new across Omnodex, including the hosted dashboard and paid plans: ${RELEASE_NOTES_URL}\n`,
   ].join("\n");
 }
 
