@@ -247,7 +247,11 @@ export function evaluateCredentialMatch(
   }
   if (scope.includes("staged")) {
     for (const { path, text } of extractStagedContent(event)) {
-      const hit = found(findCredentials(text, condition.patterns));
+      const normalized = path.replace(/\\/g, "/");
+      const patterns = condition.patterns.filter((p) =>
+        !p.exclude_staged_paths?.some((regex) => compiled(regex).test(normalized)),
+      );
+      const hit = found(findCredentials(text, patterns));
       if (hit.length > 0) return [{ ...hit[0], staged_path: path }];
     }
   }

@@ -97,7 +97,9 @@ export function extractFileChanges(event: ToolInvokedEvent): FileChange[] {
     [params.Target, params.Replacement],
   ];
   if (Array.isArray(params.edits)) {
-    for (const edit of params.edits as Record<string, unknown>[]) pairs.push([edit?.old_string, edit?.new_string]);
+    for (const edit of params.edits as Record<string, unknown>[]) {
+      pairs.push([edit?.old_string ?? edit?.oldText, edit?.new_string ?? edit?.newText]);
+    }
   }
   if (Array.isArray(params.ReplacementChunks)) {
     for (const chunk of params.ReplacementChunks as Record<string, unknown>[]) pairs.push([chunk?.TargetContent, chunk?.ReplacementContent]);

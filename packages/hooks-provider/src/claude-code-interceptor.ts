@@ -28,11 +28,11 @@
  * An install made before an event was added lacks it until install runs
  * again; missingEvents() names what is missing, for `omnodex status`.
  *
- * All handlers are registered with `async: true` so the agent's
- * execution path is never blocked, except PreToolUse in guardrails
- * enforcement mode: Claude Code ignores an async hook's decision, so that
- * one handler runs synchronously, with a short timeout after which the call
- * proceeds. setPreToolUseSync() switches an installed file between the two
+ * Monitor handlers hand work to a detached process. PreToolUse and session
+ * boundaries wait only for the local receipt, so a fast CLI cannot cancel
+ * capture before it starts. Other events remain async. In guardrails mode
+ * PreToolUse instead waits for its decision, with a short timeout after
+ * which the call proceeds. setPreToolUseSync() switches between the two
  * when the mode changes. A settings file shared by several Omnodex homes
  * (a project used from Windows and WSL) keeps PreToolUse synchronous while
  * any of them is in guardrails; see @omnodex/shared/guardrails-hooks.
@@ -280,18 +280,19 @@ export class ClaudeCodeInterceptor implements Interceptor {
     if (handler[OMNODEX_TAG] === true) return true;
     const command = handler.command;
     if (typeof command !== "string") return false;
-    return command === this.shimCommand() || OMNODEX_COMMAND.test(command);
+    return command.replace(/ --background$/, "") === this.shimCommand() || OMNODEX_COMMAND.test(command);
   }
 
   private makeMatcherGroup(eventName: string, syncPreToolUse: boolean): HookMatcherGroup {
     const sync = eventName === "PreToolUse" && syncPreToolUse;
+    const receipt = ["PreToolUse", "SessionStart", "SessionEnd"].includes(eventName);
     return {
       matcher: "*",
       hooks: [
         {
           type: "command",
-          command: this.shimCommand(),
-          ...(sync ? { timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS } : { async: true, timeout: this.options.timeoutSeconds }),
+          command: this.shimCommand() + (sync ? "" : " --background"),
+          ...(sync || receipt ? { timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS } : { async: true, timeout: this.options.timeoutSeconds }),
           [OMNODEX_TAG]: true,
         },
       ],
@@ -315,13 +316,12 @@ export class ClaudeCodeInterceptor implements Interceptor {
       ...g,
       hooks: (g.hooks ?? []).map((h) => {
         if (!this.isOmnodexHandler(h)) return h;
-        const isSync = h.async !== true;
-        if (isSync === sync) return h;
+        const command = (h.command ?? "").replace(/ --background$/, "");
+        const nextCommand = command + (sync ? "" : " --background");
+        if (h.async !== true && h.command === nextCommand && h.timeout === SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS) return h;
         changed = true;
         const { async: _async, ...rest } = h;
-        return sync
-          ? { ...rest, timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS }
-          : { ...rest, async: true, timeout: this.options.timeoutSeconds };
+        return { ...rest, command: nextCommand, timeout: SYNC_PRE_TOOL_USE_TIMEOUT_SECONDS };
       }),
     }));
     if (!changed) return false;

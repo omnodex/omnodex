@@ -216,6 +216,12 @@ export interface CredentialPattern {
   /** Credential type label used in {{credential_types}} substitution. */
   type: string;
   /**
+   * Skip this pattern in staged files whose forward-slash path matches any
+   * of these regexes. Exec and other scopes are unaffected. Useful when a
+   * dedicated file-edit rule already reports the direct settings change.
+   */
+  exclude_staged_paths?: readonly string[];
+  /**
    * Index of the capture group whose value identifies the credential.
    * If omitted, the full match is used. The value itself is never stored;
    * only the type label is recorded in risk findings.

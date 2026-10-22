@@ -109,6 +109,27 @@ test("bundle: the bundled Claude Code shim writes an event", async () => {
   assert.equal(events[0].tool_name, "Bash");
 });
 
+test("bundle: monitor handoff runs its detached worker from the standalone shim", async () => {
+  const home = path.join(tmp, "background-shim-home");
+  const result = spawnSync(process.execPath, [path.join(out, "bin", "claude-hook-shim.js"), "--background"], {
+    input: JSON.stringify({session_id:"case-bundle-background",hook_event_name:"PreToolUse",tool_name:"Bash",tool_use_id:"case-bundle-call",tool_input:{command:"omnodex uninstall"},cwd:"/home/case/repo"}),
+    encoding:"utf8",
+    env:{...process.env,HOME:home,USERPROFILE:home,OMNODEX_HOME:home,OMNODEX_SINGLE_ROOT:"1",OMNODEX_AUTO_SYNC:"0",OMNODEX_AUTO_DETECT:"0"},
+  });
+  assert.equal(result.status,0,result.stderr);
+  assert.equal(result.stdout,"");
+  const end=Date.now()+30000;
+  let events=[];
+  while(Date.now()<end) {
+    const raw=await fs.readFile(path.join(home,"event-log/sessions/case-bundle-background.jsonl"),"utf8").catch(()=>"");
+    events=raw.split("\n").filter(Boolean).flatMap(line=>{try{return [JSON.parse(line)]}catch{return []}});
+    if(events.some(e=>e.rule_id==="RULE_SELF_PROTECTION_BASH") && (await fs.readdir(path.join(home,"hook-spool"))).length===0) break;
+    await new Promise(r=>setTimeout(r,40));
+  }
+  assert.ok(events.some(e=>e.event_type==="tool.invoked"));
+  assert.ok(events.some(e=>e.rule_id==="RULE_SELF_PROTECTION_BASH"));
+});
+
 test("bundle: Antigravity capture works without a permission hook", async () => {
   const home = path.join(tmp, "antigravity-home");
   const common = { conversationId: "case-bundle", workspacePaths: ["/home/case/repo"],

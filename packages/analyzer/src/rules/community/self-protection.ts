@@ -110,7 +110,7 @@ export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_BASH",
-  version: "1.1.0",
+  version: "1.2.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -184,6 +184,10 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
           // Switching every hook off from the shell (jq, sed, echo)
           regex: "disableAllHooks[\"']?\\s*[:=]\\s*true",
           type: "hooks-disabled",
+          // Direct settings changes already get the HIGH file-edit finding.
+          // Keep this pattern for commands and scripts, and keep every other
+          // shell pattern active in settings files.
+          exclude_staged_paths: ["(?:^|/)settings(?:\\.local)?\\.json$"],
         },
       ],
     },

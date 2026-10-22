@@ -26,7 +26,7 @@ function makeInterceptor(projectPath) {
   });
 }
 
-test("install writes the five hook events with async=true", async (t) => {
+test("install waits only for capture receipts at tool entry and session boundaries", async (t) => {
   const projectPath = await fresh(t);
   const interceptor = makeInterceptor(projectPath);
   await interceptor.install();
@@ -46,7 +46,8 @@ test("install writes the five hook events with async=true", async (t) => {
     assert.equal(group.matcher, "*");
     const [handler] = group.hooks;
     assert.equal(handler.type, "command");
-    assert.equal(handler.async, true);
+    assert.equal(handler.async, ["PreToolUse", "SessionStart", "SessionEnd"].includes(eventName) ? undefined : true);
+    assert.match(handler.command, / --background$/);
     assert.equal(handler["omnodex-managed"], true);
     assert.match(handler.command, /OMNODEX_HOME=/);
     assert.match(handler.command, /claude-hook-shim|shim\.js/);
@@ -129,7 +130,7 @@ test("homeRelativeShimPath writes a host-neutral command with no env prefix", as
   for (const groups of Object.values(settings.hooks)) {
     assert.equal(
       groups[0].hooks[0].command,
-      'node "$HOME/.omnodex/bin/claude-hook-launcher.js"',
+      'node "$HOME/.omnodex/bin/claude-hook-launcher.js" --background',
     );
   }
 });
@@ -321,6 +322,7 @@ test("guardrails: install registers PreToolUse synchronously and everything else
   const [pre] = hooks.PreToolUse[0].hooks;
   assert.equal(pre.async, undefined);
   assert.equal(pre.timeout, 5);
+  assert.doesNotMatch(pre.command, / --background$/);
   assert.equal(hooks.PostToolUse[0].hooks[0].async, true);
 });
 
@@ -345,8 +347,9 @@ test("setPreToolUseSync rewrites only Omnodex's PreToolUse handler, both ways", 
   assert.equal(await interceptor.setPreToolUseSync(true), false, "already synchronous");
   assert.equal(await interceptor.setPreToolUseSync(false), true);
   after = JSON.parse(await readFile(file, "utf8"));
-  assert.equal(after.hooks.PreToolUse[1].hooks[0].async, true);
-  assert.equal(after.hooks.PreToolUse[1].hooks[0].timeout, 30);
+  assert.equal(after.hooks.PreToolUse[1].hooks[0].async, undefined);
+  assert.equal(after.hooks.PreToolUse[1].hooks[0].timeout, 5);
+  assert.match(after.hooks.PreToolUse[1].hooks[0].command, / --background$/);
 });
 
 test("setPreToolUseSync on a file with no Omnodex hooks changes nothing", async (t) => {
@@ -386,7 +389,7 @@ test("shared file: leaving guardrails in one home keeps PreToolUse synchronous f
   assert.equal((await preToolUse(settingsPath)).async, undefined);
 
   assert.equal(await b.setPreToolUseSync(false), true);
-  assert.equal((await preToolUse(settingsPath)).async, true);
+  assert.match((await preToolUse(settingsPath)).command, / --background$/);
 });
 
 test("shared file: the list survives Claude Code rewriting the settings file", async (t) => {
@@ -421,5 +424,5 @@ test("shared file: uninstall from one home unlists it", async (t) => {
   await b.install();
   await writeFile(path.join(b.options.omnodexHome, "omnodex-config.json"), JSON.stringify({ enforcement: { mode: "shadow" } }));
   assert.equal(await b.setPreToolUseSync(false), true);
-  assert.equal((await preToolUse(settingsPath)).async, true);
+  assert.match((await preToolUse(settingsPath)).command, / --background$/);
 });
