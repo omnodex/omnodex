@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkTitle, parseSubject, releaseNotes } from "../conventional.mjs";
-import { compareVersions, nextVersion, parseVersion } from "../release.mjs";
+import { compareVersions, composeNotes, nextVersion, parseVersion } from "../release.mjs";
 
 test("parseSubject reads type, scope, breaking and summary", () => {
   assert.deepEqual(parseSubject("feat(cli): add a flag (#12)"), {
@@ -64,4 +64,14 @@ test("nextVersion bumps within 0.x", () => {
   assert.deepEqual(nextVersion(parseVersion("0.3.4"), "patch"), [0, 3, 5]);
   assert.throws(() => nextVersion([0, 1, 0], "major"));
   assert.ok(compareVersions(parseVersion("0.10.0"), parseVersion("0.9.9")) > 0);
+});
+
+test("composeNotes leads with highlights when given and always links the site's release notes", () => {
+  const generated = "## Fixes\n\n- **sync:** pair routed calls (#48)\n";
+  const plain = composeNotes(generated);
+  assert.ok(plain.startsWith("## Fixes"));
+  assert.match(plain, /https:\/\/omnodex\.com\/resources\/release-notes\n$/);
+  assert.equal(composeNotes(generated, "   "), plain);
+  const led = composeNotes(generated, "Shadow mode is here.\n");
+  assert.ok(led.startsWith("## Highlights\n\nShadow mode is here.\n\n## Fixes"));
 });
