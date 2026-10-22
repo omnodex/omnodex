@@ -132,7 +132,7 @@ test("install --everywhere writes each agent's user-level file and keeps what el
   assert.equal(claude.model, "opus");
   assert.ok(claude.hooks.Stop.some((g) => g.hooks.some((h) => h.command === "say done")));
   const claudeCommand = claude.hooks.PreToolUse[0].hooks[0].command;
-  assert.match(claudeCommand, /claude-hook-launcher\.js"? --user-scope$/);
+  assert.match(claudeCommand, /claude-hook-launcher\.js"? --user-scope --background$/);
 
   const codex = await readJson(path.join(m.home, ".codex", "hooks.json"));
   assert.match(codex.hooks.PostToolUse[0].hooks[0].command, /codex-hook-launcher\.js"? --user-scope$/);
@@ -284,6 +284,8 @@ test("launcher: project hooks step aside when the platform records every project
   assert.equal(await r.fire([], { cwd: r.project }), null, "project hook steps aside");
   const got = await r.fire(["--user-scope"], { cwd: r.project });
   assert.deepEqual(got.argv, [], "the marker is not passed to the shim");
+  const background = await r.fire(["--user-scope", "--background"], { cwd: r.project });
+  assert.deepEqual(background.argv, ["--background"], "the capture handoff flag reaches the shim");
 
   // Another platform's every-project recording does not affect this one.
   const codex = await launcherRig(t, "codex");
