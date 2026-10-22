@@ -31,7 +31,8 @@
  *   Long-running hosts call endSession() when a session ends to release it.
  */
 
-import type { RiskSeverity, ToolInvokedEvent } from "@omnodex/shared";
+import type { RiskSeverity, ServerObservedEvent, ToolInvokedEvent } from "@omnodex/shared";
+import type { ServerDrift } from "./machine-state.js";
 import type {
   Condition,
   EvaluationContext,
@@ -73,6 +74,7 @@ export const STATEFUL_CONDITION_TYPES: ReadonlySet<Condition["type"]> = new Set(
   "rate_threshold",
   "sequence",
   "destination_first_seen",
+  "server_drift",
 ]);
 
 /** A stateless condition against one event; used for sequence priors. */
@@ -122,6 +124,9 @@ function evaluateCondition(
       return evaluateFileEdit(condition, event);
     case "destination_first_seen":
       return evaluateDestinationFirstSeen(event, context);
+    case "server_drift":
+      // Judges server.observed events, in evaluateObservation.
+      return [];
     case "rate_threshold":
       // Handled specially in the rule loop (needs rule_id for state key).
       // This case should not be reached; it exists for exhaustive switch.
@@ -295,4 +300,84 @@ export class RuleEngine {
 
     return findings;
   }
+
+  /**
+   * Evaluate the server_drift rules against a server.observed event, given
+   * how the server differs from its last observation (null: it does not).
+   * The caller records the observation once, so every rule judges the same
+   * comparison.
+   */
+  evaluateObservation(event: ServerObservedEvent, drift: ServerDrift | null): RiskFinding[] {
+    if (!drift) return [];
+    const findings: RiskFinding[] = [];
+    for (const rule of this.rules) {
+      if (!rule.event_types.includes(event.event_type)) continue;
+      const labels: string[] = [];
+      let matched = rule.conditions.length > 0;
+      for (const condition of rule.conditions) {
+        const label = condition.type === "server_drift" ? describeDrift(condition.change, drift) : null;
+        if (label === null) {
+          matched = false;
+          break;
+        }
+        labels.push(label);
+      }
+      if (!matched) continue;
+      const ctx: MatchContext = { tool_name: "", mcp_server: event.mcp_server, matched_label: labels.join("; ") };
+      const change = rule.conditions.find((c) => c.type === "server_drift")!.change;
+      findings.push({
+        severity: rule.severity,
+        category: rule.category,
+        description: renderTemplate(rule.description_template, ctx),
+        rule_id: rule.rule_id,
+        tier: rule.tier,
+        // Structured, so the change syncs with the finding and needs no parsing.
+        evidence: {
+          steps: [],
+          drift: {
+            server: event.mcp_server,
+            transport: event.transport,
+            change,
+            mid_session: drift.midSession,
+            ...(drift.reportedVersion ? { reported_version: drift.reportedVersion } : {}),
+            ...(drift.installedVersion ? { installed_version: drift.installedVersion } : {}),
+            config_changed: drift.configChanged,
+            tools_added: drift.added,
+            tools_removed: drift.removed,
+            tools_changed: drift.changed,
+          },
+        },
+      });
+    }
+    return findings;
+  }
+}
+
+/**
+ * The change a server_drift condition matches, in words, or null when the
+ * drift is not that kind. "updated" takes any version or config change and
+ * lists tool changes with it; "tools" and "definition" only match when the
+ * version and config held still, as a change there is the less expected.
+ */
+function describeDrift(change: "updated" | "tools" | "definition", drift: ServerDrift): string | null {
+  const updated = Boolean(drift.reportedVersion || drift.installedVersion || drift.configChanged);
+  const parts: string[] = [];
+  if (change === "updated") {
+    if (!updated) return null;
+    if (drift.reportedVersion) parts.push(`reported version ${drift.reportedVersion.from} to ${drift.reportedVersion.to}`);
+    if (drift.installedVersion) parts.push(`installed version ${drift.installedVersion.from} to ${drift.installedVersion.to}`);
+    if (drift.configChanged) parts.push("its configuration entry changed");
+    if (drift.added.length) parts.push(`new tools: ${drift.added.join(", ")}`);
+    if (drift.removed.length) parts.push(`dropped tools: ${drift.removed.join(", ")}`);
+    if (drift.changed.length) parts.push(`changed tools: ${drift.changed.join(", ")}`);
+  } else if (change === "tools") {
+    if (updated || (!drift.added.length && !drift.removed.length)) return null;
+    if (drift.added.length) parts.push(`now offers ${drift.added.join(", ")}`);
+    if (drift.removed.length) parts.push(`no longer offers ${drift.removed.join(", ")}`);
+  } else {
+    if (updated || !drift.changed.length) return null;
+    parts.push(drift.changed.join(", "));
+  }
+  if (drift.midSession) parts.push("announced while in use");
+  return parts.join("; ");
 }

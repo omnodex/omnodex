@@ -174,13 +174,16 @@ Supply chain:
 15. **RULE_SUPPLY_CHAIN_MCP_URL_MUTATION** (HIGH) - mutations to MCP server URLs or endpoints.
 16. **RULE_SUPPLY_CHAIN_PKG_CONFIG_WRITE** (HIGH) - writes to package manager config files.
 17. **RULE_SUPPLY_CHAIN_WORKSPACE_CONFIG_ACCESS** (MEDIUM) - access to workspace configuration files.
+18. **RULE_MCP_SERVER_UPDATED** (LOW) - an MCP server reached through the proxy changed its reported or installed version or its config entry since this machine last saw it; tool changes that came with it are listed.
+19. **RULE_MCP_SERVER_TOOLS_CHANGED** (LOW) - an MCP server added or removed tools without a version or config change.
+20. **RULE_MCP_TOOL_DEFINITION_CHANGED** (MEDIUM) - an MCP server changed a tool's description or input schema without a version or config change. A server's first observation is its baseline; each change is reported once.
 
 Unbounded consumption:
-18. **RULE_UNBOUNDED_CONSUMPTION_BURST** (MEDIUM) - burst of tool calls exceeding a rate threshold.
-19. **RULE_UNBOUNDED_CONSUMPTION_SUSTAINED** (HIGH) - sustained high rate of tool calls over a longer window.
+21. **RULE_UNBOUNDED_CONSUMPTION_BURST** (MEDIUM) - burst of tool calls exceeding a rate threshold.
+22. **RULE_UNBOUNDED_CONSUMPTION_SUSTAINED** (HIGH) - sustained high rate of tool calls over a longer window.
 
 Input validation:
-20. **RULE_INPUT_VALIDATION_SQL_INJECTION** (HIGH) - SQL injection patterns in tool call parameters.
+23. **RULE_INPUT_VALIDATION_SQL_INJECTION** (HIGH) - SQL injection patterns in tool call parameters.
 
 The detector writes `risk.detected` events back into the event log. The `dashboard` command auto-runs detection before replaying.
 

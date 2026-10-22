@@ -129,7 +129,8 @@ export type Condition =
   | SequenceCondition
   | StagingCondition
   | DestinationFirstSeenCondition
-  | FileEditCondition;
+  | FileEditCondition
+  | ServerDriftCondition;
 
 /**
  * Matches when at least one file path extracted from the event matches at
@@ -514,6 +515,25 @@ export interface SequenceStep {
  */
 export interface DestinationFirstSeenCondition {
   type: "destination_first_seen";
+}
+
+/**
+ * Matches a server.observed event when the MCP server differs from the last
+ * time this machine observed it (see MachineState.noteServerObservation).
+ * Machine state, so only hosts that keep one run it. The first observation
+ * of a server is its baseline and never matches.
+ *
+ *   "updated"    -- the reported or installed version, or the config entry,
+ *                   changed; any tool changes are listed with it
+ *   "tools"      -- tools were added or removed, version and config unchanged
+ *   "definition" -- a tool's description or input schema changed, version
+ *                   and config unchanged
+ *
+ * Yields one context describing the change as {{matched_label}}.
+ */
+export interface ServerDriftCondition {
+  type: "server_drift";
+  change: "updated" | "tools" | "definition";
 }
 
 /**

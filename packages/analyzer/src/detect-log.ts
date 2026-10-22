@@ -100,6 +100,8 @@ export function markLocalOnlyFindings(findings: RiskDetectedEvent[], source: rea
   const localCalls = new Set<string>();
   for (const e of source) {
     if (e.local_only && (e.event_type === "tool.invoked" || e.event_type === "tool.completed")) localCalls.add(e.tool_call_id);
+    // Drift findings point at the server observation, not a call.
+    if (e.local_only && e.event_type === "server.observed") localCalls.add(e.event_id);
   }
   if (localCalls.size === 0) return;
   for (const f of findings) {
