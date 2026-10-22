@@ -73,3 +73,38 @@ and pins the community findings each chain raises through the batch analyzer.
 The upload to `198.51.100.23` raises the unknown-IP outbound finding; uploads
 to reserved names raise no community finding of their own, since no community
 rule follows data from a read into a later upload.
+
+## History fixtures
+
+`buildHistoryScenarios({ machine })` builds six weeks of ordinary work on one
+of two machines, for anything that compares a session with the ones before
+it. Run each machine into its own home, so they arrive as separate machines:
+`spike --scenario-set history --machine a`, then `--machine b` in a second
+home. Sessions carry a git origin remote (`project_remote`); the two
+machines share one repo under different folder names. Each machine also
+writes `monitoring.changed` markers: hooks installed on day 0, plus a CLI
+update on machine a (day 33) and Codex hooks installed on machine b
+(day 25). The seed varies timing and the files sessions read, never which
+hosts, servers or tools appear. Hosts are reserved example names, except
+`webhook.site`, which the community IOC rule flags.
+
+`HISTORY_EXPECTATIONS` lists the items below; `packages/cli/test/history-scenarios.test.mjs`
+checks each one against the raw history across three seeds and runs both
+machines through the CLI in isolated homes. Compare within the project (its
+remote); tools also compare within the platform. A change for one platform
+applies to that platform's sessions only.
+
+| Dataset | Machine | Day | Item | Expect | Why |
+| --- | --- | --- | --- | --- | --- |
+| `stable-project` | a | 39 | `new-host.example.net` | new | First use after 39 days of the same hosts |
+| `stable-project` | a | 39 | server `notes` | new | First MCP server beyond `tracker` |
+| `stable-project` | a | 39 | tool `WebSearch` (Claude Code) | new | First use of the tool |
+| `stable-project` | a | 39 | `api.example.com`, server `tracker`, tool `Bash` | not new | Used daily since day 0 |
+| `stable-project` | a | 40 | `webhook.site` | held | New, with a HIGH IOC finding |
+| `shared-remote` | b | 14 | `api.example.com`, server `tracker` | not new | Machine a used them in the same repo, under another folder |
+| `shared-remote` | b | 20 | `status.example.org` | new | No machine used it in the repo before |
+| `same-folder-name` | b | 30 | `db.example.com` | new | Machine a uses it daily in `/home/case/api`, but that is another repo (`case/api` against `other/api`) |
+| `hook-gained` | b | 26 | `pkg.example.dev`, tool `apply_patch` (Codex) | new coverage | First Codex session after Codex hooks were installed on day 25 |
+| `hook-gained` | b | 26 | `api.example.com` | not new | Claude Code sessions in the repo used it all along |
+| `cli-update` | a | 34 | `assets.example.org` | new coverage | First session after the CLI update on day 33 |
+| `cli-update` | a | 37 | `late.example.org` | new | Three sessions after the update |

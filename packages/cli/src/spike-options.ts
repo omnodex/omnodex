@@ -5,23 +5,31 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 import { randomInt } from "node:crypto";
-import { buildScenarios, MOVEMENT_SCENARIOS, type ScenarioOptions } from "@omnodex/hooks-provider";
+import { buildHistoryScenarios, buildScenarios, HISTORY_MACHINES, MOVEMENT_SCENARIOS, type HistoryMachine, type ScenarioOptions } from "@omnodex/hooks-provider";
 
-export function parseSpikeOptions(args: readonly string[], freshSeed = () => randomInt(0, 0x100000000)): ScenarioOptions {
-  const options: ScenarioOptions = {};
+/** Scenario options, or, with `history`, which machine of the history set to build. */
+export type SpikeOptions = ScenarioOptions & { history?: HistoryMachine };
+
+export function parseSpikeOptions(args: readonly string[], freshSeed = () => randomInt(0, 0x100000000)): SpikeOptions {
+  const options: SpikeOptions = {};
+  let history = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith("-")) {
-      if (!["--seed", "--random", "--now", "--sessions", "--scenario-set"].includes(arg)) throw new Error(`unknown spike option: ${arg}`);
+      if (!["--seed", "--random", "--now", "--sessions", "--scenario-set", "--machine"].includes(arg)) throw new Error(`unknown spike option: ${arg}`);
       if (seen.has(arg)) throw new Error(`duplicate spike option: ${arg}`);
       seen.add(arg);
       if (arg === "--random") continue;
       const value = args[++i];
       if (value === undefined || value.startsWith("--")) throw new Error(`${arg} requires a value`);
       if (arg === "--scenario-set") {
-        if (value !== "movement") throw new Error("--scenario-set supports movement");
-        options.additionalScenarios = MOVEMENT_SCENARIOS;
+        if (value === "movement") options.additionalScenarios = MOVEMENT_SCENARIOS;
+        else if (value === "history") history = true;
+        else throw new Error("--scenario-set supports movement and history");
+      } else if (arg === "--machine") {
+        if (!(HISTORY_MACHINES as readonly string[]).includes(value)) throw new Error(`--machine must be one of ${HISTORY_MACHINES.join(", ")}`);
+        options.history = value as HistoryMachine;
       } else if (arg === "--now") options.now = value;
       else {
         if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error(`${arg} requires a safe integer`);
@@ -35,7 +43,13 @@ export function parseSpikeOptions(args: readonly string[], freshSeed = () => ran
   }
   if (seen.has("--random") && seen.has("--seed")) throw new Error("--random and --seed cannot be combined");
   if (seen.has("--random")) options.seed = freshSeed();
+  // The history set is one machine at a time, each into its own home, and
+  // its session count is fixed.
+  if (history && !options.history) throw new Error("--scenario-set history requires --machine");
+  if (!history && options.history) throw new Error("--machine applies to --scenario-set history");
+  if (history && seen.has("--sessions")) throw new Error("--sessions does not apply to --scenario-set history");
   // Validate before the command opens or writes any data.
-  buildScenarios(options);
+  if (options.history) buildHistoryScenarios({ ...options, machine: options.history });
+  else buildScenarios(options);
   return options;
 }

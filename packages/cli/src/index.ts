@@ -43,6 +43,7 @@ import {
 import {
   CLAUDE_HOOK_SHIM_PATH,
   ClaudeCodeInterceptor,
+  buildHistoryScenarios,
   buildScenarios,
   DEFAULT_SCENARIO_SEED,
 } from "@omnodex/hooks-provider";
@@ -316,7 +317,10 @@ async function cmdSpike(args: string[]): Promise<void> {
   const log = new EventLog({ root: paths.eventLogRoot });
   await log.init();
   try {
-    const events = buildScenarios({ ...options, existingSessionIds: await log.listSessions() });
+    const existingSessionIds = await log.listSessions();
+    const events = options.history
+      ? buildHistoryScenarios({ ...options, machine: options.history, existingSessionIds })
+      : buildScenarios({ ...options, existingSessionIds });
     await log.appendMany(events);
     // Use the same community batch evaluator as captured traffic. Its output
     // timestamps are pinned to the triggering event for reproducible fixtures.
@@ -3188,6 +3192,9 @@ commands:
                      --now <ISO>       fixed clock with timezone
                      --sessions <N>    session count, minimum/default 12
                      --scenario-set movement  include loopback chain fixtures
+                     --scenario-set history --machine <a|b>  six weeks of
+                       work on one of two machines; run each machine in
+                       its own home
                      Names prefix session IDs; repeated runs append new IDs.
   detect [session]   scan event logs for risk patterns and append
                      risk.detected events. Runs on all sessions if no
