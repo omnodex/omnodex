@@ -25,7 +25,7 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist"
 async function tempRoot(t) {
   // realpath: on macOS the temp dir is under /var, a symlink to /private/var.
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-scope-")));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return root;
 }
 

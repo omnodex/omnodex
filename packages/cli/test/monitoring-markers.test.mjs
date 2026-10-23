@@ -18,7 +18,7 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist"
 /** An isolated home; never the developer's real ~/.omnodex or agents. */
 async function machine(t) {
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-markers-")));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const home = path.join(root, "home");
   const omnodexHome = path.join(home, ".omnodex");
   const project = path.join(root, "project");

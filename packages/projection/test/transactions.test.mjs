@@ -41,7 +41,7 @@ async function openStore(t, dbPath) {
   await store.init();
   t.after(async () => {
     await store.close();
-    if (dir) await fs.rm(dir, { recursive: true, force: true });
+    if (dir) await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   return store;
 }

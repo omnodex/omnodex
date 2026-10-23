@@ -26,7 +26,7 @@ async function commit(repo, name) {
 /** A remote with one commit on main, a clone of it, and a second clone that pushes. */
 async function setup(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-source-update-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const remote = path.join(dir, "remote.git");
   const install = path.join(dir, "install");
   const other = path.join(dir, "other");
@@ -85,7 +85,7 @@ test("a local branch with no upstream compares with origin/main", async (t) => {
 
 test("a checkout with no remote has nothing to compare with", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-source-update-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   git(dir, "init", "-q");
   await commit(dir, "a.txt");
   assert.equal(sourceUpdateTarget(dir), null);

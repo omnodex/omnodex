@@ -16,7 +16,7 @@ const GATE = "live-push-state.json";
 
 async function scratch(t, { credentials = true } = {}) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-live-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const omnodexHome = path.join(home, ".omnodex");
   await fs.mkdir(omnodexHome, { recursive: true });
   if (credentials) {

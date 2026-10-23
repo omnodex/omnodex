@@ -15,7 +15,7 @@ const SHIM = path.resolve(__dirname, "../dist/bin/codex-hook-shim.js");
 
 async function fresh(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-codex-shim-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

@@ -36,7 +36,7 @@ test("an AI title is used when the user never renamed", () => {
 
 test("a truncated last line does not hide the title before it", async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-cc-title-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const file = path.join(dir, "transcript.jsonl");
   await writeFile(file, [custom("kept"), turn].map((r) => JSON.stringify(r)).join("\n") + '\n{"type":"custom-title","customTi', "utf8");
   assert.deepEqual(await readTranscriptTitle(file), { title: "kept", source: "user" });
@@ -62,7 +62,7 @@ async function renames(home, sessionId) {
 
 test("shim: emits session.renamed once per title change", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-cc-shim-title-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   // HOME too, so nothing reaches the real ~/.omnodex.
   const env = { OMNODEX_HOME: home, HOME: home, USERPROFILE: home, OMNODEX_CAPTURE_DETECT: "0" };
   const transcript = path.join(home, "transcript.jsonl");

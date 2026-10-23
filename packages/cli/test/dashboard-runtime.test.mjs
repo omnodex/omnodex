@@ -75,7 +75,7 @@ test("a source checkout serves the built page from dist/, even under a path with
     const fromBundle = resolveDashboardAssetsDir(pathToFileURL(path.join(pkg, "bundle", "omnodex-bundle.cjs")).href);
     assert.equal(readFileSync(path.join(fromBundle, "dashboard.html"), "utf8"), "current");
   } finally {
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -89,7 +89,7 @@ test("a checkout whose page was never built serves instructions instead of an er
     assert.match(page.body.toString("utf8"), /npm run build/);
   } finally {
     await server.close();
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -105,7 +105,7 @@ test("the npm bundle serves the page shipped next to the module", async () => {
     assert.equal(dir, pkg);
     assert.equal(readFileSync(path.join(dir, "dashboard.html"), "utf8"), "bundled");
   } finally {
-    await fs.rm(root, { recursive: true, force: true });
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -184,7 +184,7 @@ test("closing the server drops an open SSE stream instead of waiting for it", as
     await streamClosed;
     assert.ok(Date.now() - started < 2_000, "close waited on the open stream");
   } finally {
-    await fs.rm(assetsDir, { recursive: true, force: true });
+    await fs.rm(assetsDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -246,6 +246,6 @@ test("omnodex dashboard serves the page and API, and exits cleanly on SIGINT", a
       child.kill("SIGKILL");
       await exited;
     }
-    await fs.rm(scratch, { recursive: true, force: true });
+    await fs.rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

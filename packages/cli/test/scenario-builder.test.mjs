@@ -118,5 +118,5 @@ test("CLI writes reproducible session logs, replays SQLite and appends unique ru
     assert.equal((await logs(a)).length, MIN_SCENARIO_SESSIONS * 2);
     const one = run(b, ["spike", "--random"]), two = run(b, ["spike", "--random"]);
     assert.notEqual(one.match(/seed: (\d+)/)[1], two.match(/seed: (\d+)/)[1]);
-  } finally { await rm(scratch, { recursive: true, force: true }); }
+  } finally { await rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

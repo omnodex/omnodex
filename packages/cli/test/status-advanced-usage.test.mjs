@@ -14,7 +14,7 @@ const CLI = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 async function scratch(t) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-status-usage-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const omnodexHome = path.join(home, ".omnodex");
   await fs.mkdir(omnodexHome, { recursive: true });
   return { home, omnodexHome };

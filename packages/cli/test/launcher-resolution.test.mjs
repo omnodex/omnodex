@@ -102,7 +102,7 @@ test("launcher: finds the shim in the npm package through a symlinked global bin
     const record = await readRecord(shim);
     assert.equal(record.input, '{"hook_event_name":"PreToolUse"}');
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -126,7 +126,7 @@ test("launcher: finds the shim in node_modules/omnodex beside a wrapper on PATH"
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), shim);
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -151,7 +151,7 @@ test("launcher: forwards its arguments to the shim", async () => {
     const record = await readRecord(shim);
     assert.deepEqual(record.args, ["PreToolUse"]);
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -181,7 +181,7 @@ test("launcher: resolve-only mode exits 1 when no shim can be found", {
     // Resolve-only is a check, not a failed hook call, so nothing is logged
     await assert.rejects(fs.access(path.join(home, ".omnodex", "launcher.log")));
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -212,7 +212,7 @@ test("launcher: shim_paths in omnodex-config.json takes priority over PATH", asy
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), devShim);
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -241,7 +241,7 @@ test("refreshStaleLaunchers: rewrites outdated launchers and skips missing ones"
     );
     await assert.rejects(fs.access(path.join(binDir, "antigravity-hook-launcher.js")));
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -269,7 +269,7 @@ test("ensureLauncherResolves: leaves config alone when the launcher already find
     assert.deepEqual(check, { status: "resolved", shim: "/usr/lib/node_modules/omnodex/bin/claude-hook-shim.js" });
     await assert.rejects(fs.access(path.join(home, "omnodex-config.json")));
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -296,7 +296,7 @@ test("ensureLauncherResolves: pins the first existing candidate and keeps other 
       other: 1,
     });
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -309,7 +309,7 @@ test("ensureLauncherResolves: reports unresolved without writing when no candida
     assert.equal(check.status, "unresolved");
     await assert.rejects(fs.access(path.join(home, "omnodex-config.json")));
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -327,6 +327,6 @@ test("ensureLauncherResolves: does not overwrite an unreadable config", async ()
     assert.equal(check.status, "unresolved");
     assert.equal(await fs.readFile(configPath, "utf8"), "{ not json");
   } finally {
-    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

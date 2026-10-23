@@ -48,7 +48,7 @@ const READ = (session_id) => ({
 
 test("a record pause writes nothing for a tool call", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-pause-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   await startPause(home, "record", { untilMs: null });
   const res = await runShim(READ("rec-sess"), home);
   assert.equal(res.code, 0, res.stderr);
@@ -57,7 +57,7 @@ test("a record pause writes nothing for a tool call", async (t) => {
 
 test("a sync pause writes the call flagged local-only", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-pause-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   await startPause(home, "sync", { untilMs: null });
   const res = await runShim(READ("sync-sess"), home);
   assert.equal(res.code, 0, res.stderr);
@@ -68,7 +68,7 @@ test("a sync pause writes the call flagged local-only", async (t) => {
 
 test("an expired pause writes its end marker and the call normally", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-pause-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const { entry } = await startPause(home, "record", { untilMs: Date.now() - 1000, now: Date.now() - 60_000 });
   const res = await runShim(READ("after-sess"), home);
   assert.equal(res.code, 0, res.stderr);

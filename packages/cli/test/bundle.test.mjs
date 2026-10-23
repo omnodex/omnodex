@@ -39,7 +39,7 @@ before(async () => {
 });
 
 after(async () => {
-  await fs.rm(tmp, { recursive: true, force: true });
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test("bundle: bin/ contains every shim the launchers look for", async () => {

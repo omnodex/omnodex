@@ -50,9 +50,10 @@ async function renames(home, sessionId) {
 
 test("shim: emits session.renamed when the thread is named and renamed", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-codex-shim-title-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const codex = path.join(home, ".codex");
-  const env = { OMNODEX_HOME: home, HOME: home, USERPROFILE: home, CODEX_HOME: codex, OMNODEX_CAPTURE_DETECT: "0" };
+  // No background pass: its detached child writes into the home after the shim exits.
+  const env = { OMNODEX_HOME: home, HOME: home, USERPROFILE: home, CODEX_HOME: codex, OMNODEX_CAPTURE_DETECT: "0", OMNODEX_AUTO_SYNC: "0", OMNODEX_AUTO_DETECT: "0" };
   const index = path.join(codex, "session_index.jsonl");
   const stop = { session_id: "codex-title-1", cwd: "/home/case/repo", hook_event_name: "Stop" };
 

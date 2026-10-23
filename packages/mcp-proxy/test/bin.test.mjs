@@ -120,7 +120,7 @@ test("closing stdin ends the session after the calls and exits the process, labe
   } finally {
     // Kill a proxy that failed to exit (and its upstream) so the runner does not hang.
     if (child && child.exitCode === null) child.kill("SIGKILL");
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -187,7 +187,7 @@ test("the proxy answers the host while its upstreams are failing or still starti
     assert.equal(await Promise.race([exited, timeout]), 0);
   } finally {
     if (child && child.exitCode === null) child.kill("SIGKILL");
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -225,6 +225,6 @@ test("with OMNODEX_AUTO_SYNC_CHILD=1 the bin syncs and exits instead of speaking
     // open one, so there is no event log at all.
     await assert.rejects(readdir(path.join(home, "event-log", "sessions")));
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

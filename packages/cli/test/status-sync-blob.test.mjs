@@ -15,7 +15,7 @@ const MB = 1024 * 1024;
 
 async function scratch(t, autoSyncState) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-status-blob-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const omnodexHome = path.join(home, ".omnodex");
   await fs.mkdir(omnodexHome, { recursive: true });
   await fs.writeFile(path.join(omnodexHome, "auto-sync-state.json"), JSON.stringify({

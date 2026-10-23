@@ -53,5 +53,5 @@ process.exit(result.status ?? 1);
   if (code !== 0 || !events.some(e => e.interceptor === "antigravity-hook" && e.event_type === "tool.invoked")
     || !events.some(e => e.interceptor === "mcp-proxy" && e.event_type === "session.started")) process.exitCode = 1;
 } finally {
-  await rm(project, { recursive: true, force: true });
+  await rm(project, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
