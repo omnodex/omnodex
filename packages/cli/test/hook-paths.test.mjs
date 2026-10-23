@@ -95,7 +95,7 @@ test("findMissingHookPaths ignores other tools' hooks and files that are not JSO
 
 test("status warns about an Antigravity hooks file written on another machine", async (t) => {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-hook-paths-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const projectPath = path.join(home, "repo");
   await fs.mkdir(path.join(projectPath, ".agents"), { recursive: true });
   const elsewhere = "/nonexistent-omnodex-test/case/.omnodex";

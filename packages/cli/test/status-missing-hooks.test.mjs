@@ -14,7 +14,7 @@ const HANDLER = { type: "command", command: 'node "$HOME/.omnodex/bin/claude-hoo
 
 async function project(t, events) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-status-hooks-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const projectPath = path.join(home, "repo");
   await fs.mkdir(path.join(projectPath, ".claude"), { recursive: true });
   const hooks = Object.fromEntries(events.map((name) => [name, [{ matcher: "*", hooks: [HANDLER] }]]));
@@ -25,7 +25,8 @@ async function project(t, events) {
 function status({ home, projectPath }) {
   return spawnSync(process.execPath, [CLI, "status", projectPath], {
     cwd: projectPath,
-    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex") },
+    // No update check: its detached child writes into HOME after the command exits.
+    env: { ...process.env, HOME: home, USERPROFILE: home, OMNODEX_HOME: path.join(home, ".omnodex"), OMNODEX_NO_UPDATE_CHECK: "1" },
     encoding: "utf8",
     timeout: 60_000,
   });

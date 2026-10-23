@@ -15,7 +15,7 @@ async function waitFor(check) {
 }
 async function rig(t) {
   const home = await mkdtemp(join(tmpdir(), "omnodex-handoff-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const env = { ...process.env, HOME:home, USERPROFILE:home, OMNODEX_HOME:home, OMNODEX_SINGLE_ROOT:"1", OMNODEX_AUTO_SYNC:"0", OMNODEX_AUTO_DETECT:"0" };
   const events = async () => (await readFile(join(home,"event-log/sessions/case-burst.jsonl"),"utf8").catch(()=>"" )).split("\n").filter(Boolean).flatMap(line => { try { return [JSON.parse(line)]; } catch { return []; } });
   const receipts = async () => readdir(join(home,"hook-spool")).catch(()=>[]);

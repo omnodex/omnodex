@@ -22,7 +22,7 @@ const CLI = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 async function tempHome(t) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-capture-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return home;
 }
 

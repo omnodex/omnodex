@@ -58,7 +58,7 @@ async function installWith(target) {
 test("install agy and install antigravity write the same hooks and registry entry", async (t) => {
   const viaAlias = await installWith("agy");
   const viaName = await installWith("antigravity");
-  t.after(() => Promise.all([viaAlias, viaName].map((r) => fs.rm(r.root, { recursive: true, force: true }))));
+  t.after(() => Promise.all([viaAlias, viaName].map((r) => fs.rm(r.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }))));
 
   assert.equal(viaAlias.result.code, 0, viaAlias.result.out);
   assert.equal(viaName.result.code, 0, viaName.result.out);
@@ -78,7 +78,7 @@ test("install agy and install antigravity write the same hooks and registry entr
 
 test("uninstall agy removes Antigravity hooks", async (t) => {
   const installed = await installWith("agy");
-  t.after(() => fs.rm(installed.root, { recursive: true, force: true }));
+  t.after(() => fs.rm(installed.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   const result = await run(["uninstall", "agy", installed.project, "--confirm", "--unattended"], installed.env);
   assert.equal(result.code, 0, result.out);

@@ -13,7 +13,7 @@ const HOOKS = new URL("./capture-hooks.mjs", import.meta.url).href;
 /** A scratch OMNODEX_HOME and HOME, removed after the test. */
 export async function scratch(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-capture-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return { home: path.join(dir, ".omnodex"), userHome: dir, pushLog: path.join(dir, "pushed.jsonl") };
 }
 

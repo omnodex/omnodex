@@ -16,7 +16,7 @@ const CLI = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 
 async function mkTmp(t, label) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), `omnodex-${label}-`));
-  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  t.after(() => fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

@@ -13,7 +13,7 @@ import { ClaudeCodeInterceptor } from "../dist/claude-code-interceptor.js";
 
 async function fresh(t) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-interceptor-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  t.after(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

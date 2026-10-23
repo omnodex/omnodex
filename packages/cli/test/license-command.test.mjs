@@ -38,7 +38,7 @@ async function startApi(t) {
 
 async function scratch(t, api) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-license-cmd-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   // OMNODEX_HOME apart from HOME/.omnodex, to show which one the cache uses.
   const omnodexHome = path.join(home, "case-omnodex");
   await fs.mkdir(omnodexHome, { recursive: true });

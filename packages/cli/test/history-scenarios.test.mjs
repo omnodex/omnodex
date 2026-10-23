@@ -134,5 +134,5 @@ test("CLI writes each machine's history reproducibly into its own home", { timeo
     }
     // The planted known-bad host raised its finding through the real pipeline.
     assert.ok((await logs(homes.a)).join("").includes("RULE_SUPPLY_CHAIN_IOC_DOMAIN"));
-  } finally { await rm(scratch, { recursive: true, force: true }); }
+  } finally { await rm(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

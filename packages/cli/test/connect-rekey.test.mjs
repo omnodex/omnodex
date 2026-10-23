@@ -59,7 +59,7 @@ async function startCloud({ valid = [], rotated = [], verifier = null, newToken 
 
 async function setup(t, config) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-connect-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const home = path.join(root, ".omnodex");
   await fs.mkdir(home, { recursive: true });
   if (config) await fs.writeFile(path.join(home, "stream-config.json"), JSON.stringify(config));

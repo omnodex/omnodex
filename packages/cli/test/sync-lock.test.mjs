@@ -37,7 +37,7 @@ async function startApi(t) {
 
 async function scratch(t, api) {
   const home = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-sync-lock-"));
-  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  t.after(() => fs.rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const omnodexHome = path.join(home, ".omnodex");
   await fs.mkdir(omnodexHome, { recursive: true });
   await fs.writeFile(

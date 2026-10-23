@@ -42,7 +42,7 @@ process.exit(Number(process.env["FAKE_" + name.toUpperCase() + "_EXIT"] || 0));
 
 async function machine(t, published) {
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-plugin-")));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const home = path.join(root, "home");
   const project = path.join(root, "project");
   const bin = path.join(root, "bin");
@@ -94,7 +94,7 @@ const readJson = async (file) => JSON.parse(await fs.readFile(file, "utf8"));
 
 test("readZip reads stored archives and extractZip refuses entries outside the folder", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-zip-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const ok = makeZip({ "a/b.txt": "hi", "c.json": "{}" });
   assert.deepEqual(readZip(ok).map((e) => [e.name, e.data.toString()]), [["a/b.txt", "hi"], ["c.json", "{}"]]);
   await extractZip(ok, path.join(root, "out"));

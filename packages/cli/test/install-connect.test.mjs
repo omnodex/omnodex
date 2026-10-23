@@ -24,7 +24,7 @@ test("the sign-in is skipped with --no-connect or without a terminal", () => {
 
 test("install without a terminal finishes and says how to connect later", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-install-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const home = path.join(root, "home");
   const project = path.join(root, "project");
   await fs.mkdir(project, { recursive: true });

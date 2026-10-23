@@ -62,7 +62,7 @@ async function readSessionLog(home, sessionId) {
 
 test("shim writes SessionStart and PostToolUse events to the event log", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
   const env = { OMNODEX_HOME: home, OMNODEX_DEBUG: "1" };
   const session_id = "integration-sess-1";
@@ -130,7 +130,7 @@ test("shim writes SessionStart and PostToolUse events to the event log", async (
 
 test("shim records the project's git origin remote on session.started", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-remote-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const repo = path.join(home, "work", "repo");
   await mkdir(path.join(repo, ".git"), { recursive: true });
   await writeFile(
@@ -176,7 +176,7 @@ test("shim exits 0 and stays silent on malformed stdin", async () => {
     assert.equal(res.code, 0, "malformed input must not block Claude");
     assert.equal(res.stdout, "");
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -225,7 +225,7 @@ test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta whe
       `duration_ms should be > 0 (got ${completed.duration_ms})`,
     );
   } finally {
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
@@ -257,7 +257,7 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
   t.after(async () => {
     release();
     await new Promise((resolve) => server.close(resolve));
-    await rm(home, { recursive: true, force: true });
+    await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   const apiUrl = `http://127.0.0.1:${server.address().port}`;
@@ -316,7 +316,7 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
 
 test("shim times a subagent from SubagentStart to SubagentStop and logs the prompt", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-subagent-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const session_id = "sess-subagent-test";
   const env = { OMNODEX_HOME: home };
 
@@ -349,7 +349,7 @@ test("shim times a subagent from SubagentStart to SubagentStop and logs the prom
 
 test("shim logs permission requests and denials", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-permission-"));
-  t.after(() => rm(home, { recursive: true, force: true }));
+  t.after(() => rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   const session_id = "sess-permission-test";
   const env = { OMNODEX_HOME: home };
   await runShim({ session_id, cwd: "/tmp/repo", hook_event_name: "PermissionRequest", tool_name: "Bash", tool_input: { command: "npm test" }, permission_suggestions: [] }, env);

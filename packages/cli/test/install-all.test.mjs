@@ -16,7 +16,7 @@ const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist"
 
 async function tempRoot(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-install-all-"));
-  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  t.after(() => fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return root;
 }
 
