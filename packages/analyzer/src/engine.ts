@@ -345,6 +345,7 @@ export class RuleEngine {
             tools_added: drift.added,
             tools_removed: drift.removed,
             tools_changed: drift.changed,
+            ...(drift.toolList ? { tool_list: drift.toolList } : {}),
           },
         },
       });

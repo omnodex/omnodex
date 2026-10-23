@@ -212,6 +212,7 @@ test("MUST_FIRE: a drift finding carries the change as structured evidence, with
     tools_added: [],
     tools_removed: [],
     tools_changed: ["send_email"],
+    tool_list: { from: "ab".padEnd(32, "0"), to: "9b".padEnd(32, "0") },
   });
   const [update] = (() => {
     const e2 = evaluator();
@@ -221,4 +222,11 @@ test("MUST_FIRE: a drift finding carries the change as structured evidence, with
   assert.equal(update.evidence.drift.change, "updated");
   assert.deepEqual(update.evidence.drift.installed_version, { from: "1.0.15", to: "1.0.16" });
   assert.deepEqual(update.evidence.drift.tools_added, ["forward_all"]);
+});
+
+test("MUST_FIRE: drift evidence leaves out the tool list fingerprints when the list is unchanged", () => {
+  const ev = evaluator();
+  ev.evaluate(observed());
+  const [finding] = ev.evaluate(observed({ installed_version: "1.0.16" }));
+  assert.equal(finding.evidence.drift.tool_list, undefined);
 });

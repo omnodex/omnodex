@@ -306,8 +306,8 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   and header names, never values), the name and version it reports, the installed
   package version for `npx` upstreams when the npx cache shows it, and each tool's
   name, description and input schema. The event holds hashes and tool names only; the
-  full lists are kept in `$OMNODEX_HOME/proxy-tool-snapshots/` for a before-and-after
-  view. Comparing a server's observations shows when it changed. A new list announced
+  full lists are kept in `$OMNODEX_HOME/proxy-tool-snapshots/` (the newest 200), and
+  the local dashboard shows a drift finding's tools before and after from them. Comparing a server's observations shows when it changed. A new list announced
   mid-session is also offered to the agent, though most clients read the list once.
 - **Discovery window.** The first `tools/list` waits up to `discovery_window_ms` from
   proxy start for upstreams whose tools are not known yet: the first run of a new

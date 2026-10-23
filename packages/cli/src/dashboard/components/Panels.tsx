@@ -5,7 +5,8 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import type { EvidenceDrift } from "@omnodex/shared";
 import {
   displayStatus,
   formatRisk,
@@ -23,9 +24,13 @@ import {
   promptPreview,
   subagentKey,
   subagentLabel,
+  driftSummaryRows,
+  lineDiff,
+  toolChanges,
   timelineEntries,
   type SourceTone,
   type TimelineEntry,
+  type ToolChange,
   type ViewTotals,
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
@@ -349,6 +354,112 @@ const HEADING: React.CSSProperties = {
   fontFamily: "var(--mono)", fontSize: 12, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 16,
 };
 
+/** A tool list the MCP proxy kept on this machine, or undefined. */
+async function loadToolList(fingerprint: string): Promise<unknown[] | undefined> {
+  try {
+    const res = await fetch(`/api/tool-lists/${fingerprint}`);
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { tools?: unknown };
+    return Array.isArray(body.tools) ? body.tools : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function ToolSide({ side, title, text }: { side: "before" | "after"; title: string; text: string }): React.JSX.Element {
+  return (
+    <div className={`drift-side drift-${side}`}>
+      <div className="drift-side-label">{title}</div>
+      <div className="prompt-full">{text || "(empty)"}</div>
+    </div>
+  );
+}
+
+function SchemaDiff({ before, after }: { before: string; after: string }): React.JSX.Element {
+  return (
+    <div className="drift-side drift-diff">
+      <div className="drift-side-label">Input schema</div>
+      {lineDiff(before, after).map((line, k) =>
+        line.kind === "skipped"
+          ? <div key={k} className="diff-line diff-skipped">{line.count === 1 ? "1 unchanged line" : `${line.count} unchanged lines`}</div>
+          : <div key={k} className={`diff-line diff-${line.kind}`}>{line.kind === "added" ? "+ " : line.kind === "removed" ? "- " : "  "}{line.text}</div>,
+      )}
+    </div>
+  );
+}
+
+export function ToolChangeView({ change }: { change: ToolChange }): React.JSX.Element {
+  const { before, after } = change;
+  let body: React.ReactNode;
+  if (change.kind === "added") {
+    body = after ? <ToolSide side="after" title="Description" text={after.description} /> : null;
+  } else if (change.kind === "removed") {
+    body = before ? <ToolSide side="before" title="Description" text={before.description} /> : null;
+  } else if (before && after) {
+    body = (
+      <>
+        {change.descriptionChanged && (
+          <>
+            <ToolSide side="before" title="Description before" text={before.description} />
+            <ToolSide side="after" title="Description after" text={after.description} />
+          </>
+        )}
+        {change.schemaChanged && <SchemaDiff before={before.schema} after={after.schema} />}
+      </>
+    );
+  }
+  return (
+    <div className="drift-tool">
+      <div className="drift-tool-name">{change.name} <span className="drift-kind">{change.kind}</span></div>
+      {body}
+    </div>
+  );
+}
+
+/**
+ * A drift finding: what changed about the server, then each tool's before
+ * and after from the tool lists the proxy kept on this machine.
+ */
+export function DriftDetail({ drift }: { drift: EvidenceDrift }): React.JSX.Element {
+  const [lists, setLists] = useState<{ loaded: boolean; before?: unknown[]; after?: unknown[] }>({ loaded: false });
+  const from = drift.tool_list?.from;
+  const to = drift.tool_list?.to;
+  useEffect(() => {
+    let live = true;
+    if (!from || !to) {
+      setLists({ loaded: true });
+      return;
+    }
+    void Promise.all([loadToolList(from), loadToolList(to)]).then(([before, after]) => {
+      if (live) setLists({ loaded: true, before, after });
+    });
+    return () => { live = false; };
+  }, [from, to]);
+
+  const changes = toolChanges(drift, lists.before, lists.after);
+  const missing = lists.loaded && changes.some((c) => (c.kind !== "added" && !c.before) || (c.kind !== "removed" && !c.after));
+  return (
+    <>
+      <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--navy-border)" }}>
+        <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>MCP Server Change</h4>
+        {driftSummaryRows(drift).map((row) => <DetailRow key={row.label} label={row.label}>{row.value}</DetailRow>)}
+      </div>
+      {changes.length > 0 && (
+        <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--navy-border)" }}>
+          <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>Before and After</h4>
+          {!lists.loaded && <div className="drift-note">Loading the kept tool lists...</div>}
+          {missing && (
+            <div className="drift-note">
+              Some of the tool text is not kept on this machine (old lists are pruned, and lists from another machine stay there), so those tools are listed by name only.
+            </div>
+          )}
+          {changes.map((c) => <ToolChangeView key={`${c.kind}:${c.name}`} change={c} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
 function CallDetail({ tc, utc }: { tc: CollapsedToolCallRow; utc: boolean }): React.JSX.Element {
   return (
     <>
@@ -441,6 +552,7 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
             </svg>
           </a>
         </DetailRow>
+        {r.evidence?.drift && <DriftDetail drift={r.evidence.drift} />}
         {related && (
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--navy-border)" }}>
             <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>Related Tool Call</h4>

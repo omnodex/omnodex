@@ -419,6 +419,42 @@ export interface EvidenceDrift {
   tools_added: string[];
   tools_removed: string[];
   tools_changed: string[];
+  /**
+   * Tool list fingerprints, before and after, when the list changed. The
+   * proxy keeps each full list on the machine under its fingerprint, so
+   * the local dashboard can show what changed.
+   */
+  tool_list?: { from: string; to: string };
+}
+
+/** One line of a drift finding's change summary. */
+export interface DriftSummaryRow {
+  label: string;
+  value: string;
+}
+
+const DRIFT_CHANGE_LABEL: Record<EvidenceDrift["change"], string> = {
+  updated: "Server updated",
+  tools: "Tools added or removed",
+  definition: "Tool definitions changed",
+};
+
+/**
+ * A drift finding's change summary as label and value rows, from the
+ * finding alone. Both dashboards show it, so they say the same thing.
+ */
+export function driftSummaryRows(drift: EvidenceDrift): DriftSummaryRow[] {
+  const rows: DriftSummaryRow[] = [
+    { label: "Server", value: `${drift.server} (${drift.transport})` },
+    { label: "Change", value: DRIFT_CHANGE_LABEL[drift.change] + (drift.mid_session ? ", announced while in use" : "") },
+  ];
+  if (drift.reported_version) rows.push({ label: "Reported version", value: `${drift.reported_version.from} to ${drift.reported_version.to}` });
+  if (drift.installed_version) rows.push({ label: "Installed version", value: `${drift.installed_version.from} to ${drift.installed_version.to}` });
+  if (drift.config_changed) rows.push({ label: "Configuration", value: "Its configuration entry changed" });
+  if (drift.tools_added.length) rows.push({ label: "New tools", value: drift.tools_added.join(", ") });
+  if (drift.tools_removed.length) rows.push({ label: "Dropped tools", value: drift.tools_removed.join(", ") });
+  if (drift.tools_changed.length) rows.push({ label: "Changed tools", value: drift.tools_changed.join(", ") });
+  return rows;
 }
 
 /**
