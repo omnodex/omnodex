@@ -121,7 +121,7 @@ export function isPauseMarker(event: TraceEvent): boolean {
  * no captured content, so they are kept and uploaded under every pause.
  */
 export function isControlMarker(event: TraceEvent): boolean {
-  return isPauseMarker(event) || event.event_type === "monitoring.changed";
+  return isPauseMarker(event) || event.event_type === "monitoring.changed" || event.event_type === "monitoring.unexplained_change";
 }
 
 function markerBase(at: string, now: string) {

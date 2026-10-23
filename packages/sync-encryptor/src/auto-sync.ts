@@ -33,6 +33,7 @@
  * Files under OMNODEX_HOME:
  *   - auto-sync-state.json  last attempt, last success, last error
  *   - auto-sync.lock        held while a sync runs; stale after 10 minutes
+ *   - monitoring-check.json the config check's last run (monitoring-check.ts)
  *
  * Settings (stream-config.json):
  *   - auto_sync: false                      turn automatic sync off
@@ -215,6 +216,11 @@ export interface RunAutoSyncOptions {
   submitUsage?: (home: string) => Promise<unknown>;
   /** Rule signal collection and submission. Defaults to submitSignals. */
   submitSignals?: (home: string) => Promise<unknown>;
+  /**
+   * Monitoring config check (at most every 15 minutes). Defaults to
+   * checkMonitoringConfig, pushing what it writes; tests replace it.
+   */
+  checkMonitoring?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +335,11 @@ export async function runAutoSync(
       await (opts.refreshGuardrails ?? refreshGuardrailsModule)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
+    // Whether every installation still matches the agent's config; runs
+    // whether or not detection is on, and needs no credentials.
+    await (opts.checkMonitoring ?? ((h: string) => checkMonitoring(h, opts.pushFn ?? pushEventsToCloud)))(home).catch(
+      () => undefined,
+    );
     // Sends counted advanced usage, at most every 15 minutes; a no-op
     // without counts or credentials.
     await (opts.submitUsage ?? submitUsage)(home).catch(() => undefined);
@@ -365,6 +376,15 @@ export async function runAutoSync(
   } finally {
     await releaseLock(home);
   }
+}
+
+/** The config check, loaded only in the background child. */
+async function checkMonitoring(
+  home: string,
+  push: (events: TraceEvent[], home: string) => Promise<unknown>,
+): Promise<void> {
+  const { checkMonitoringConfig } = await import("./monitoring-check.js");
+  await checkMonitoringConfig(home, { push });
 }
 
 /**

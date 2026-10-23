@@ -99,8 +99,9 @@ import {
   SecretMismatchError,
   guardrailsEntitled,
   refreshGuardrailsModule,
+  checkMonitoringConfig,
 } from "@omnodex/sync-encryptor";
-import type { AdvancedUsageState } from "@omnodex/sync-encryptor";
+import type { AdvancedUsageState, InstallationCheck, InstallationState } from "@omnodex/sync-encryptor";
 import { syncReadModel } from "@omnodex/sync-encryptor/sync-runner";
 import {
   generatePassphrase,
@@ -2124,6 +2125,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);
   await printLivePushHealth(paths.home);
+  await printMonitoringHealth(paths.home);
   await printAdvancedUsage(paths.home);
   console.log("");
 
@@ -2458,6 +2460,47 @@ async function printCaptureHealth(omnodexHome: string): Promise<void> {
 async function printLivePushHealth(omnodexHome: string): Promise<void> {
   if (!(await readStreamConfig(omnodexHome))) return;
   console.log(`[status] live push:   ${describeLiveGate(await readLiveGate(omnodexHome))}`);
+}
+
+/**
+ * Run the monitoring config check now and report each platform: whether
+ * every installation still matches the agent's config. A change no Omnodex
+ * command made is also recorded (and raises a finding) by the check itself.
+ */
+async function printMonitoringHealth(omnodexHome: string): Promise<void> {
+  const { checks } = await checkMonitoringConfig(omnodexHome, { force: true, push: pushEventsToCloud });
+  for (const line of describeMonitoringCheck(checks)) console.log(line);
+}
+
+const MONITORING_PROBLEM_TEXT: Record<Exclude<InstallationState, "ok" | "project_gone">, string> = {
+  hooks_missing: "hooks missing from",
+  hooks_disabled: "hooks switched off by",
+  plugin_missing: "plugin missing from",
+  plugin_disabled: "plugin disabled in",
+  mcp_missing: "MCP entry missing from",
+};
+
+/** Status lines for the config check: one summary, then each problem. */
+export function describeMonitoringCheck(checks: readonly InstallationCheck[]): string[] {
+  if (checks.length === 0) return [];
+  const label = (t: string) => SURFACE_LABELS[t as Surface] ?? t;
+  const byTarget = new Map<string, InstallationCheck[]>();
+  for (const c of checks) byTarget.set(c.target, [...(byTarget.get(c.target) ?? []), c]);
+  const summary = [...byTarget].map(([target, list]) => {
+    const broken = list.filter((c) => c.state !== "ok" && c.state !== "project_gone").length;
+    return `${label(target)} ${broken === 0 ? "ok" : `${broken} problem${broken === 1 ? "" : "s"}`}`;
+  });
+  const lines = [`[status] monitoring:   ${summary.join(", ")}`];
+  for (const c of checks) {
+    if (c.state === "ok") continue;
+    if (c.state === "project_gone") {
+      lines.push(`  project no longer exists: ${c.project_path}; \`omnodex uninstall ${c.target} "${c.project_path}"\` forgets it`);
+      continue;
+    }
+    lines.push(`  ⚠ ${label(c.target)} ${MONITORING_PROBLEM_TEXT[c.state]} ${c.file}`);
+    lines.push(`    run \`omnodex install ${c.target}\`${c.scope === "project" ? " in that project" : ""} to restore monitoring`);
+  }
+  return lines;
 }
 
 /** Advanced (Pro) rule usage waiting to be submitted, and any dropped. */
