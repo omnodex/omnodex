@@ -194,7 +194,9 @@ test("bundle: the bundled MCP proxy starts and lists upstream tools", async () =
     });
     const request = (id, method, params) =>
       new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`no response to ${method}`)), 15000);
+        // Cold upstream discovery can use the proxy's 45-second window.
+        const timeoutMs = method === "tools/list" ? 55000 : 15000;
+        const timer = setTimeout(() => reject(new Error(`no response to ${method}`)), timeoutMs);
         waiters.set(id, (msg) => {
           clearTimeout(timer);
           resolve(msg);
