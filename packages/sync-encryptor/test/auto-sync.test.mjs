@@ -91,6 +91,7 @@ function recordingSpawn() {
  */
 async function startSyncServer(status = 201, { segments = false } = {}) {
   const requests = [];
+  const heartbeats = [];
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
@@ -99,6 +100,13 @@ async function startSyncServer(status = 201, { segments = false } = {}) {
       if (req.url === "/api/v1/stream/verifier") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ ok: true, status: "registered" }));
+        return;
+      }
+      // The monitoring heartbeat the same pass sends, kept apart from sync.
+      if (req.url === "/api/v1/sync/monitoring/heartbeat") {
+        heartbeats.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
         return;
       }
       const segmentRoute = req.url.startsWith("/api/v1/sync/segments/") || req.url === "/api/v1/sync/manifest";
@@ -128,6 +136,7 @@ async function startSyncServer(status = 201, { segments = false } = {}) {
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
+    heartbeats,
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -655,6 +664,8 @@ describe("runAutoSync with detection", () => {
     assert.equal(outcome, "disabled");
     assert.equal(calls, 1);
     assert.equal(server.requests.length, 0);
+    // Turning sync off does not stop the heartbeat.
+    assert.equal(server.heartbeats.length, 1);
   });
 
   it("skips detection when OMNODEX_AUTO_DETECT=0", async () => {

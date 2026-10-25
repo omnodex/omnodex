@@ -114,7 +114,9 @@ export {
   DEFAULT_AUTO_SYNC_INTERVAL_SECONDS,
 } from "./auto-sync.js";
 export type { AcquireSyncLockOptions, AutoSyncState, AutoSyncDecision, AutoSyncOutcome, StartBackgroundSyncOptions, RunAutoSyncOptions, DetectResult } from "./auto-sync.js";
-export { checkMonitoringConfig, codexHooksOff, MONITORING_CHECK_INTERVAL_MS, UNEXPLAINED_CHANGE_RULE_ID } from "./monitoring-check.js";
+export { checkMonitoringConfig, codexHooksOff, readMonitoringSlots, MONITORING_CHECK_INTERVAL_MS, UNEXPLAINED_CHANGE_RULE_ID } from "./monitoring-check.js";
+export { buildHeartbeat, sendMonitoringHeartbeat, readHeartbeatState, HEARTBEAT_INTERVAL_MS, HEARTBEAT_MIN_GAP_MS, SESSION_OPEN_WINDOW_MS } from "./monitoring-heartbeat.js";
+export type { ComponentState, Heartbeat, HeartbeatOutcome, HeartbeatPlatform, HeartbeatState, SendHeartbeatOptions } from "./monitoring-heartbeat.js";
 export type { InstallationCheck, InstallationState, MonitoringCheckOptions, MonitoringCheckResult } from "./monitoring-check.js";
 
 // Advanced (Pro) rule usage: counted in the background pass, submitted in batches
