@@ -98,7 +98,7 @@ packages/
   antigravity-provider/    AntigravityInterceptor + antigravity-hook-shim (Google Antigravity)
   mcp-proxy/               MCP proxy interceptor (agent <-> upstream MCP servers)
   analyzer/                Rule engine (RuleEngine, RuleRegistry) + 19 community rule definitions
-  sync-encryptor/          Zero-knowledge AES-256-GCM sync encryption (Argon2id KDF)
+  sync-encryptor/          End-to-end encrypted sync, AES-256-GCM (Argon2id KDF)
   feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
   cli/                     omnodex CLI: install, uninstall, status, update, spike,

@@ -1,6 +1,6 @@
 // Validation: Argon2id KDF + AES-256-GCM pipeline
 //
-// Validates that the full zero-knowledge sync encryption pipeline works in
+// Validates that the full end-to-end sync encryption pipeline works in
 // Node.js 22 using Argon2id (hash-wasm) for key derivation and the built-in
 // Web Crypto API for AES-256-GCM. No paid service tiers required -- this runs
 // entirely client-side (local CLI or browser). The Cloudflare Worker only ever

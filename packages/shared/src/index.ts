@@ -729,7 +729,7 @@ export interface FeatureBatch {
 }
 
 /**
- * Zero-knowledge encrypted sync payload. The cloud never holds the
+ * End-to-end encrypted sync payload. The cloud never holds the
  * decryption key -- the passphrase-derived key stays client-side.
  */
 export interface SyncPackage {
@@ -737,7 +737,7 @@ export interface SyncPackage {
   customer_id: string;
   /** AES-256-GCM ciphertext of the serialized session data. */
   encrypted_payload: ArrayBuffer;
-  /** Initialisation vector, fresh per sync operation. */
+  /** Initialization vector, fresh per sync operation. */
   iv: Uint8Array;
   /** Argon2id KDF salt stored alongside the blob. */
   kdf_salt: Uint8Array;

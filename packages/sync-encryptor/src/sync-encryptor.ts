@@ -14,8 +14,8 @@
  *   4. Emit a sync.pushed audit event to the local event log
  *
  * The passphrase and derived key never leave the client. The cloud stores
- * only ciphertext, IV, and KDF salt. This is the same zero-knowledge
- * pattern used by Proton Mail and Bitwarden.
+ * only ciphertext, IV, and KDF salt. This is the same end-to-end
+ * encryption pattern used by Proton Mail and Bitwarden.
  */
 
 import { randomSalt, deriveKey, encrypt, sha256Hex } from "./crypto.js";
