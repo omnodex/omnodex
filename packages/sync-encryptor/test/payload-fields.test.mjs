@@ -25,6 +25,8 @@ import { serializeReadModel, PAYLOAD_FIELDS } from "../dist/index.js";
  *   6. A session's git remote survives projection, SQLite and
  *      serialization, and a later session.started without one keeps it:
  *      hosted matches one project across machines by it.
+ *   7. A session's model and its model changes survive projection, SQLite
+ *      and serialization: hosted shows the model and marks each change.
  */
 
 const AT = "2026-09-29T12:00:00.000Z";
@@ -107,7 +109,7 @@ test("the payload allowlist is exactly these fields", () => {
       "started_at", "ended_at", "duration_ms", "status",
       "tool_call_count", "file_read_count", "file_write_count", "risk_score",
       "last_event_at", "source_root", "platform", "mcp_client_name", "title",
-      "project_remote",
+      "project_remote", "model",
     ],
     tool_calls: [
       "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
@@ -121,6 +123,7 @@ test("the payload allowlist is exactly these fields", () => {
       "rule_tier", "related_event_ids", "evidence", "enforcement",
     ],
     prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
+    model_changes: ["event_id", "session_id", "at", "model", "previous", "source"],
     subagents: [
       "session_id", "agent_id", "agent_type", "started_at", "ended_at",
       "duration_ms", "status", "response_bytes",
@@ -307,4 +310,42 @@ test("a session with no git remote has no project_remote in the payload", async 
   const store = await project(new InMemoryReadModelStore(), [START, INVOKED]);
   const payload = await serializeReadModel(store);
   assert.ok(!("project_remote" in payload.sessions[0]));
+});
+
+const MODEL_AT = "2026-09-29T12:05:00.000Z";
+const modelChanged = (id, model, previous, source = "hook") =>
+  event({ event_id: id, event_type: "session.model_changed", occurred_at: MODEL_AT, model, source, ...(previous ? { previous } : {}) });
+
+for (const [name, makeStore] of [
+  ["in-memory", async () => new InMemoryReadModelStore()],
+  ["sqlite", sqliteStore],
+]) {
+  test(`${name}: a session's model and its model changes reach the payload, once each`, async (t) => {
+    const store = await project(await makeStore(t), [
+      { ...START, model: "model-a" },
+      INVOKED,
+      modelChanged("e_model", "model-b", "model-a"),
+      modelChanged("e_model", "model-b", "model-a"),
+      event({ event_id: "e_other", event_type: "session.started", session_id: "sess_plain", user: "case", project_path: "/home/case/other", mcp_servers: [] }),
+    ]);
+    const payload = await serializeReadModel(store);
+    const session = payload.sessions.find((s) => s.session_id === "sess_fields");
+    assert.equal(session.model, "model-b");
+    assert.ok(!("models" in session), "the distinct list stays local");
+    assert.deepEqual(payload.model_changes, {
+      sess_fields: [{ event_id: "e_model", session_id: "sess_fields", at: MODEL_AT, model: "model-b", previous: "model-a", source: "hook" }],
+    });
+  });
+
+  test(`${name}: a model first reported mid-session is a change row without previous`, async (t) => {
+    const store = await project(await makeStore(t), [START, modelChanged("e_model", "model-a", undefined, "transcript")]);
+    const [row] = (await serializeReadModel(store)).model_changes.sess_fields;
+    assert.deepEqual(row, { event_id: "e_model", session_id: "sess_fields", at: MODEL_AT, model: "model-a", source: "transcript" });
+  });
+}
+
+test("a payload with no model reported has no model and no model_changes", async () => {
+  const payload = await serializeReadModel(await project(new InMemoryReadModelStore(), [START, INVOKED]));
+  assert.ok(!("model" in payload.sessions[0]));
+  assert.ok(!("model_changes" in payload));
 });

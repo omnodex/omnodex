@@ -74,6 +74,7 @@ class MockReadModelStore {
   async listRiskEvents(id) { return this._riskEvents[id] ?? []; }
   async listPrompts() { return []; }
   async listSubagents() { return []; }
+  async listModelChanges() { return []; }
   async close() {}
 }
 
