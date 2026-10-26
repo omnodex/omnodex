@@ -34,6 +34,7 @@
  *   - auto-sync-state.json  last attempt, last success, last error
  *   - auto-sync.lock        held while a sync runs; stale after 10 minutes
  *   - monitoring-check.json the config check's last run (monitoring-check.ts)
+ *   - monitoring-heartbeat.json the heartbeat's last send (monitoring-heartbeat.ts)
  *
  * Settings (stream-config.json):
  *   - auto_sync: false                      turn automatic sync off
@@ -221,6 +222,8 @@ export interface RunAutoSyncOptions {
    * checkMonitoringConfig, pushing what it writes; tests replace it.
    */
   checkMonitoring?: (home: string) => Promise<unknown>;
+  /** Monitoring heartbeat, after the check. Defaults to sendHeartbeat; tests replace it. */
+  sendHeartbeat?: (home: string) => Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -340,6 +343,9 @@ export async function runAutoSync(
     await (opts.checkMonitoring ?? ((h: string) => checkMonitoring(h, opts.pushFn ?? pushEventsToCloud)))(home).catch(
       () => undefined,
     );
+    // Tells the hosted service what the check found; ignores sync settings
+    // and pauses, so pausing uploads cannot hide monitoring being removed.
+    await (opts.sendHeartbeat ?? sendHeartbeat)(home).catch(() => undefined);
     // Sends counted advanced usage, at most every 15 minutes; a no-op
     // without counts or credentials.
     await (opts.submitUsage ?? submitUsage)(home).catch(() => undefined);
@@ -457,6 +463,19 @@ export async function submitSignals(home: string, fetchFn?: typeof fetch): Promi
   if (!apiToken) return "no-credentials";
   const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
   return submitRuleSignals(home, { apiUrl, apiToken, fetchFn });
+}
+
+/**
+ * Send the monitoring heartbeat with this home's credentials, if one is
+ * due. Without an API token nothing is sent.
+ */
+export async function sendHeartbeat(home: string, fetchFn?: typeof fetch): Promise<string> {
+  const config = await readJson(path.join(home, "stream-config.json"));
+  const apiToken = typeof config?.api_token === "string" ? config.api_token : "";
+  if (!apiToken) return "no-credentials";
+  const apiUrl = typeof config?.api_url === "string" && config.api_url ? config.api_url : "https://api.omnodex.com";
+  const { sendMonitoringHeartbeat } = await import("./monitoring-heartbeat.js");
+  return sendMonitoringHeartbeat(home, { apiUrl, apiToken, ...(fetchFn ? { fetchFn } : {}) });
 }
 
 export type LicenseRefreshOutcome = "no-credentials" | "fresh" | "waiting" | "refreshed" | "failed";

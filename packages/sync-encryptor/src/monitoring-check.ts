@@ -342,6 +342,14 @@ async function readInstallations(home: string): Promise<Entry[]> {
   return entries;
 }
 
+/**
+ * Each installation's state at the last check, keyed
+ * "target|component|scope|project". Empty before the first check.
+ */
+export async function readMonitoringSlots(home: string): Promise<Record<string, InstallationState>> {
+  return (await readState(home))?.slots ?? {};
+}
+
 async function readState(home: string): Promise<CheckState | null> {
   const s = await readJson(path.join(home, STATE_FILE));
   if (!s || typeof s.first_run_at !== "string" || typeof s.last_run_at !== "string") return null;
