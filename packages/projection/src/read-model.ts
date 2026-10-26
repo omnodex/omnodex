@@ -66,6 +66,14 @@ export interface SessionRow {
    * payload, so the hosted dashboard can match one project across machines.
    */
   project_remote?: string;
+  /**
+   * The latest model the platform reported for the session, from
+   * session.started or session.model_changed. Absent when the platform did
+   * not say, and for older rows. Not in the sync payload.
+   */
+  model?: string;
+  /** Every model the session reported, distinct, in the order first seen. */
+  models?: string[];
 }
 
 export interface ToolCallRow {

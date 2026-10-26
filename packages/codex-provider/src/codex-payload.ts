@@ -236,6 +236,7 @@ export function mapCodexPayload(
         user: "codex",
         project_path: payload.cwd,
         mcp_servers: [],
+        ...modelOf(payload.model),
       };
       return [event];
     }
@@ -311,6 +312,12 @@ export function mapCodexPayload(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The reported model as an optional field, when it is a usable name. */
+function modelOf(value: unknown): { model?: string } {
+  const model = typeof value === "string" ? value.trim() : "";
+  return model && model.length <= 128 ? { model } : {};
+}
 
 function mcpServerFor(toolName: string): string {
   return splitMcpToolName(toolName)?.mcpServer ?? "builtin";

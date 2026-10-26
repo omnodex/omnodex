@@ -38,7 +38,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
-import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionModelChangedIfChanged, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
 import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
@@ -54,6 +54,9 @@ import {
   runAutoSync,
   startBackgroundSync,
 } from "@omnodex/sync-encryptor";
+
+/** Turn boundaries at which the model is checked: start, each prompt, each stop. */
+const MODEL_HOOKS = new Set(["SessionStart", "UserPromptSubmit", "Stop"]);
 
 async function main(): Promise<number> {
   const debug = process.env.OMNODEX_DEBUG === "1";
@@ -137,6 +140,18 @@ async function main(): Promise<number> {
         { home, sessionId: payload.session_id, interceptor: "codex-hook", newEventId },
       );
       if (renamed) events.push(renamed);
+    }
+    // Every payload names the model; check it at turn boundaries and record a change.
+    if (MODEL_HOOKS.has(payload.hook_event_name)) {
+      const changed = await sessionModelChangedIfChanged(payload.model, {
+        home,
+        sessionId: payload.session_id,
+        interceptor: "codex-hook",
+        source: "hook",
+        newEventId,
+        announced: events.some((e) => e.event_type === "session.started" && e.model !== undefined),
+      });
+      if (changed) events.push(changed);
     }
     if (events.length === 0) {
       if (debug)

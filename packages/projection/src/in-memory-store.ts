@@ -78,6 +78,8 @@ export class InMemoryReadModelStore implements ReadModelStore {
       ...(row.project_remote ?? existing.project_remote
         ? { project_remote: row.project_remote ?? existing.project_remote }
         : {}),
+      ...(row.model ?? existing.model ? { model: row.model ?? existing.model } : {}),
+      ...(row.models ?? existing.models ? { models: row.models ?? existing.models } : {}),
       tool_call_count: existing.tool_call_count,
       file_read_count: existing.file_read_count,
       file_write_count: existing.file_write_count,

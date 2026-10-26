@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   mcp_server_transports_json TEXT,
   mcp_client_name TEXT,
   title TEXT,
-  project_remote TEXT
+  project_remote TEXT,
+  model TEXT,
+  models_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -268,6 +270,10 @@ export class SqliteReadModelStore implements ReadModelStore {
     // Migration 12: the project's git origin remote (2026-10-21). Rows
     // written before it read as absent until the next replay.
     this.addColumnIfMissing("sessions", "project_remote", "TEXT");
+    // Migration 13: the model the platform reported (2026-10-26). Rows
+    // written before it read as absent until the next replay.
+    this.addColumnIfMissing("sessions", "model", "TEXT");
+    this.addColumnIfMissing("sessions", "models_json", "TEXT");
   }
 
   /** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
@@ -374,6 +380,9 @@ export class SqliteReadModelStore implements ReadModelStore {
     for (const [key, value] of entries) {
       if (key === "mcp_servers") {
         setClauses.push(`mcp_servers_json = ?`);
+        values.push(JSON.stringify(value));
+      } else if (key === "models") {
+        setClauses.push(`models_json = ?`);
         values.push(JSON.stringify(value));
       } else {
         setClauses.push(`${key} = ?`);
@@ -659,6 +668,8 @@ interface SessionRowRaw {
   mcp_client_name: string | null;
   title: string | null;
   project_remote: string | null;
+  model: string | null;
+  models_json: string | null;
 }
 
 interface ToolCallRowRaw {
@@ -718,6 +729,8 @@ function toSessionRow(raw: SessionRowRaw): SessionRow {
     ...(raw.mcp_client_name ? { mcp_client_name: raw.mcp_client_name } : {}),
     ...(raw.title ? { title: raw.title } : {}),
     ...(raw.project_remote ? { project_remote: raw.project_remote } : {}),
+    ...(raw.model ? { model: raw.model } : {}),
+    ...(raw.models_json ? { models: JSON.parse(raw.models_json) as string[] } : {}),
   };
 }
 

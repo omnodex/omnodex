@@ -117,6 +117,10 @@ export class Projector {
       case "session.renamed":
         await this.onSessionRenamed(event, root);
         return;
+      case "session.model_changed":
+        await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
+        await this.recordModel(event.session_id, event.model);
+        return;
       case "tool.invoked":
         await this.onToolInvoked(event, root);
         return;
@@ -166,6 +170,16 @@ export class Projector {
       ...(event.mcp_server_transports?.length ? { mcp_server_transports: event.mcp_server_transports } : {}),
       ...(event.mcp_client?.name ? { mcp_client_name: event.mcp_client.name } : {}),
       ...(event.project_remote ? { project_remote: event.project_remote } : {}),
+    });
+    if (event.model) await this.recordModel(event.session_id, event.model);
+  }
+
+  /** The session's current model, added to its list when new. */
+  private async recordModel(sessionId: string, model: string): Promise<void> {
+    const models = (await this.store.getSession(sessionId))?.models ?? [];
+    await this.store.patchSession(sessionId, {
+      model,
+      ...(models.includes(model) ? {} : { models: [...models, model] }),
     });
   }
 

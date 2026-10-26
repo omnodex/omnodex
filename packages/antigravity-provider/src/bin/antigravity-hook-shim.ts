@@ -43,11 +43,12 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { createHash } from "node:crypto";
-import { applyCapturePause, EventLog, isPauseMarker, newEventId, withProjectRemote } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionModelChangedIfChanged, withProjectRemote } from "@omnodex/event-log";
 import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
 import type {
+  AntigravityCommonFields,
   AntigravityHookEventName,
   AntigravityHookPayload,
   AntigravityPreToolUsePayload,
@@ -211,6 +212,19 @@ async function main(): Promise<number> {
       events.unshift(...mapAntigravityPayload("PreInvocation", payload, options));
     }
     events = await withProjectRemote(events);
+    // Every payload names the model; check it once per turn (and when the
+    // session starts) and record a change.
+    if (eventName === "PreInvocation" || firstActivity) {
+      const changed = await sessionModelChangedIfChanged((payload as AntigravityCommonFields).modelName, {
+        home,
+        sessionId: conversationId,
+        interceptor: "antigravity-hook",
+        source: "hook",
+        newEventId,
+        announced: events.some((e) => e.event_type === "session.started" && e.model !== undefined),
+      });
+      if (changed) events.push({ ...changed, platform: "antigravity" });
+    }
     if (events.length === 0) {
       if (debug)
         console.error(
