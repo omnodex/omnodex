@@ -70,6 +70,7 @@ export async function broadcastProjection(
     case "session.started":
     case "session.ended":
     case "session.renamed":
+    case "session.model_changed":
     // The page reloads its snapshot on any message, which picks up the new
     // prompt or subagent row; the session row is what changed visibly.
     case "prompt.submitted":

@@ -172,6 +172,7 @@ export function mapAntigravityPayload(
         user: "antigravity",
         project_path: p.workspacePaths?.[0] ?? "unknown",
         mcp_servers: [],
+        ...modelOf(p.modelName),
       };
       return [event];
     }
@@ -236,6 +237,12 @@ export function mapAntigravityPayload(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The reported model as an optional field, when it is a usable name. */
+function modelOf(value: unknown): { model?: string } {
+  const model = typeof value === "string" ? value.trim() : "";
+  return model && model.length <= 128 ? { model } : {};
+}
 
 /** The built-in tool through which Antigravity's agent calls every MCP tool. */
 const CALL_MCP_TOOL = "call_mcp_tool";

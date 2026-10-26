@@ -45,13 +45,14 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
-import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
+import { applyCapturePause, EventLog, isPauseMarker, newEventId, readJsonlTail, sessionModelChangedIfChanged, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
 import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
-import { TITLE_HOOKS, readTranscriptTitle } from "../session-title.js";
+import { TITLE_HOOKS, titleFromTranscript } from "../session-title.js";
+import { MODEL_HOOKS, modelFromTranscript } from "../session-model.js";
 import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
@@ -164,14 +165,31 @@ async function main(): Promise<number> {
 
     const events = await withProjectRemote(mapClaudeCodePayload(payload, { newEventId }));
     // The session's title lives in its transcript; record it when it changes.
-    if (TITLE_HOOKS.has(payload.hook_event_name)) {
-      const renamed = await sessionRenamedIfChanged(await readTranscriptTitle(payload.transcript_path), {
-        home,
-        sessionId: payload.session_id,
-        interceptor: "claude-code-hook",
-        newEventId,
-      });
-      if (renamed) events.push(renamed);
+    // The title and the model live in the transcript, not the payload; one
+    // read of its tail serves both checks.
+    const wantsTitle = TITLE_HOOKS.has(payload.hook_event_name);
+    const wantsModel = MODEL_HOOKS.has(payload.hook_event_name);
+    if ((wantsTitle || wantsModel) && payload.transcript_path) {
+      const records = await readJsonlTail(payload.transcript_path);
+      if (wantsTitle) {
+        const renamed = await sessionRenamedIfChanged(titleFromTranscript(records), {
+          home,
+          sessionId: payload.session_id,
+          interceptor: "claude-code-hook",
+          newEventId,
+        });
+        if (renamed) events.push(renamed);
+      }
+      if (wantsModel) {
+        const changed = await sessionModelChangedIfChanged(modelFromTranscript(records), {
+          home,
+          sessionId: payload.session_id,
+          interceptor: "claude-code-hook",
+          source: "transcript",
+          newEventId,
+        });
+        if (changed) events.push(changed);
+      }
     }
     if (events.length === 0) {
       await removeReceipt(home);
