@@ -14,9 +14,12 @@ import {
   withProjectRemote,
 } from "../dist/index.js";
 
-async function scratch(t) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "omnodex-remote-"));
+async function scratch(t, parent = os.tmpdir()) {
+  const dir = await mkdtemp(path.join(parent, "omnodex-remote-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
+  // This resolver reads .git directly instead of spawning Git. An explicit
+  // no-origin fixture prevents its parent walk from reaching a real remote.
+  await makeRepo(dir, "");
   return dir;
 }
 
@@ -135,4 +138,17 @@ test("withProjectRemote: a folder with no remote adds no field", async (t) => {
   const dir = await scratch(t);
   const [start] = await withProjectRemote([{ event_type: "session.started", event_id: "e1", project_path: dir }]);
   assert.ok(!("project_remote" in start));
+});
+
+test("scratch remote fixtures do not inherit an enclosing repository's origin", async (t) => {
+  const enclosing = await scratch(t);
+  await makeRepo(enclosing, '[remote "origin"]\n\turl = https://github.com/case/enclosing.git\n');
+  const dir = await scratch(t, enclosing);
+  assert.equal(await readProjectRemote(dir), undefined);
+  assert.equal(await readProjectRemote(path.join(dir, "missing")), undefined);
+  assert.equal(await readProjectRemote(undefined), undefined);
+  const [start] = await withProjectRemote([{ event_type: "session.started", event_id: "e1" }]);
+  assert.ok(!("project_remote" in start));
+  await makeRepo(dir, ORIGIN);
+  assert.equal(await readProjectRemote(dir), "github.com/case/repo");
 });

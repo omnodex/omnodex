@@ -252,7 +252,10 @@ test("gitRoots finds the top level, the main checkout and sibling worktrees", as
   try {
     assert.deepEqual(new Set(gitRoots(path.join(main, "src"))), new Set([main, wt]));
     assert.deepEqual(new Set(gitRoots(wt)), new Set([wt, main]));
-    assert.deepEqual(gitRoots(os.tmpdir() === "/" ? "/nonexistent" : path.join(dir, "nowhere")), []);
+    // The resolver walks the filesystem itself, so Git's ceiling variable
+    // cannot hide an enclosing checkout. Use a missing path below the root.
+    const outside = path.join(path.parse(dir).root, path.basename(dir), "nowhere");
+    assert.deepEqual(gitRoots(outside), []);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

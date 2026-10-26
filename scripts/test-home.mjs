@@ -7,10 +7,12 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gitTestEnv } from "./test-git.mjs";
 
 const home = mkdtempSync(join(tmpdir(), "omnodex-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.OMNODEX_HOME = join(home, ".omnodex");
 process.env.OMNODEX_SINGLE_ROOT = "1";
+process.env.GIT_CEILING_DIRECTORIES = gitTestEnv(home).GIT_CEILING_DIRECTORIES;
 process.on("exit", () => rmSync(home, { recursive: true, force: true }));

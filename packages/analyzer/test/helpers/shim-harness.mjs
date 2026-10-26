@@ -7,6 +7,7 @@ import { installModule } from "./make-module.mjs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { gitTestEnv } from "../../../../scripts/test-git.mjs";
 
 const HOOKS = new URL("./capture-hooks.mjs", import.meta.url).href;
 
@@ -25,7 +26,7 @@ export function runShim(shim, { home, userHome, pushLog }, payload, { env = {}, 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", HOOKS, shim, ...args], {
       env: {
-        ...process.env,
+        ...gitTestEnv(userHome),
         HOME: userHome,
         USERPROFILE: userHome,
         OMNODEX_HOME: home,
