@@ -8,11 +8,12 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { gitTestEnv } from "../../../scripts/test-git.mjs";
 
 import { sourceUpdateNotice, sourceUpdateStatus, sourceUpdateTarget } from "../dist/update.js";
 
 function git(cwd, ...args) {
-  const r = spawnSync("git", ["-c", "user.name=case", "-c", "user.email=case@example.com", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  const r = spawnSync("git", ["-c", "user.name=case", "-c", "user.email=case@example.com", "-c", "init.defaultBranch=main", ...args], { cwd, env: gitTestEnv(cwd), encoding: "utf8" });
   assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.stderr}`);
   return r.stdout.trim();
 }
