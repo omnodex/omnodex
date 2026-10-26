@@ -12,6 +12,7 @@
 import { roundRiskScore } from "@omnodex/shared";
 import type {
   FileEventRow,
+  ModelChangeRow,
   PromptRow,
   ReadModelStore,
   RiskEventRow,
@@ -36,6 +37,7 @@ export class InMemoryReadModelStore implements ReadModelStore {
   private fileEvents: FileEventRow[] = [];
   private riskEvents: RiskEventRow[] = [];
   private prompts = new Map<string, PromptRow>();
+  private modelChanges = new Map<string, ModelChangeRow>();
   /** Keyed on `${session_id}::${agent_id}`. */
   private subagents = new Map<string, SubagentRow>();
   /** Stand-ins for the unique indexes the SQLite store gets from the schema. */
@@ -48,6 +50,7 @@ export class InMemoryReadModelStore implements ReadModelStore {
     this.fileEvents = [];
     this.riskEvents = [];
     this.prompts.clear();
+    this.modelChanges.clear();
     this.subagents.clear();
     this.fileEventIds.clear();
     this.riskFindingKeys.clear();
@@ -149,6 +152,12 @@ export class InMemoryReadModelStore implements ReadModelStore {
     return true;
   }
 
+  async insertModelChange(row: ModelChangeRow): Promise<boolean> {
+    if (this.modelChanges.has(row.event_id)) return false;
+    this.modelChanges.set(row.event_id, { ...row });
+    return true;
+  }
+
   async upsertSubagent(
     sessionId: string,
     agentId: string,
@@ -226,6 +235,13 @@ export class InMemoryReadModelStore implements ReadModelStore {
   async listPrompts(sessionId: string): Promise<PromptRow[]> {
     return [...this.prompts.values()]
       .filter((p) => p.session_id === sessionId)
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((r) => ({ ...r }));
+  }
+
+  async listModelChanges(sessionId: string): Promise<ModelChangeRow[]> {
+    return [...this.modelChanges.values()]
+      .filter((m) => m.session_id === sessionId)
       .sort((a, b) => a.at.localeCompare(b.at))
       .map((r) => ({ ...r }));
   }

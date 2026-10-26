@@ -296,6 +296,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
 
   const workspaceRoots = opts.workspaceRoots ?? createWorkspaceResolver();
   const home = opts.userHome ?? os.homedir();
+  const tempDirs = [os.tmpdir()];
   // How each session's MCP servers are reached, from its session.started.
   const transports = new Map<string, Map<string, McpServerTransport>>();
   // Where each session started: its session.started project path, or the
@@ -318,6 +319,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     return {
       workspaceRoots: roots.length ? [...new Set(roots)] : undefined,
       home,
+      tempDirs,
       machineState: opts.machineState,
       mcpServerTransport: transports.get(event.session_id)?.get(event.mcp_server),
     };

@@ -69,7 +69,7 @@ export interface SessionRow {
   /**
    * The latest model the platform reported for the session, from
    * session.started or session.model_changed. Absent when the platform did
-   * not say, and for older rows. Not in the sync payload.
+   * not say, and for older rows.
    */
   model?: string;
   /** Every model the session reported, distinct, in the order first seen. */
@@ -119,6 +119,19 @@ export interface PromptRow {
   /** The runtime's id for the turn, when it sent one. */
   prompt_id?: string;
   at: string;
+}
+
+/** A model the platform reported mid-session, from a session.model_changed event. */
+export interface ModelChangeRow {
+  /** event_id of the session.model_changed event; the row's natural key. */
+  event_id: string;
+  session_id: string;
+  at: string;
+  model: string;
+  /** The model recorded before; absent when this is the first one reported. */
+  previous?: string;
+  /** Where the platform reported it: its hook input, or its transcript. */
+  source: "hook" | "transcript";
 }
 
 /**
@@ -247,6 +260,8 @@ export interface ReadModelStore {
   insertFileEvent(row: FileEventRow): Promise<boolean>;
   /** Insert a prompt, keyed on event_id. Returns false if already present. */
   insertPrompt(row: PromptRow): Promise<boolean>;
+  /** Insert a model change, keyed on event_id. Returns false if already present. */
+  insertModelChange(row: ModelChangeRow): Promise<boolean>;
   /**
    * Create or update a subagent, keyed on session_id + agent_id. A new row
    * starts from `patch` over an in-progress default; an existing row takes
@@ -284,6 +299,8 @@ export interface ReadModelStore {
   listRiskEvents(sessionId: string): Promise<RiskEventRow[]>;
   /** The session's prompts, oldest first. */
   listPrompts(sessionId: string): Promise<PromptRow[]>;
+  /** The session's model changes, oldest first. */
+  listModelChanges(sessionId: string): Promise<ModelChangeRow[]>;
   /** The session's subagents, by start time (rows without one last). */
   listSubagents(sessionId: string): Promise<SubagentRow[]>;
   /** Best-effort close. Not all stores need it. */

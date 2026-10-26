@@ -120,6 +120,14 @@ export class Projector {
       case "session.model_changed":
         await this.ensureSession(event.session_id, event.occurred_at, event.interceptor, event.platform ?? null, root);
         await this.recordModel(event.session_id, event.model);
+        await this.store.insertModelChange({
+          event_id: event.event_id,
+          session_id: event.session_id,
+          at: event.occurred_at,
+          model: event.model,
+          ...(event.previous ? { previous: event.previous } : {}),
+          source: event.source,
+        });
         return;
       case "tool.invoked":
         await this.onToolInvoked(event, root);

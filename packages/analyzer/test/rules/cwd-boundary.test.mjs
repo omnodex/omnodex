@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { RuleEngine } from "../../dist/engine.js";
-import { RULE_CWD_BOUNDARY_WRITE, RULE_SENSITIVE_PATH_READ } from "../../dist/rules/index.js";
+import { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE, RULE_SENSITIVE_PATH_READ } from "../../dist/rules/index.js";
 import { gitRoots, configuredRoots, createWorkspaceResolver } from "../../dist/workspace.js";
 import { createEvaluator } from "../../dist/evaluator.js";
 import { RuleRegistry } from "../../dist/registry.js";
@@ -56,11 +56,11 @@ test("fires on write to parent directory", () => {
   assert.equal(findings.length, 1);
 });
 
-test("fires on write to /tmp", () => {
+test("leaves a write to /tmp to the temp-folder rule", () => {
   const findings = engine.evaluate(makeEvent({
     parameters: { file_path: "/tmp/staging/payload.bin", content: "data" },
   }));
-  assert.equal(findings.length, 1);
+  assert.equal(findings.length, 0);
 });
 
 test("fires on write to home-relative path with ~ when cwd is absolute", () => {
@@ -266,7 +266,8 @@ test("no finding on a write into a sibling worktree of the same repo", async () 
   try {
     const ev = createEvaluator({
       host: "batch",
-      registry: new RuleRegistry([RULE_CWD_BOUNDARY_WRITE]),
+      // The repo sits in the temp folder, so its outside write is a temp write.
+      registry: new RuleRegistry([RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE]),
       newEventId: () => "evt-x",
       workspaceRoots: createWorkspaceResolver(path.join(dir, "no-omnodex-home")),
     });

@@ -25,6 +25,7 @@ import type {
   ToolCallRow,
   FileEventRow,
   RiskEventRow,
+  ModelChangeRow,
   PromptRow,
   SubagentRow,
 } from "@omnodex/projection";
@@ -57,6 +58,11 @@ export const SYNC_PAYLOAD_VERSION = 2;
  * the hosted dashboard can treat one repository as one project across
  * machines whatever its folder is called there.
  *
+ * sessions.model, model_changes: the model the platform reported, and when
+ * it reported a different one, so a change in behavior after a model change
+ * reads as explained. Only what the platform reports. Blobs from before
+ * these were added have neither.
+ *
  * tool_calls.agent_id, prompts, subagents: the session view shows what the
  * session was asked, which subagents it ran, and which calls each made.
  * Prompt text travels only inside the encrypted payload, as tool parameters
@@ -85,7 +91,7 @@ export const PAYLOAD_FIELDS = {
     "started_at", "ended_at", "duration_ms", "status",
     "tool_call_count", "file_read_count", "file_write_count", "risk_score",
     "last_event_at", "source_root", "platform", "mcp_client_name", "title",
-    "project_remote",
+    "project_remote", "model",
   ],
   tool_calls: [
     "tool_call_id", "session_id", "tool_name", "mcp_server", "interceptor",
@@ -99,6 +105,7 @@ export const PAYLOAD_FIELDS = {
     "rule_tier", "related_event_ids", "evidence", "enforcement",
   ],
   prompts: ["event_id", "session_id", "prompt", "prompt_id", "at"],
+  model_changes: ["event_id", "session_id", "at", "model", "previous", "source"],
   subagents: [
     "session_id", "agent_id", "agent_type", "started_at", "ended_at",
     "duration_ms", "status", "response_bytes",
@@ -109,6 +116,7 @@ export const PAYLOAD_FIELDS = {
   file_events: readonly (keyof FileEventRow)[];
   risk_events: readonly (keyof RiskEventRow)[];
   prompts: readonly (keyof PromptRow)[];
+  model_changes: readonly (keyof ModelChangeRow)[];
   subagents: readonly (keyof SubagentRow)[];
 };
 
@@ -148,6 +156,8 @@ export interface SyncPayload {
   risk_events: Record<string, RiskEventRow[]>;
   prompts: Record<string, PromptRow[]>;
   subagents: Record<string, SubagentRow[]>;
+  /** Model changes per session. Absent when no session has any, and in older blobs. */
+  model_changes?: Record<string, ModelChangeRow[]>;
   /** Pauses of recording or uploads on this machine. Absent before pauses existed. */
   capture_pauses?: CapturePauseRow[];
   /**
@@ -184,6 +194,7 @@ export async function serializeReadModel(
   const riskEvents: Record<string, RiskEventRow[]> = {};
   const prompts: Record<string, PromptRow[]> = {};
   const subagents: Record<string, SubagentRow[]> = {};
+  const modelChanges: Record<string, ModelChangeRow[]> = {};
 
   for (const id of ids) {
     toolCalls[id] = (await store.listToolCalls(id)).map((r) => pick(r, PAYLOAD_FIELDS.tool_calls) as ToolCallRow);
@@ -194,6 +205,8 @@ export async function serializeReadModel(
     if (sessionPrompts.length) prompts[id] = sessionPrompts.map((r) => pick(r, PAYLOAD_FIELDS.prompts) as PromptRow);
     const sessionSubagents = await store.listSubagents(id);
     if (sessionSubagents.length) subagents[id] = sessionSubagents.map((r) => pick(r, PAYLOAD_FIELDS.subagents) as SubagentRow);
+    const sessionModelChanges = await store.listModelChanges(id);
+    if (sessionModelChanges.length) modelChanges[id] = sessionModelChanges.map((r) => pick(r, PAYLOAD_FIELDS.model_changes) as ModelChangeRow);
   }
 
   return {
@@ -206,6 +219,7 @@ export async function serializeReadModel(
     risk_events: riskEvents,
     prompts,
     subagents,
+    ...(Object.keys(modelChanges).length ? { model_changes: modelChanges } : {}),
     ...(pauses?.length ? { capture_pauses: pauses } : {}),
     ...(monitoringChanges?.length ? { monitoring_changes: monitoringChanges } : {}),
   };
