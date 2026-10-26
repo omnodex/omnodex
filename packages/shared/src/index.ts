@@ -247,6 +247,13 @@ export interface SessionStartedEvent extends BaseEvent {
    * local path.
    */
   project_remote?: string;
+  /**
+   * The model the agent platform reported for the session's first turn, as
+   * the platform names it. Only what the platform reports: never probed or
+   * verified. Absent when the platform does not say (session.model_changed
+   * may supply it later).
+   */
+  model?: string;
 }
 
 export interface McpServerTransport {
@@ -307,6 +314,21 @@ export interface SessionEndedEvent extends BaseEvent {
 export interface SessionRenamedEvent extends BaseEvent {
   event_type: "session.renamed";
   title: string;
+}
+
+/**
+ * The model the platform reports for the session changed, or was first
+ * reported after the session started. Interceptors emit it only when the
+ * model differs from the last one they recorded for the session, so the
+ * latest event (or session.started) names the current model.
+ */
+export interface SessionModelChangedEvent extends BaseEvent {
+  event_type: "session.model_changed";
+  model: string;
+  /** The model recorded before; absent when this is the first one seen. */
+  previous?: string;
+  /** Where the platform reported it: its hook input, or its transcript. */
+  source: "hook" | "transcript";
 }
 
 export interface ToolInvokedEvent extends BaseEvent {
@@ -983,6 +1005,7 @@ export type TraceEvent =
   | SessionStartedEvent
   | SessionEndedEvent
   | SessionRenamedEvent
+  | SessionModelChangedEvent
   | ToolInvokedEvent
   | ToolCompletedEvent
   | FileReadEvent

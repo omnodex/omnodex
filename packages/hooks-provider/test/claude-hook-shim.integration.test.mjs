@@ -232,6 +232,7 @@ test("shim computes duration_ms from PreToolUse/PostToolUse wall-clock delta whe
 test("SessionEnd starts a detached sync that uploads the session without delaying the hook", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "omnodex-shim-sync-"));
   const pushes = [];
+  const heartbeats = [];
   // Every sync request is held until the hook has exited, so the sync cannot
   // finish first. A hook that waited for it would never exit. This proves the
   // ordering without a wall-clock limit that a loaded machine can miss.
@@ -243,6 +244,13 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
     req.on("end", async () => {
       await held;
       answered++;
+      // The monitoring heartbeat the same pass sends, kept apart from sync.
+      if (req.url === "/api/v1/sync/monitoring/heartbeat") {
+        heartbeats.push(req.method);
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
       pushes.push({ method: req.method, url: req.url.replace(/segments\/.+$/, "segments/:id") });
       if (req.url === "/api/v1/stream/verifier") {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -312,6 +320,7 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
     { method: "PUT", url: "/api/v1/sync/segments/:id" },
     { method: "PUT", url: "/api/v1/sync/manifest" },
   ]);
+  assert.deepEqual(heartbeats, ["POST"]);
 });
 
 test("shim times a subagent from SubagentStart to SubagentStop and logs the prompt", async (t) => {

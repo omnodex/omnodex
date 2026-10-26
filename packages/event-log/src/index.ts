@@ -303,6 +303,8 @@ export {
   sessionRenamedIfChanged,
 } from "./session-title.js";
 export type { FoundTitle, SessionRenamedOptions, TitleSource } from "./session-title.js";
+export { cleanModel, sessionModelChangedIfChanged } from "./session-model.js";
+export type { SessionModelOptions } from "./session-model.js";
 export {
   normalizeGitRemote,
   originUrlFromConfig,
