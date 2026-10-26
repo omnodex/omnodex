@@ -212,13 +212,15 @@ for (const query of [
     assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 1);
   });
 }
-// Obfuscation and encoding remain separate advanced coverage.
+// The community rule does not cover comment-split or URL-encoded signatures.
 for (const query of [
-  "UNION/**/SELECT secret FROM users", "OR/**/1=1",
-  "UNION%20SELECT%20secret%20FROM%20users", "OR%201%3D1",
+  "SELECT id FROM users WHERE id = 1 UNION/**/SELECT password FROM secrets",
+  "SELECT * FROM users WHERE username = 'case' OR/**/1=1",
+  "SELECT id FROM users WHERE id = 1 UNION%20SELECT%20password%20FROM%20secrets",
+  "SELECT * FROM users WHERE username = 'case' OR%201%3D1",
 ]) {
-  test(`SQL_INJECTION MUST_FIRE known gap: ${JSON.stringify(query)}`, { todo: "normalization or signature coverage requires a separate rule change" }, () => {
-    assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 1);
+  test(`SQL_INJECTION MUST_NOT_FIRE: community gap ${JSON.stringify(query)}`, () => {
+    assert.equal(sqlEngine.evaluate(makeDbEvent("query", "postgres", { query })).length, 0);
   });
 }
 test("SQL_INJECTION MUST_NOT_FIRE: documentation field on database server", () => {
