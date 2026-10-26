@@ -21,6 +21,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import type {
   FileEventRow,
+  ModelChangeRow,
   PromptRow,
   ReadModelStore,
   RiskEventRow,
@@ -90,6 +91,15 @@ CREATE TABLE IF NOT EXISTS prompts (
   at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS model_changes (
+  event_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(session_id),
+  at TEXT NOT NULL,
+  model TEXT NOT NULL,
+  previous TEXT,
+  source TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS subagents (
   session_id TEXT NOT NULL REFERENCES sessions(session_id),
   agent_id TEXT NOT NULL,
@@ -132,6 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_session ON tool_calls(session_id);
 CREATE INDEX IF NOT EXISTS idx_file_events_session ON file_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_risk_events_session ON risk_events(session_id);
 CREATE INDEX IF NOT EXISTS idx_prompts_session ON prompts(session_id);
+CREATE INDEX IF NOT EXISTS idx_model_changes_session ON model_changes(session_id);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_last_event ON sessions(last_event_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_interceptor ON sessions(interceptor, last_event_at);
@@ -506,6 +517,17 @@ export class SqliteReadModelStore implements ReadModelStore {
     return Number(result.changes) > 0;
   }
 
+  async insertModelChange(row: ModelChangeRow): Promise<boolean> {
+    const db = this.requireDb();
+    const stmt = db.prepare(
+      `INSERT INTO model_changes (event_id, session_id, at, model, previous, source)
+        VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(event_id) DO NOTHING`,
+    );
+    const result = stmt.run(row.event_id, row.session_id, row.at, row.model, row.previous ?? null, row.source);
+    return Number(result.changes) > 0;
+  }
+
   async upsertSubagent(
     sessionId: string,
     agentId: string,
@@ -621,6 +643,14 @@ export class SqliteReadModelStore implements ReadModelStore {
       `SELECT event_id, session_id, prompt, prompt_id, at FROM prompts WHERE session_id = ? ORDER BY at`,
     ).all(sessionId) as unknown as Array<PromptRow & { prompt_id: string | null }>;
     return rows.map(({ prompt_id, ...r }) => ({ ...r, ...(prompt_id ? { prompt_id } : {}) }));
+  }
+
+  async listModelChanges(sessionId: string): Promise<ModelChangeRow[]> {
+    const db = this.requireDb();
+    const rows = db.prepare(
+      `SELECT event_id, session_id, at, model, previous, source FROM model_changes WHERE session_id = ? ORDER BY at`,
+    ).all(sessionId) as unknown as Array<ModelChangeRow & { previous: string | null }>;
+    return rows.map(({ previous, ...r }) => ({ ...r, ...(previous ? { previous } : {}) }));
   }
 
   async listSubagents(sessionId: string): Promise<SubagentRow[]> {

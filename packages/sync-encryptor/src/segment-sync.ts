@@ -380,6 +380,7 @@ function assemble(parts: Slice[], serializedAt: string): SyncPayload {
     Object.assign(payload.risk_events, part.risk_events);
     Object.assign(payload.prompts, part.prompts);
     Object.assign(payload.subagents, part.subagents);
+    if (part.model_changes) Object.assign((payload.model_changes ??= {}), part.model_changes);
     if (part.capture_pauses?.length) (payload.capture_pauses ??= []).push(...part.capture_pauses);
     if (part.monitoring_changes?.length) (payload.monitoring_changes ??= []).push(...part.monitoring_changes);
   }
