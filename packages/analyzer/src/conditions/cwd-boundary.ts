@@ -23,6 +23,12 @@
  * Yields one MatchContext per file path that is outside cwd, with
  * matched_path populated. Empty array if all paths are within cwd
  * or if no file paths are found.
+ *
+ * The agent harness's own scratch folder for the event's session (Claude
+ * Code's <temp>/claude-<uid>/<project>/<session id>/) counts as workspace:
+ * the harness tells agents to write there. Other system temp folders are
+ * judged separately: `temp: "exclude"` skips them and `temp: "only"`
+ * judges nothing else, so a temp write can carry its own lower severity.
  */
 
 import type { ToolInvokedEvent } from "@omnodex/shared";
@@ -53,6 +59,31 @@ function isInside(filePath: string, root: string): boolean {
   return normFile === normRoot || normFile.startsWith(normRoot + "/");
 }
 
+/** System temp folders by shape, on Linux, macOS and Windows (normalized paths). */
+const TEMP_FOLDERS = [
+  /^\/(?:private\/)?(?:var\/)?tmp(?:\/|$)/,
+  /^\/(?:private\/)?var\/folders\/[^/]+\/[^/]+\/T(?:\/|$)/,
+  /^[a-z]:\/users\/[^/]+\/appdata\/local\/temp(?:\/|$)/i,
+  /^[a-z]:\/windows\/temp(?:\/|$)/i,
+];
+
+function isTemp(normPath: string, tempDirs: readonly string[]): boolean {
+  return TEMP_FOLDERS.some((re) => re.test(normPath)) || tempDirs.some((d) => isInside(normPath, d));
+}
+
+/**
+ * Whether a normalized path is in the harness's scratch folder for this
+ * session: <temp>/claude-<uid>/<project>/<session id>/... Bound to the
+ * session ID, so another session's scratch folder is still outside.
+ */
+function isSessionScratch(normPath: string, sessionId: string, tempDirs: readonly string[]): boolean {
+  if (!sessionId) return false;
+  const parts = normPath.split("/");
+  const i = parts.indexOf(sessionId);
+  if (i < 3 || !/^claude-\d+$/.test(parts[i - 2])) return false;
+  return isTemp(parts.slice(0, i - 2).join("/"), tempDirs);
+}
+
 /**
  * Evaluate a cwd_boundary condition against a tool.invoked event.
  *
@@ -74,6 +105,7 @@ export function evaluateCwdBoundary(
   if (paths.length === 0) return [];
 
   const roots = context.workspaceRoots?.length ? context.workspaceRoots : [event.cwd];
+  const tempDirs = (context.tempDirs ?? []).map(normalizePath);
   const results: Partial<MatchContext>[] = [];
   for (const raw of paths) {
     let p = raw;
@@ -88,7 +120,7 @@ export function evaluateCwdBoundary(
 
     // An unexpanded ~ path is outside unless a root is itself home-relative.
     if (p.startsWith("~")) {
-      if (!roots.some((r) => r.startsWith("~"))) {
+      if (condition.temp !== "only" && !roots.some((r) => r.startsWith("~"))) {
         results.push({
           matched_path: raw,
           matched_label: "file outside the workspace (home-relative path)",
@@ -97,12 +129,16 @@ export function evaluateCwdBoundary(
       continue;
     }
 
-    if (!roots.some((root) => isInside(p, root))) {
-      results.push({
-        matched_path: raw,
-        matched_label: "file outside the workspace",
-      });
-    }
+    if (roots.some((root) => isInside(p, root))) continue;
+    const norm = normalizePath(p);
+    if (isSessionScratch(norm, event.session_id, tempDirs)) continue;
+    const temp = isTemp(norm, tempDirs);
+    if (condition.temp === "exclude" && temp) continue;
+    if (condition.temp === "only" && !temp) continue;
+    results.push({
+      matched_path: raw,
+      matched_label: temp ? "file in a temp folder outside the workspace" : "file outside the workspace",
+    });
   }
 
   return results;

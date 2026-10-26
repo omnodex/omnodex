@@ -77,7 +77,7 @@ import {
 } from "./community/self-protection.js";
 import { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 import { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
-import { RULE_CWD_BOUNDARY_WRITE } from "./community/cwd-boundary.js";
+import { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
 import {
   RULE_MCP_SERVER_UPDATED,
   RULE_MCP_SERVER_TOOLS_CHANGED,
@@ -143,7 +143,7 @@ export {
 } from "./community/self-protection.js";
 export { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 export { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
-export { RULE_CWD_BOUNDARY_WRITE } from "./community/cwd-boundary.js";
+export { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
 export {
   RULE_MCP_SERVER_UPDATED,
   RULE_MCP_SERVER_TOOLS_CHANGED,
@@ -201,6 +201,7 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   RULE_THREAT_API_BASE_URL_OVERRIDE,
   // Working-directory boundary
   RULE_CWD_BOUNDARY_WRITE,
+  RULE_CWD_BOUNDARY_TEMP_WRITE,
   // MCP server and tool drift
   RULE_MCP_SERVER_UPDATED,
   RULE_MCP_SERVER_TOOLS_CHANGED,

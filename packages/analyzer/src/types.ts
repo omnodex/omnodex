@@ -417,6 +417,12 @@ export interface CwdBoundaryCondition {
    * files it writes to (see extractWriteTargets).
    */
   access?: "any" | "write";
+  /**
+   * System temp folders: "exclude" skips them, "only" judges nothing else.
+   * Omitted, they are judged like any other path. The harness's scratch
+   * folder for the event's session is inside the workspace either way.
+   */
+  temp?: "exclude" | "only";
 }
 
 /**
@@ -428,6 +434,8 @@ export interface EvaluationContext {
   workspaceRoots?: readonly string[];
   /** The user's home directory, for expanding ~ in paths. */
   home?: string;
+  /** The host's temp folder(s), beyond the standard locations by shape. */
+  tempDirs?: readonly string[];
   /** Persistent state for machine-scope rules. */
   machineState?: import("./machine-state.js").MachineState;
   /** How the event's MCP server is reached, when its session recorded it. */

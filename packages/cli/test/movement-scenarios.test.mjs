@@ -19,7 +19,7 @@ const COMMUNITY_FINDINGS = {
   "release-staged": ["RULE_SUPPLY_CHAIN_NEW_MCP_SERVER"],
   "sensitive-new-destination": ["RULE_OUTBOUND_UNKNOWN_IP", "RULE_SENSITIVE_PATH_READ"],
   "tests-usual-api": ["RULE_SENSITIVE_PATH_READ"],
-  "credential-outside-write": ["RULE_CWD_BOUNDARY_WRITE", "RULE_SENSITIVE_PATH_READ"],
+  "credential-outside-write": ["RULE_CWD_BOUNDARY_TEMP_WRITE", "RULE_SENSITIVE_PATH_READ"],
   "login-config-write": ["RULE_CWD_BOUNDARY_WRITE", "RULE_SUPPLY_CHAIN_NEW_MCP_SERVER"],
   "staged-path-mismatch": ["RULE_SENSITIVE_PATH_READ", "RULE_THREAT_CREDENTIAL_ARCHIVE"],
   "windows-credential-copy": ["RULE_CWD_BOUNDARY_WRITE", "RULE_SENSITIVE_PATH_READ"],
