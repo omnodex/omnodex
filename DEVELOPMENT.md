@@ -136,6 +136,9 @@ Hooks run out-of-band from the AI agent's context window. Do not introduce any a
 **6. Always add unit tests.**
 Every new package and feature must include unit tests using `node:test` (`.mjs` files in the package's `test/` directory). See `packages/analyzer/test/` for the pattern. This convention was established to catch regressions early.
 
+**7. Everything sent to the hosted service is listed.**
+`scripts/wire-contract.json` lists every endpoint the client calls and every field the service can read, with the reason for each. `scripts/test/wire-contract.test.mjs` drives every sender and fails on a request, field or network call that is not listed, or on captured content leaving in readable form. A new field needs an entry there and an update to the public list of what the hosted service can see.
+
 ## Risk detection rules
 
 The rule engine (`packages/analyzer`) evaluates declarative `RuleDefinition` objects against event logs. Rules are invoked by `omnodex detect`, by `omnodex dashboard`, and by the background pass that hook shims and the MCP proxy start (detection runs first, then the sync if the host is connected). `detectEventLogs()` in `packages/analyzer/src/detect-log.ts` is the shared entry point; the background pass keeps a per-session watermark in `detect-state.json` so it only reads sessions that grew.
