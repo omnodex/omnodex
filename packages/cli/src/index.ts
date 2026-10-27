@@ -32,7 +32,7 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
-import { describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
+import { annotateFindings, describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
@@ -64,6 +64,7 @@ import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
 import {
   COMMUNITY_RULES,
+  credentialFingerprinter,
   describeRules,
   detectEventLogs,
   detectRisks,
@@ -636,9 +637,14 @@ async function cmdDashboard(args: string[]): Promise<void> {
       for (const sessionId of sessionIds) {
         const events = await log.readSession(sessionId);
         if (events.length === 0) continue;
-        const result = detectRisks(events, newEventId, registryForHost("batch", resolvePaths().home), { machineState });
+        const home = resolvePaths().home;
+        const result = detectRisks(events, newEventId, registryForHost("batch", home), {
+          machineState,
+          fingerprint: credentialFingerprinter(home),
+        });
         if (result.newEvents.length > 0) {
-          await log.appendMany(result.newEvents);
+          // The user's severity entries, as the background pass applies them.
+          await log.appendMany(annotateFindings(result.newEvents, events, { home, stamp: false }));
           detected += result.newEvents.length;
         }
       }
