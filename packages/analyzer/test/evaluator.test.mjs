@@ -84,6 +84,7 @@ describe("classifyRule", () => {
   // Pinned so that a rule gaining state cannot silently reach the hook host.
   const STATEFUL = {
     RULE_SUPPLY_CHAIN_NEW_MCP_SERVER: "machine",
+    RULE_CREDENTIAL_EXFIL_REMEMBERED: "machine",
     RULE_MCP_SERVER_UPDATED: "machine",
     RULE_MCP_SERVER_TOOLS_CHANGED: "machine",
     RULE_MCP_TOOL_DEFINITION_CHANGED: "machine",
@@ -91,8 +92,8 @@ describe("classifyRule", () => {
     RULE_UNBOUNDED_CONSUMPTION_SUSTAINED: "session",
   };
 
-  it("classifies every community rule: 39 event, 2 session, 4 machine", () => {
-    assert.equal(COMMUNITY_RULES.length, 45);
+  it("classifies every community rule: 39 event, 2 session, 5 machine", () => {
+    assert.equal(COMMUNITY_RULES.length, 46);
     for (const rule of COMMUNITY_RULES) {
       assert.equal(classifyRule(rule), STATEFUL[rule.rule_id] ?? "event", rule.rule_id);
     }
@@ -123,12 +124,12 @@ describe("hosts", () => {
 
   it("runs every rule in the proxy and batch hosts", () => {
     for (const host of ["proxy", "batch"]) {
-      assert.equal(createEvaluator({ host, newEventId }).rules.length, 45, host);
+      assert.equal(createEvaluator({ host, newEventId }).rules.length, 46, host);
     }
   });
 
   it("loads the community rules from loadRegistry", () => {
-    assert.equal(loadRegistry("/home/case/.omnodex").getRules().length, 45);
+    assert.equal(loadRegistry("/home/case/.omnodex").getRules().length, 46);
   });
 });
 

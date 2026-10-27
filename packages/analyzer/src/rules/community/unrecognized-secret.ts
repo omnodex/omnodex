@@ -42,6 +42,13 @@ const CANDIDATE_PATTERNS: CredentialPattern[] = [
   { regex: `authorization\\\\?["']?\\s*:\\s*\\\\?["']?(?:token|basic|apikey)\\s+([A-Za-z0-9_\\-.+/=]{16,})`, type: TYPE, group: 1, check: "generated" },
 ];
 
+/**
+ * Everything the credential rules identify in a call's parameters: the
+ * known formats first, so they claim what they match, then the contextual
+ * candidates. What RULE_CREDENTIAL_EXFIL_REMEMBERED remembers.
+ */
+export const SECRET_SIGHTING_PATTERNS: CredentialPattern[] = [...CREDENTIAL_PATTERNS, ...CANDIDATE_PATTERNS];
+
 export const RULE_UNRECOGNIZED_SECRET: RuleDefinition = {
   rule_id: "RULE_UNRECOGNIZED_SECRET",
   version: "1.0.0",
@@ -53,7 +60,7 @@ export const RULE_UNRECOGNIZED_SECRET: RuleDefinition = {
       scope: "all",
       // The credential rule's patterns come first and claim what they
       // match, so a value it reports is not reported twice.
-      patterns: [...CREDENTIAL_PATTERNS, ...CANDIDATE_PATTERNS],
+      patterns: SECRET_SIGHTING_PATTERNS,
       report: [TYPE],
     },
   ],
