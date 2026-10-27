@@ -670,6 +670,8 @@ export interface RiskFinding {
   related_event_ids?: string[];
   /** For a sequence rule, every matched call with its role, ending with the current one; for a single call to a first-seen destination, that call. */
   evidence?: import("@omnodex/shared").FindingEvidence;
+  /** Fingerprints of the credential values matched, when the engine was given a fingerprint function. */
+  credential_fingerprints?: string[];
 }
 
 /** Return value of detectRisks(). */

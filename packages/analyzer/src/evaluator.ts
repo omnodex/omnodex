@@ -46,6 +46,7 @@ import type { McpServerTransport } from "@omnodex/shared";
 import { findCredentials } from "./conditions/credential-match.js";
 import { CAPTURE_HOSTS } from "./capture.js";
 import { loadAdvancedRules } from "./bundle.js";
+import { credentialFingerprinter } from "./known-secrets.js";
 
 export type EvaluationClass = "event" | "session" | "machine";
 export type EvaluatorHost = "hook" | "proxy" | "batch";
@@ -232,6 +233,12 @@ export interface EvaluatorOptions {
   machineState?: MachineState;
   /** The user's home directory, for ~ in paths. Defaults to the OS's. */
   userHome?: string;
+  /**
+   * Fingerprints matched credential values, so policy entries can name one.
+   * Defaults to this machine's salted fingerprint when `home` is set; null
+   * records none.
+   */
+  fingerprint?: ((value: string) => string) | null;
 }
 
 export interface EvaluatorStats {
@@ -294,8 +301,10 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
   const ruleClass = new Map(rules.map((r) => [r.rule_id, classifyRule(r)]));
   const eventRules = rules.filter((r) => classifyRule(r) === "event");
   const statefulRules = rules.filter((r) => classifyRule(r) !== "event");
-  const eventEngine = new RuleEngine(eventRules);
-  const statefulEngine = new RuleEngine(statefulRules, { windowSize: opts.windowSize });
+  const fingerprint =
+    opts.fingerprint === null ? undefined : (opts.fingerprint ?? (opts.home ? credentialFingerprinter(opts.home) : undefined));
+  const eventEngine = new RuleEngine(eventRules, { fingerprint });
+  const statefulEngine = new RuleEngine(statefulRules, { windowSize: opts.windowSize, fingerprint });
 
   const workspaceRoots = opts.workspaceRoots ?? createWorkspaceResolver();
   const home = opts.userHome ?? os.homedir();
@@ -380,6 +389,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     if (finding.evidence) {
       risk.evidence = { ...finding.evidence, found_at: opts.host === "proxy" ? "capture" : "background" };
     }
+    if (finding.credential_fingerprints?.length) risk.credential_fingerprints = finding.credential_fingerprints;
 
     stats.findings++;
     stats.byRule[finding.rule_id] = (stats.byRule[finding.rule_id] ?? 0) + 1;

@@ -98,7 +98,7 @@ export type { JudgeCapturedOptions } from "./capture.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
 export { openMachineState, memoryMachineState, reachedHosts, KNOWN_MCP_SERVERS_FILE, KNOWN_DESTINATIONS_FILE } from "./machine-state.js";
 export type { MachineState, SeenResult } from "./machine-state.js";
-export { KNOWN_SECRETS_FILE, KNOWN_SECRETS_KEY_FILE } from "./known-secrets.js";
+export { KNOWN_SECRETS_FILE, KNOWN_SECRETS_KEY_FILE, credentialFingerprinter, CREDENTIAL_FINGERPRINT_LENGTH } from "./known-secrets.js";
 export type { WorkspaceRootsFn } from "./workspace.js";
 export type {
   Evaluator,
@@ -161,6 +161,19 @@ export type {
   StagingStep,
   CredentialRole,
 } from "./action.js";
+
+// Policy entries applied to a finding: verdict, severity and mute. Portable,
+// so a dashboard can apply the same entries at display time.
+export { evaluatePolicy, targetMatches, normalizePath } from "./policy.js";
+export type {
+  PolicyLayer,
+  PolicyFinding,
+  PolicyInput,
+  PolicyDecision,
+  PolicyResult,
+  TargetSubject,
+  TargetOptions,
+} from "./policy.js";
 
 // Evidence for findings on a sequence of calls: each call's role, a summary
 // of what it did, and where the last one went.

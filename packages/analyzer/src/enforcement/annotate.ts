@@ -53,10 +53,11 @@ export function verdictFor(
   const known = rule(finding.rule_id);
   return resolveVerdict({
     // An unknown rule (an advanced one, say) still answers to overrides.
-    rule: known ?? { rule_id: finding.rule_id, severity: finding.severity },
+    rule: { category: finding.category, ...(known ?? { rule_id: finding.rule_id, severity: finding.severity }) },
     call,
     config: loaded,
     description: finding.description,
+    ...(finding.credential_fingerprints ? { credential_fingerprints: finding.credential_fingerprints } : {}),
   });
 }
 

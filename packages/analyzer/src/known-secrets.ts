@@ -124,6 +124,28 @@ function loadKey(keyFile: string): Buffer {
   return key;
 }
 
+/** Hex characters kept of a credential fingerprint. */
+export const CREDENTIAL_FINGERPRINT_LENGTH = 16;
+
+/**
+ * A function from a credential value to its fingerprint on this machine: a
+ * short HMAC-SHA256 under this machine's key (the one above, created on
+ * first use), with its own label so it never equals an entry key in the
+ * secrets file. Findings carry it so a policy entry can name one credential
+ * without the value. The key is read only once a value is fingerprinted.
+ */
+export function credentialFingerprinter(home: string): (value: string) => string {
+  let key: Buffer | undefined;
+  return (value) => {
+    key ??= loadKey(path.join(home, KNOWN_SECRETS_KEY_FILE));
+    return crypto
+      .createHmac("sha256", key)
+      .update(`credential-fingerprint\0${value}`)
+      .digest("hex")
+      .slice(0, CREDENTIAL_FINGERPRINT_LENGTH);
+  };
+}
+
 function readSecrets(file: string): SecretsFile | null {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<SecretsFile>;

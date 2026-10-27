@@ -105,20 +105,20 @@ describe("resolveVerdict: precedence", () => {
     assert.equal(v.action, "deny");
   });
 
-  it("an exception beats everything, and a mute marks the finding", () => {
+  it("an exception for the whole rule beats the rule's verdict in its section, and a mute marks the finding", () => {
     const config = {
       user: { rules: { RULE_X: "deny" }, exceptions: [{ rule_id: "RULE_X", kind: "mute" }] },
     };
     const v = resolveVerdict({ rule: rule(), config });
     assert.equal(v.action, "alert_only");
-    assert.equal(v.source, "user-exception");
+    assert.equal(v.source, "user-rule");
     assert.equal(v.muted, true);
 
     const allow = resolveVerdict({
       rule: rule(),
       config: { userProject: { exceptions: [{ rule_id: "RULE_X", kind: "allow" }] }, user: { rules: { RULE_X: "deny" } } },
     });
-    assert.equal(allow.source, "project-exception");
+    assert.equal(allow.source, "project-rule");
     assert.equal(allow.muted, false);
   });
 

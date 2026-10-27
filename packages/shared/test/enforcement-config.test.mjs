@@ -86,3 +86,14 @@ describe("parseRepoEnforcementConfig", () => {
     assert.deepEqual(cfg, { severity_defaults: { HIGH: "confirm" }, rules: { RULE_A: "deny" } });
   });
 });
+
+describe("parseEnforcementConfig: policy entries", () => {
+  it("reads policy entries at the top level of the user's file only", () => {
+    const entry = { id: "p1", match: { rule_id: "RULE_A", target: { access: "write", path: "/home/case/repo/.env" } }, effect: { verdict: "deny" } };
+    const cfg = parseEnforcementConfig({
+      policy: [entry, { id: "bad", match: { rule_id: "RULE_A" }, effect: { verdict: "block" } }],
+      projects: { "/home/case/repo": { rules: { RULE_B: "deny" }, policy: [entry] } },
+    });
+    assert.deepEqual(cfg, { policy: [entry], projects: { "/home/case/repo": { rules: { RULE_B: "deny" } } } });
+  });
+});

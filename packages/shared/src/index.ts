@@ -540,6 +540,13 @@ export interface RiskDetectedEvent extends BaseEvent {
   evidence?: FindingEvidence;
   /** What enforcement made of this finding when it was captured. Absent in monitor mode and on older findings. */
   enforcement?: FindingEnforcement;
+  /**
+   * Short salted fingerprints of the credential values the finding matched,
+   * so a policy entry can name one credential. The salt is per machine, so
+   * the same value has a different fingerprint on each machine. Never the
+   * value. Absent when the rule matched no credential value.
+   */
+  credential_fingerprints?: string[];
 }
 
 /**

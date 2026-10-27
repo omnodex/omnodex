@@ -198,12 +198,16 @@ export class RuleEngine {
   private readonly windows = new Map<string, ToolInvokedEvent[]>();
   private readonly windowSize: number;
 
+  /** Turns a matched credential value into a fingerprint a finding may carry. */
+  private readonly fingerprint?: (value: string) => string;
+
   constructor(
     private readonly rules: RuleDefinition[],
-    opts: { windowSize?: number } = {},
+    opts: { windowSize?: number; fingerprint?: (value: string) => string } = {},
   ) {
     const usesSequence = rules.some((r) => r.conditions.some((c) => c.type === "sequence"));
     this.windowSize = usesSequence ? (opts.windowSize ?? DEFAULT_SEQUENCE_WINDOW) : 0;
+    this.fingerprint = opts.fingerprint;
   }
 
   /** Release everything held for a session. */
@@ -292,6 +296,9 @@ export class RuleEngine {
         }
         const evidence = buildEvidence(rule, event, ctx);
         if (evidence) finding.evidence = evidence;
+        if (this.fingerprint && ctx.credential_sightings?.length) {
+          finding.credential_fingerprints = [...new Set(ctx.credential_sightings.map((c) => this.fingerprint!(c.value)))];
+        }
         findings.push(finding);
       }
     }

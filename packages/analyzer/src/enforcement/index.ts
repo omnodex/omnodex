@@ -19,6 +19,7 @@ export {
   targetCovers,
   stricter,
   blocks,
+  machineEntries,
 } from "./resolve-verdict.js";
 export type { Verdict, VerdictRule, VerdictConfig, VerdictSource, ResolveVerdictInput } from "./resolve-verdict.js";
 export {
