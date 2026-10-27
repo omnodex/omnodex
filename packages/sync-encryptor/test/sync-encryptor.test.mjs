@@ -1,6 +1,6 @@
 // Validation: full sync-encryptor pipeline
 //
-// Tests the complete zero-knowledge sync flow: serialize read model,
+// Tests the complete end-to-end encrypted sync flow: serialize read model,
 // encrypt with Argon2id-derived key, push to mock transport, emit audit
 // event, and verify the ciphertext can be decrypted to recover the
 // original projection data.
