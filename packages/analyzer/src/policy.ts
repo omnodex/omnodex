@@ -127,6 +127,10 @@ export function evaluatePolicy(input: PolicyInput): PolicyResult {
     decided: {},
   };
 
+  // Each effect is chosen only among entries that set it. So a narrower
+  // entry that allows a call leaves a wider mute in place; to have an allow
+  // lift the mute as well, treat `verdict: "allow"` as also setting
+  // `mute: false` when collecting mute candidates here.
   for (const effect of ["verdict", "severity", "mute"] as const) {
     const candidates: Candidate[] = [];
     let index = 0;

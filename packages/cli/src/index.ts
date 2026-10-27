@@ -32,6 +32,7 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
+import { runPolicy } from "./policy-command.js";
 import { annotateFindings, describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
 import {
@@ -3165,6 +3166,17 @@ async function main(): Promise<void> {
         describeGuardrails: async () => describeGuardrails(await loadGuardrailsModule(resolvePaths().home)),
       });
       return;
+    case "policy": {
+      const severities = new Map(COMMUNITY_RULES.map((r) => [r.rule_id, r.severity]));
+      process.exitCode = await runPolicy(rest, {
+        home: resolvePaths().home,
+        io: processIo(),
+        cwd: process.cwd(),
+        guardrailsEntitled: () => guardrailsEntitled(resolvePaths().home),
+        ruleSeverity: (id) => severities.get(id),
+      });
+      return;
+    }
     case "live":
       await cmdLive(rest);
       return;
@@ -3284,6 +3296,18 @@ commands:
                      shadow. Rules, per-rule settings and exceptions are
                      read from the enforcement section of
                      ~/.omnodex/omnodex-config.json.
+  policy list | add | remove
+                     what to do with findings like one you have seen:
+                     block (--block) or hold (--hold) them (Pro), let them
+                     through (--allow), mute them (--mute), or change their
+                     severity (--set-severity), for a rule (--rule), a
+                     category (--category) or a severity (--severity),
+                     optionally only for one target (--path, --destination,
+                     --command-prefix, --credential, --tool [--server],
+                     --reads, --writes) and one project (--project, --here).
+                     Allowing, muting, lowering a severity, or removing an
+                     entry that blocks, holds or raises one needs a person
+                     at a terminal.
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.

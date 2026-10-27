@@ -5,6 +5,8 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 
+import { POLICY_ADD_FLAGS, POLICY_ADD_VALUES } from "./policy-command.js";
+
 interface CommandOptions {
   usage: string;
   description: string;
@@ -79,6 +81,19 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
       shadow: { usage: "shadow", description: "Also record what enforcement would have stopped." },
       guardrails: { usage: "guardrails", description: "Stop or hold calls as configured (Pro)." },
       status: { usage: "status", description: "Show the current enforcement mode." },
+    },
+  },
+  policy: {
+    usage: "policy list | add | remove <id>", description: "This machine's policy entries for findings. Allowing, muting, lowering a severity, or removing an entry that blocks, holds or raises one requires confirmation at a terminal.",
+    subcommands: {
+      list: { usage: "list", description: "Show every entry, the older per-rule and exception settings included." },
+      add: {
+        usage: "add --rule <id> | --category <name> | --severity <level> [target] [--project <root> | --here] <effect>",
+        description: "Add an entry. Targets: --path, --destination, --command-prefix, --credential, --tool [--server], --reads, --writes. Effects: --block or --hold (Pro), --allow, --mute, --unmute, --set-severity <level>.",
+        flags: [...POLICY_ADD_FLAGS],
+        values: [...POLICY_ADD_VALUES],
+      },
+      remove: { usage: "remove <id>", description: "Remove an entry by the id `policy list` shows." },
     },
   },
   live: {
