@@ -163,6 +163,8 @@ All data lives under `OMNODEX_HOME` (defaults to `~/.omnodex`). `detect` and `da
 
 ## CLI reference
 
+Append `--help` or `-h` to any command or nested subcommand to print its usage and exit without running it. Help does not contact the network, write files, refresh launchers, or check for updates. For example: `omnodex sync --help` or `omnodex mcp-proxy serve -h`. Unrecognized flags are rejected before the command runs.
+
 ```
 omnodex install [target] [project]  install hooks and the agent's plugin
                                       targets: claude-code, codex, antigravity (or agy);

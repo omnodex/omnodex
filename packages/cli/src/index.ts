@@ -23,6 +23,7 @@
  */
 
 import { skipConnectReason } from "./connect-prompt.js";
+import { commandHelp, commandOptionError } from "./command-options.js";
 import * as os from "node:os";
 import * as readline from "node:readline/promises";
 import * as path from "node:path";
@@ -3031,6 +3032,23 @@ export function syncWaitMessage(until: number, now = Date.now()): string {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
+  const wantsHelp = rest.some((arg) => arg === "--help" || arg === "-h") ||
+    (command === "mcp-proxy" && rest[0] === "help");
+  if (command && wantsHelp) {
+    const help = commandHelp(command, rest);
+    if (help) {
+      console.log(help);
+      return;
+    }
+  }
+  if (command) {
+    const error = commandOptionError(command, rest);
+    if (error) {
+      console.error(`[omnodex] ${error}. Run 'omnodex ${command} --help' for usage.`);
+      process.exitCode = 1;
+      return;
+    }
+  }
   setMarkerPush(pushEventsToCloud);
 
   // Detached sync child spawned by a running MCP proxy. Handled before
@@ -3043,7 +3061,7 @@ async function main(): Promise<void> {
   }
 
   // Background update check + notification (skip for update command itself)
-  if (command !== "update") {
+  if (command !== "update" && command !== undefined && !["help", "--help", "-h"].includes(command)) {
     await scheduleBackgroundCheck();
     await printUpdateNotification();
     // Launchers written by an older version (for example by `omnodex update`,
