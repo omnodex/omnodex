@@ -147,12 +147,13 @@ Rules come in two tiers. Community rules ship in this package and are always act
 
 Advanced rules themselves are not in this repository, because it is public and they are the paid asset. Two scripts here work on a pack wherever it lives: `node scripts/seal-bundle.mjs <pack.json> --install <home>` seals and signs one into a bundle and prints the two variables a client needs to open it, and `node scripts/check-rules.mjs <pack> --cases <cases.json>` runs written cases while `--log <event-log root>` replays real activity to see what a pack would fire on before it ships (`--verbose` lists each finding with the steps of its evidence). Both run the pack through the same evaluator the proxy uses, with a fresh in-memory machine store, so first-seen rules work. A case is a session of calls plus the rule ids that must and must not fire on the last one.
 
-**Community rules (19 rules across 8 categories):**
+**Community rules (20 rules across 8 categories):**
 
 Credential detection:
 1. **RULE_CREDENTIAL_IN_PARAMS** (MEDIUM) - flags tool calls whose parameters contain API keys, Bearer tokens, AI model provider keys (Anthropic, OpenAI, OpenRouter, xAI, Groq, Perplexity, Hugging Face, Google), Stripe keys, GitHub tokens, Slack bot tokens, AWS access keys.
 2. **RULE_CREDENTIAL_EXFIL** (CRITICAL) - flags outbound HTTP/fetch calls that carry credentials to external hosts. A credential sent as authentication to its own service (a GitHub token to api.github.com) does not count.
 3. **RULE_UNRECOGNIZED_SECRET** (LOW) - flags a machine-made value used as a credential that no known format or generic pattern reports: a field or variable named for a secret, key or auth, a credential flag such as `--client-secret`, or a non-Bearer Authorization header. A heuristic, kept separate so it can be muted on its own.
+4. **RULE_CREDENTIAL_EXFIL_REMEMBERED** (HIGH) - flags an outbound call that carries a value this machine earlier saw used as a secret, with none of the context that identified it then (a bare string in a request body). Secrets are remembered by keyed hash in `known-secrets.json` (never the value) for 30 days after last sighting, at most 5,000 entries; the key is a separate file with mode 0600. It does not fire for the secret's own provider, a host the secret was already sent to with its context, or loopback. Call parameters only; tool results are not read, and a key whose first appearance in a call is the exfiltration is not matched.
 
 Sensitive file access:
 4. **RULE_SENSITIVE_PATH_READ** (HIGH) - flags reads of `/etc/passwd`, `.ssh/` keys, `.env` files, AWS/GCloud/k8s credentials, coding agents' stored logins (Codex, Claude Code, OpenCode), PEM files, etc.

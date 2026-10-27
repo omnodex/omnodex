@@ -36,7 +36,11 @@
  *       "tools": { "<tool>": "<fp>" } } } }
  *
  * so a rule can say a server changed since this machine last saw it. The
- * newest observation always replaces the record. Nothing in any of these
+ * newest observation always replaces the record.
+ *
+ * Secrets seen in calls are remembered by hash in
+ * $OMNODEX_HOME/known-secrets.json (see known-secrets.ts), so a rule can say
+ * a value earlier seen as a secret is sent again. Nothing in any of these
  * files leaves the machine.
  *
  * On first use each file is seeded from the event logs, so upgrading does
@@ -49,6 +53,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { McpServerTransport, ServerObservedEvent, ToolInvokedEvent, TraceEvent } from "@omnodex/shared";
 import { normalizeAction } from "./action.js";
+import { findCredentials } from "./conditions/credential-match.js";
+import { memorySecretStore, openSecretStore, SECRET_WINDOW_MS, type RememberedSecret, type SecretStore } from "./known-secrets.js";
+import { SECRET_SIGHTING_PATTERNS } from "./rules/community/unrecognized-secret.js";
 
 export const KNOWN_MCP_SERVERS_FILE = "known-mcp-servers.json";
 export const KNOWN_DESTINATIONS_FILE = "known-destinations.json";
@@ -89,6 +96,10 @@ export interface MachineState {
    * an identical one, and for one older than the record.
    */
   noteServerObservation(event: ServerObservedEvent): ServerDrift | null;
+  /** The secret remembered for a value, unless it had expired by `at`. */
+  recallSecret(value: string, at: string): RememberedSecret | undefined;
+  /** Remember secrets seen in a call that reached `hosts`. */
+  noteSecrets(sightings: readonly { type: string; value: string }[], hosts: readonly string[], at: string): void;
 }
 
 /** The external hosts a call reaches: what known-destinations.json records. */
@@ -200,6 +211,18 @@ interface HostRecord {
 interface HostsFile {
   version: 1;
   hosts: Record<string, HostRecord>;
+}
+
+/** The secrets in the last 30 days of events under these roots, for seeding. */
+function seedSecrets(roots: readonly string[], store: SecretStore): void {
+  const cutoff = new Date(Date.now() - SECRET_WINDOW_MS).toISOString();
+  eachLoggedSession(roots, (events) => {
+    for (const e of events) {
+      if (e.event_type !== "tool.invoked" || e.occurred_at < cutoff) continue;
+      const sightings = findCredentials(JSON.stringify(e.parameters ?? {}), SECRET_SIGHTING_PATTERNS);
+      if (sightings.length) store.note(sightings, reachedHosts(e), e.occurred_at);
+    }
+  });
 }
 
 function seedHosts(roots: readonly string[]): Record<string, HostRecord> {
@@ -371,6 +394,7 @@ export function openMachineState(
     }
   }
   const knownFingerprints = fingerprints;
+  const secrets = openSecretStore(home, (store) => seedSecrets(roots, store));
   return makeState(
     state.servers,
     (name) => writeState(file, { version: 1, servers: { [name]: state.servers[name] } }),
@@ -378,12 +402,13 @@ export function openMachineState(
     (added) => writeHosts(hostsFile, added),
     knownFingerprints,
     (key) => writeFingerprints(fingerprintsFile, { [key]: knownFingerprints[key]! }),
+    secrets,
   );
 }
 
 /** An in-memory machine state, for tests and hosts with nowhere to persist. */
 export function memoryMachineState(): MachineState {
-  return makeState({}, () => undefined, {}, () => undefined, {}, () => undefined);
+  return makeState({}, () => undefined, {}, () => undefined, {}, () => undefined, memorySecretStore());
 }
 
 function makeState(
@@ -393,8 +418,13 @@ function makeState(
   persistHosts: (added: Record<string, HostRecord>) => void,
   fingerprints: Record<string, FingerprintRecord>,
   persistFingerprint: (key: string) => void,
+  secrets: SecretStore,
 ): MachineState {
   return {
+    recallSecret: (value, at) => secrets.recall(value, at),
+
+    noteSecrets: (sightings, reached, at) => secrets.note(sightings, reached, at),
+
     noteServerObservation(event): ServerDrift | null {
       const key = serverKey(event);
       const before = fingerprints[key];

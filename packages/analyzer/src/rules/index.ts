@@ -25,6 +25,7 @@ import { RULE_SENSITIVE_PATH_READ } from "./community/sensitive-path-read.js";
 import { RULE_CREDENTIAL_IN_PARAMS } from "./community/credential-in-params.js";
 import { RULE_CREDENTIAL_EXFIL } from "./community/credential-exfil.js";
 import { RULE_UNRECOGNIZED_SECRET } from "./community/unrecognized-secret.js";
+import { RULE_CREDENTIAL_EXFIL_REMEMBERED } from "./community/credential-exfil-remembered.js";
 import {
   RULE_WALLET_CLI_DETECTED,
   RULE_PRIVATE_KEY_MATERIAL,
@@ -91,6 +92,7 @@ export {
 } from "./community/credential-in-params.js";
 export { RULE_CREDENTIAL_EXFIL } from "./community/credential-exfil.js";
 export { RULE_UNRECOGNIZED_SECRET } from "./community/unrecognized-secret.js";
+export { RULE_CREDENTIAL_EXFIL_REMEMBERED } from "./community/credential-exfil-remembered.js";
 export {
   RULE_WALLET_CLI_DETECTED,
   RULE_PRIVATE_KEY_MATERIAL,
@@ -156,6 +158,7 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   RULE_CREDENTIAL_IN_PARAMS,
   RULE_CREDENTIAL_EXFIL,
   RULE_UNRECOGNIZED_SECRET,
+  RULE_CREDENTIAL_EXFIL_REMEMBERED,
   RULE_WALLET_CLI_DETECTED,
   RULE_PRIVATE_KEY_MATERIAL,
   RULE_MNEMONIC_PHRASE,

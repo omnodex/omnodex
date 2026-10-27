@@ -18,6 +18,7 @@ export { evaluateCwdBoundary } from "./cwd-boundary.js";
 export { evaluateSequence, type StatelessConditionFn } from "./sequence.js";
 export { evaluateStaging } from "./staging.js";
 export { evaluateDestinationFirstSeen } from "./destination-first-seen.js";
+export { evaluateRememberedSecret } from "./remembered-secret.js";
 export { extractExecText, extractStagedContent, isStagedTarget, isExecTool, isWriteTool, patchTargets, stripFileHeredocs, type StagedContent } from "./scope.js";
 export { extractWriteTargets } from "./write-targets.js";
 export { evaluateFileEdit, extractFileChanges } from "./file-edit.js";

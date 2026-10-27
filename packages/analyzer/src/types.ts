@@ -129,6 +129,7 @@ export type Condition =
   | SequenceCondition
   | StagingCondition
   | DestinationFirstSeenCondition
+  | RememberedSecretCondition
   | FileEditCondition
   | ServerDriftCondition;
 
@@ -438,6 +439,12 @@ export interface EvaluationContext {
   tempDirs?: readonly string[];
   /** Persistent state for machine-scope rules. */
   machineState?: import("./machine-state.js").MachineState;
+  /**
+   * Where remembered secrets are kept: the machine state, or a memory of this
+   * run when the host keeps none, so a run still catches a secret it saw
+   * earlier. Machine-scope rules for hosts and servers do not fall back this way.
+   */
+  secretState?: import("./machine-state.js").MachineState;
   /** How the event's MCP server is reached, when its session recorded it. */
   mcpServerTransport?: import("@omnodex/shared").McpServerTransport;
 }
@@ -526,6 +533,20 @@ export interface DestinationFirstSeenCondition {
 }
 
 /**
+ * Matches an outbound call that carries a value this machine earlier saw as
+ * a secret (see known-secrets.ts), without the context that identified it
+ * then, to a host that is neither the secret's own provider nor one it was
+ * already sent to. `patterns` are the credential patterns the machine state
+ * remembers secrets by. Needs machine state; without one it never matches.
+ * Yields one context with the remembered types as {{credential_types}} and
+ * the date first seen as {{remembered_since}}.
+ */
+export interface RememberedSecretCondition {
+  type: "remembered_secret";
+  patterns: CredentialPattern[];
+}
+
+/**
  * Matches a server.observed event when the MCP server differs from the last
  * time this machine observed it (see MachineState.noteServerObservation).
  * Machine state, so only hosts that keep one run it. The first observation
@@ -605,6 +626,8 @@ export interface MatchContext {
   staging_output?: string;
   /** Populated by destination_first_seen: the destination is new to this machine. */
   first_seen_destination?: boolean;
+  /** Populated by remembered_secret: the date the secret was first seen. */
+  remembered_since?: string;
   /** Populated by ip_destination conditions. */
   matched_ip?: string;
   /** Populated by ip_destination conditions ("cloud provider" or "unknown host"). */

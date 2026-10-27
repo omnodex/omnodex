@@ -98,6 +98,7 @@ export type { JudgeCapturedOptions } from "./capture.js";
 export { createWorkspaceResolver, gitRoots, configuredRoots } from "./workspace.js";
 export { openMachineState, memoryMachineState, reachedHosts, KNOWN_MCP_SERVERS_FILE, KNOWN_DESTINATIONS_FILE } from "./machine-state.js";
 export type { MachineState, SeenResult } from "./machine-state.js";
+export { KNOWN_SECRETS_FILE, KNOWN_SECRETS_KEY_FILE } from "./known-secrets.js";
 export type { WorkspaceRootsFn } from "./workspace.js";
 export type {
   Evaluator,

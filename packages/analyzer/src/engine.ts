@@ -53,6 +53,7 @@ import {
   evaluateSequence,
   evaluateStaging,
   evaluateDestinationFirstSeen,
+  evaluateRememberedSecret,
   evaluateFileEdit,
 } from "./conditions/index.js";
 import {
@@ -74,6 +75,7 @@ export const STATEFUL_CONDITION_TYPES: ReadonlySet<Condition["type"]> = new Set(
   "rate_threshold",
   "sequence",
   "destination_first_seen",
+  "remembered_secret",
   "server_drift",
 ]);
 
@@ -124,6 +126,8 @@ function evaluateCondition(
       return evaluateFileEdit(condition, event);
     case "destination_first_seen":
       return evaluateDestinationFirstSeen(event, context);
+    case "remembered_secret":
+      return evaluateRememberedSecret(event, context);
     case "server_drift":
       // Judges server.observed events, in evaluateObservation.
       return [];
@@ -155,6 +159,7 @@ function renderTemplate(template: string, ctx: MatchContext): string {
       /\{\{credential_types\}\}/g,
       (ctx.credential_types ?? []).join(", "),
     )
+    .replace(/\{\{remembered_since\}\}/g, ctx.remembered_since ?? "")
     .replace(/\{\{matched_ip\}\}/g, ctx.matched_ip ?? "")
     .replace(/\{\{ip_classification\}\}/g, ctx.ip_classification ?? "")
     .replace(/\{\{rate_count\}\}/g, String(ctx.rate_count ?? ""))
