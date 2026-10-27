@@ -66,7 +66,12 @@ test("help coverage includes every command in the CLI dispatcher", async () => {
 
 for (const [command, options] of Object.entries(COMMAND_OPTIONS)) {
   const paths = [[command], ...Object.keys(options.subcommands ?? {}).map((sub) => [command, sub])];
+  if (command === "clear") {
+    paths.push([command, "case-session", "--unattended"], [command, "--all", "--confirm", "--unattended"]);
+  }
   for (const args of paths) {
+    const usageCommand = options.subcommands && Object.hasOwn(options.subcommands, args[1])
+      ? args.slice(0, 2).join(" ") : command;
     for (const flag of ["--help", "-h"]) {
       test(`${args.join(" ")} ${flag} exits successfully without effects`, async (t) => {
         const ctx = await scratch(t);
@@ -74,8 +79,9 @@ for (const [command, options] of Object.entries(COMMAND_OPTIONS)) {
         const result = run(ctx, [...args, flag]);
         assert.equal(result.error, undefined);
         assert.equal(result.status, 0, result.stderr);
-        assert.ok(result.stdout.startsWith(`Usage: omnodex ${args.join(" ")}`), result.stdout);
+        assert.ok(result.stdout.startsWith(`Usage: omnodex ${usageCommand}`), result.stdout);
         assert.match(result.stdout, /--help, -h/);
+        if (command === "clear") assert.match(result.stdout, /--unattended/);
         await unchanged(ctx, before);
       });
     }
@@ -111,6 +117,8 @@ for (const args of [
 test("recognized options keep their existing value syntax", () => {
   for (const [command, args] of [
     ["install", ["codex", "--hooks", "-y", "--from=case.plugin", "--sha256=abc"]],
+    ["clear", ["case-session", "--unattended"]],
+    ["clear", ["--all", "--confirm", "--unattended"]],
     ["sync", ["--token", "omx_case", "--passphrase", "case phrase", "--sessions", "a,b"]],
     ["spike", ["case", "--seed", "-1", "--scenario-set", "history", "--machine", "a"]],
     ["dashboard", ["0", "--roots", "/home/case/a", "/home/case/b", "--no-detect"]],

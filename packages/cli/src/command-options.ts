@@ -43,7 +43,10 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
     flags: ["--random"], values: ["--seed", "--now", "--sessions", "--scenario-set", "--machine"],
   },
   detect: { usage: "detect [session]", description: "Scan event logs for risks across configured roots.", values: ["--roots"] },
-  clear: { usage: "clear <session-id> | --all --confirm", description: "Permanently delete one session, or all local data.", flags: ["--all", "--confirm"] },
+  clear: {
+    usage: "clear <session-id> | --all --confirm", description: "Permanently delete one session, or all local data. Requires a person at a terminal unless --unattended is given; scripted clears are recorded and raise a finding.",
+    flags: ["--all", "--confirm", "--unattended"],
+  },
   replay: { usage: "replay", description: "Rebuild the read model from configured event log roots.", values: ["--roots"] },
   report: { usage: "report", description: "Print a summary of sessions in the read model." },
   dashboard: { usage: "dashboard [port]", description: "Start the local dashboard (default port 7890).", flags: ["--no-detect"], values: ["--roots"] },
