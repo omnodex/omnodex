@@ -62,6 +62,14 @@ export interface HttpSegmentTransportOptions {
   timeoutMs?: number;
 }
 
+/** `iso` rounded up to the next whole UTC hour (unchanged if already whole, or not a time). */
+export function ceilToHour(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  const hour = 3_600_000;
+  return new Date(Math.ceil(ms / hour) * hour).toISOString();
+}
+
 export class HttpSegmentTransport implements SegmentTransport {
   private readonly baseUrl: string;
   private readonly apiToken: string;
@@ -80,9 +88,10 @@ export class HttpSegmentTransport implements SegmentTransport {
       "Content-Type": "application/octet-stream",
       "X-Omnodex-Machine-Id": meta.machineId,
       ...(meta.machineLabel ? { "X-Omnodex-Machine-Label": meta.machineLabel } : {}),
-      "X-Omnodex-Segment-Sessions": String(meta.sessions),
-      "X-Omnodex-First-At": meta.firstAt,
-      "X-Omnodex-Last-At": meta.lastAt,
+      // Only what the cloud acts on: the latest activity, for retention,
+      // rounded up to the hour. The session count and first activity stay
+      // inside the envelope.
+      "X-Omnodex-Last-At": ceilToHour(meta.lastAt),
     }, envelope);
     // A cloud without the route answers 404 with no JSON error code.
     if (res.status === 404) throw new SegmentsUnsupportedError();

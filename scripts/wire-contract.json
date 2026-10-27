@@ -3,7 +3,7 @@
     "Every request the client sends to the hosted service, and every field in it the service can read.",
     "scripts/test/wire-contract.test.mjs drives each sender against a recording fetch and fails on a request, endpoint or field missing from this file, or on a field carrying data its entry does not allow.",
     "Classes: metadata (plaintext the service can read and keep), credential (tokens and verifiers the service checks), ciphertext (encrypted bytes, nonces and wrapped keys), protocol (fixed values).",
-    "carries names what a field may hold: session_id (agent session IDs), machine_id (random, generated once per machine), previous_machine_id (the hostname-derived ID older clients used), event_id. The user-set machine label leaves the machine only sealed, in ciphertext fields. Captured content (paths, commands, parameters, tool names) may appear in no plaintext field at all.",
+    "carries names what a field may hold: machine_id (random, generated once per machine), previous_machine_id (the hostname-derived ID older clients used), event_id. Agent session IDs and the user-set machine label leave the machine only inside ciphertext. Captured content (paths, commands, parameters, tool names) may appear in no plaintext field at all.",
     "Adding a field: add it here with its reason, and update the public list of what the hosted service can see in the same change."
   ],
   "endpoints": {
@@ -11,7 +11,6 @@
       "sender": "Blob sync (the older sync path, used when segments are off or unsupported)",
       "auth": "bearer",
       "fields": {
-        "header:x-omnodex-sessions": { "class": "metadata", "carries": ["session_id"], "why": "Which sessions the blob covers, so the dashboard picks blobs" },
         "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart for the multi-machine merge" },
         "header:x-omnodex-machine-label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "body:<binary>": { "class": "ciphertext", "why": "The encrypted read model" }
@@ -24,9 +23,7 @@
         "path:id": { "class": "metadata", "why": "Random segment ID" },
         "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart" },
         "header:x-omnodex-machine-label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
-        "header:x-omnodex-segment-sessions": { "class": "metadata", "why": "Number of sessions in the segment" },
-        "header:x-omnodex-first-at": { "class": "metadata", "why": "Earliest activity in the segment" },
-        "header:x-omnodex-last-at": { "class": "metadata", "why": "Latest activity in the segment" },
+        "header:x-omnodex-last-at": { "class": "metadata", "why": "Latest activity in the segment, rounded up to the hour; the service ages segments by it" },
         "body:<binary>": { "class": "ciphertext", "why": "The encrypted segment" }
       }
     },
@@ -162,8 +159,8 @@
       "auth": "bearer",
       "fields": {
         "body:machine_label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
-        "body:platform": { "class": "metadata", "why": "Which agent platform asked" },
-        "body:project_label": { "class": "metadata", "why": "Project name the caller passed, or null" },
+        "body:platform": { "class": "ciphertext", "optional": true, "why": "Which agent platform asked, sealed under the stream secret; only the connect page opens it" },
+        "body:project_label": { "class": "ciphertext", "optional": true, "why": "Project name the caller passed, or null, sealed under the stream secret; only the connect page opens it" },
         "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine is connecting" },
         "body:passphrase_enc": { "class": "ciphertext", "why": "Stream secret under a one-time key that stays in the link's fragment" },
         "body:passphrase_iv": { "class": "ciphertext", "why": "Nonce for passphrase_enc" }

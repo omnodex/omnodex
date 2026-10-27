@@ -24,7 +24,7 @@ import { webcrypto, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { computeMachineId, sealedMachineLabel } from "@omnodex/sync-encryptor";
+import { computeMachineId, sealedMachineLabel, sealedText } from "@omnodex/sync-encryptor";
 
 const subtle = webcrypto.subtle;
 
@@ -170,8 +170,9 @@ export async function handleConnect(params: {
 
     const body = {
       machine_label: machineLabel,
-      platform: params.platform ?? "cowork-plugin",
-      project_label: params.project_label ?? null,
+      // Shown only on the connect page, which opens them with the secret.
+      platform: await sealedText(passphrase, "platform", params.platform ?? "cowork-plugin"),
+      project_label: await sealedText(passphrase, "project_label", params.project_label),
       machine_id: machineId,
       passphrase_enc,
       passphrase_iv,

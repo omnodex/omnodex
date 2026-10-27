@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, writeFile, mkdir, readFile, rm } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { deriveLabelKey, openLabel } from "../../sync-encryptor/dist/machine-label.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -193,6 +194,7 @@ test("handleConnect creates claim and returns connect URL", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
 
+  let platformSent;
   globalThis.fetch = async (url, opts) => {
     assert.equal(url, "https://api.test.omnodex.com/api/v1/connect/claim");
     assert.equal(opts.method, "POST");
@@ -201,7 +203,8 @@ test("handleConnect creates claim and returns connect URL", async (t) => {
     const body = JSON.parse(opts.body);
     assert.ok(body.passphrase_enc, "should have encrypted passphrase");
     assert.ok(body.passphrase_iv, "should have IV");
-    assert.equal(body.platform, "cowork-plugin");
+    // The platform leaves sealed; the connect page opens it with the secret.
+    platformSent = body.platform;
 
     return new Response(JSON.stringify({
       claim_token: "ct_mock_123",
@@ -214,6 +217,7 @@ test("handleConnect creates claim and returns connect URL", async (t) => {
   const result = await mod.handleConnect({});
 
   assert.equal(result.status, "ok");
+  assert.equal(await openLabel(await deriveLabelKey("test-passphrase"), "platform", platformSent), "cowork-plugin");
   assert.ok(result.connect_url.startsWith("https://dashboard.omnodex.com/connect/ct_mock_123#tk="));
   assert.equal(result.expires_at, "2026-08-26T01:00:00Z");
   // Transfer key should be 64 hex chars (32 bytes)
@@ -246,7 +250,7 @@ test("handleConnect passes custom platform param", async (t) => {
   const mod = await import(`../dist/connect-tool.js?t=${Date.now()}-7`);
   await mod.handleConnect({ platform: "cli" });
 
-  assert.equal(capturedPlatform, "cli");
+  assert.equal(await openLabel(await deriveLabelKey("test-passphrase"), "platform", capturedPlatform), "cli");
 });
 
 test("handleConnect returns error on API failure", async (t) => {
