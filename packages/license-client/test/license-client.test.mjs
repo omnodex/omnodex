@@ -34,7 +34,7 @@ function resetMock() {
   mockResponse = {
     customer_id: "cust-test",
     tier: "pro",
-    features: ["community_rules", "local_dashboard", "local_event_log", "encrypted_sync", "hosted_dashboard", "advanced_rules", "feature_extraction", "usage_analytics"],
+    features: ["community_rules", "local_dashboard", "local_event_log", "encrypted_sync", "hosted_dashboard", "advanced_rules", "usage_analytics"],
     rule_bundle: { channel: "pro", bundle_version: "1.0.0", content_key: "test-key-abc123", not_after: "2099-01-01T00:00:00.000Z" },
     sync_endpoint: "http://localhost/api/v1/sync",
     ttl_seconds: 86400,

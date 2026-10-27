@@ -630,7 +630,7 @@ export interface PermissionDeniedEvent extends BaseEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Cloud API types (used by license-client, sync-encryptor, feature-extractor)
+// Cloud API types (used by license-client and sync-encryptor)
 // ---------------------------------------------------------------------------
 
 /** Sent by the local CLI to validate a subscription and retrieve tier info. */
@@ -683,49 +683,6 @@ export interface LicenseValidateResponse {
   sync_endpoint?: string;
   /** How long the caller may cache this response, in seconds. */
   ttl_seconds: number;
-  /**
-   * Customer-specific HMAC salt for hashing tool names and MCP server
-   * names in feature batches. Server-issued for controlled rotation.
-   * Hex-encoded, 32 bytes.
-   */
-  hmac_salt?: string;
-}
-
-/**
- * Anonymized, aggregated feature batch submitted by Pro+ customers.
- * Never contains raw event content -- only counts, hashes, and scores.
- */
-export interface FeatureBatch {
-  batch_id: string;
-  customer_id: string;
-  /** HMAC-SHA256 of the raw session_id. */
-  session_hash: string;
-  timestamp: string;
-  metrics: {
-    event_count: number;
-    tool_call_count: number;
-    unique_tool_count: number;
-    unique_mcp_server_count: number;
-    duration_ms: number;
-    /** Risk score computed locally before submission. */
-    risk_score: number;
-  };
-  timing: {
-    mean_tool_duration_ms: number;
-    median_tool_duration_ms: number;
-    p95_tool_duration_ms: number;
-  };
-  risk_summary: {
-    by_severity: Record<RiskSeverity, number>;
-    by_category: Record<string, number>;
-    rule_ids_fired: string[];
-  };
-  hashed_identifiers: {
-    /** HMAC-SHA256 of each tool name. */
-    tool_names: string[];
-    /** HMAC-SHA256 of each MCP server name. */
-    mcp_servers: string[];
-  };
 }
 
 /**
@@ -764,14 +721,6 @@ export interface SyncPushedEvent extends BaseEvent {
   machine_id: string;
   /** Optional human-readable machine label. */
   machine_label?: string;
-}
-
-export interface FeatureExtractedEvent extends BaseEvent {
-  event_type: "feature.extracted";
-  batch_id: string;
-  /** SHA-256 hex digest of the batch JSON. */
-  feature_hash: string;
-  cloud_receipt_id: string;
 }
 
 export interface RuleUpdatedEvent extends BaseEvent {
@@ -1018,7 +967,6 @@ export type TraceEvent =
   | PermissionRequestedEvent
   | PermissionDeniedEvent
   | SyncPushedEvent
-  | FeatureExtractedEvent
   | RuleUpdatedEvent
   | CapturePausedEvent
   | CaptureResumedEvent
