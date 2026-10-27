@@ -178,12 +178,6 @@
         "body:device_code": { "class": "credential", "why": "The code being polled" },
         "body:grant_type": { "class": "protocol", "why": "RFC 8628 grant type" }
       }
-    },
-    "POST /api/v1/features/submit": {
-      "sender": "Feature extractor transport. Nothing calls it; the test fails if anything outside its package imports it",
-      "auth": "bearer",
-      "unused": true,
-      "fields": {}
     }
   },
   "documented_only": {
@@ -203,7 +197,6 @@
   "senders": [
     "packages/cli/src/connect.ts",
     "packages/cli/src/device-auth.ts",
-    "packages/feature-extractor/src/transport.ts",
     "packages/hooks-provider/src/container-hook.ts",
     "packages/license-client/src/index.ts",
     "packages/mcp-proxy/src/connect-tool.ts",

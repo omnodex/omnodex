@@ -135,7 +135,6 @@ const ENDPOINTS = Object.entries(CONTRACT.endpoints).map(([key, spec]) => {
   });
   return { key, method, template, names, re: new RegExp(`^${pattern}$`), spec };
 });
-
 function endpointFor(call) {
   for (const e of ENDPOINTS) {
     if (e.method !== call.method) continue;
@@ -384,10 +383,6 @@ test("every request matches the wire contract", async (t) => {
 
   for (const e of ENDPOINTS) {
     const fieldsSeen = seen.get(e.key);
-    if (e.spec.unused) {
-      if (fieldsSeen) problems.push(`${e.key}: marked unused, but the client sent it`);
-      continue;
-    }
     if (!fieldsSeen) {
       problems.push(`${e.key}: listed but never sent; drive its sender in this test or remove it`);
       continue;
@@ -446,9 +441,4 @@ test("every file that makes a network request is a known sender", () => {
   const found = SOURCES.filter((s) => network.test(s.text)).map((s) => s.rel);
   assert.deepEqual(found.filter((f) => !known.has(f)), [], "new network code: list its requests in scripts/wire-contract.json");
   assert.deepEqual([...known].filter((f) => !found.includes(f)), [], "listed senders that no longer make requests");
-});
-
-test("the unused feature transport has no caller", () => {
-  const callers = SOURCES.filter((s) => !s.rel.startsWith("packages/feature-extractor/") && /HttpFeatureTransport/.test(s.text));
-  assert.deepEqual(callers.map((s) => s.rel), []);
 });

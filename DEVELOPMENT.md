@@ -43,7 +43,6 @@ node --test \
   packages/analyzer/test/**/*.test.mjs \
   packages/analyzer/test/*.test.mjs \
   packages/sync-encryptor/test/*.test.mjs \
-  packages/feature-extractor/test/*.test.mjs \
   packages/license-client/test/*.test.mjs \
   packages/mcp-proxy/test/*.test.mjs
 
@@ -99,7 +98,6 @@ packages/
   mcp-proxy/               MCP proxy interceptor (agent <-> upstream MCP servers)
   analyzer/                Rule engine (RuleEngine, RuleRegistry) + 19 community rule definitions
   sync-encryptor/          End-to-end encrypted sync, AES-256-GCM (Argon2id KDF)
-  feature-extractor/       Privacy-preserving feature extraction for cloud analytics
   license-client/          License validation client (cloud API, cache, offline fallback)
   cli/                     omnodex CLI: install, uninstall, status, update, spike,
                            detect, replay, report, dashboard, mcp-proxy, license, connect, sync

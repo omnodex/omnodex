@@ -79,8 +79,8 @@ export const DEFAULT_AUTO_SYNC_MIN_INTERVAL_SECONDS = 60;
 
 /**
  * How often a long-lived process (the MCP proxy) asks for a sync. Matches
- * the feature-extraction cadence so a session that never ends cleanly is
- * still no more than a quarter hour stale in the dashboard.
+ * the configured background-pass cadence so a session that never ends
+ * cleanly is still no more than a quarter hour stale in the dashboard.
  */
 export const DEFAULT_AUTO_SYNC_INTERVAL_SECONDS = 15 * 60;
 
