@@ -1,0 +1,220 @@
+{
+  "about": [
+    "Every request the client sends to the hosted service, and every field in it the service can read.",
+    "scripts/test/wire-contract.test.mjs drives each sender against a recording fetch and fails on a request, endpoint or field missing from this file, or on a field carrying data its entry does not allow.",
+    "Classes: metadata (plaintext the service can read and keep), credential (tokens and verifiers the service checks), ciphertext (encrypted bytes, nonces and wrapped keys), protocol (fixed values).",
+    "carries names what a field may hold: session_id (agent session IDs), machine_id, machine_label (the user-set name), event_id. Captured content (paths, commands, parameters, tool names) may appear in no plaintext field at all.",
+    "Adding a field: add it here with its reason, and update the public list of what the hosted service can see in the same change."
+  ],
+  "endpoints": {
+    "PUT /api/v1/sync/push": {
+      "sender": "Blob sync (the older sync path, used when segments are off or unsupported)",
+      "auth": "bearer",
+      "fields": {
+        "header:x-omnodex-sessions": { "class": "metadata", "carries": ["session_id"], "why": "Which sessions the blob covers, so the dashboard picks blobs" },
+        "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart for the multi-machine merge" },
+        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Name in the dashboard's machine picker; sent only when the user set one" },
+        "body:<binary>": { "class": "ciphertext", "why": "The encrypted read model" }
+      }
+    },
+    "PUT /api/v1/sync/segments/:id": {
+      "sender": "Segment sync, one encrypted segment",
+      "auth": "bearer",
+      "fields": {
+        "path:id": { "class": "metadata", "why": "Random segment ID" },
+        "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart" },
+        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "header:x-omnodex-segment-sessions": { "class": "metadata", "why": "Number of sessions in the segment" },
+        "header:x-omnodex-first-at": { "class": "metadata", "why": "Earliest activity in the segment" },
+        "header:x-omnodex-last-at": { "class": "metadata", "why": "Latest activity in the segment" },
+        "body:<binary>": { "class": "ciphertext", "why": "The encrypted segment" }
+      }
+    },
+    "PUT /api/v1/sync/manifest": {
+      "sender": "Segment sync commit",
+      "auth": "bearer",
+      "fields": {
+        "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart" },
+        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "body:segments[]": { "class": "metadata", "why": "The machine's current segment IDs" }
+      }
+    },
+    "PUT /api/v1/stream/verifier": {
+      "sender": "Sync and connect: register or check the stream secret's verifier",
+      "auth": "bearer",
+      "fields": {
+        "body:secret_verifier": { "class": "credential", "why": "Derived from the stream secret; proves a machine holds it without revealing it" }
+      }
+    },
+    "GET /api/v1/stream/verifier": {
+      "sender": "Connect: whether the stream already has a secret",
+      "auth": "bearer",
+      "fields": {}
+    },
+    "POST /api/v1/stream/collect-token": {
+      "sender": "Collect a rotated API token",
+      "auth": "none",
+      "fields": {
+        "body:old_token": { "class": "credential", "why": "The token the owner rotated" },
+        "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Each machine collects once" },
+        "body:secret_verifier": { "class": "credential", "why": "Proves this machine holds the stream secret" }
+      }
+    },
+    "POST /api/v1/license/validate": {
+      "sender": "License checks and token probes",
+      "auth": "bearer",
+      "fields": {}
+    },
+    "POST /api/v1/sync/events": {
+      "sender": "Live push from hooks, the MCP proxy and the local dashboard",
+      "auth": "bearer",
+      "fields": {
+        "body:key_id": { "class": "metadata", "why": "Which streaming key sealed the batch" },
+        "body:events[].event_id": { "class": "metadata", "carries": ["event_id"], "why": "Random event ID; the relay and dashboard drop duplicates by it" },
+        "body:events[].iv": { "class": "ciphertext", "why": "AES-GCM nonce" },
+        "body:events[].ct": { "class": "ciphertext", "why": "The encrypted event" },
+        "body:events[].key_id": { "class": "metadata", "why": "Which streaming key sealed the event" },
+        "body:events[].ts": { "class": "metadata", "why": "When the event was sent; the relay expires old events" }
+      }
+    },
+    "POST /api/v1/ingest/events": {
+      "sender": "Capture from a cloud agent container (Cowork cloud tasks)",
+      "auth": "bearer",
+      "fields": {
+        "body:events[].event_id": { "class": "metadata", "carries": ["event_id"], "why": "Random event ID, bound to the ciphertext" },
+        "body:events[].scheme": { "class": "protocol", "why": "HPKE suite name" },
+        "body:events[].key_id": { "class": "metadata", "why": "Which stream public key sealed the event" },
+        "body:events[].enc": { "class": "ciphertext", "why": "HPKE encapsulated key" },
+        "body:events[].ct": { "class": "ciphertext", "why": "The sealed event" },
+        "body:events[].ts": { "class": "metadata", "why": "When the event happened" }
+      }
+    },
+    "POST /api/v1/usage/rules": {
+      "sender": "Per-rule signal counts in shadow and guardrails mode",
+      "auth": "bearer",
+      "fields": {
+        "body:batch_id": { "class": "metadata", "why": "Random ID so a resend is not counted twice" },
+        "body:counts[].day": { "class": "metadata", "why": "UTC day of the counts" },
+        "body:counts[].rule_id": { "class": "metadata", "why": "Which of our rules signaled" },
+        "body:counts[].kind": { "class": "metadata", "why": "Signal kind, such as would block" },
+        "body:counts[].count": { "class": "metadata", "why": "How many" }
+      }
+    },
+    "POST /api/v1/usage/advanced": {
+      "sender": "Pro rule usage counts, for billing",
+      "auth": "bearer",
+      "fields": {
+        "body:batch_id": { "class": "metadata", "why": "Random ID so a resend is not counted twice" },
+        "body:days[].day": { "class": "metadata", "why": "UTC day of the counts" },
+        "body:days[].evaluated": { "class": "metadata", "why": "Tool calls Pro rules checked" },
+        "body:days[].findings": { "class": "metadata", "why": "Findings Pro rules raised" }
+      }
+    },
+    "POST /api/v1/sync/monitoring/heartbeat": {
+      "sender": "Monitoring heartbeat (whether monitoring is still in place)",
+      "auth": "bearer",
+      "fields": {
+        "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine the heartbeat is from" },
+        "body:sent_at": { "class": "metadata", "why": "When it was sent" },
+        "body:cli_version": { "class": "metadata", "why": "Client version" },
+        "body:session_open": { "class": "metadata", "why": "Whether any agent session is open" },
+        "body:record_paused": { "class": "metadata", "why": "Whether recording is paused" },
+        "body:sync_paused": { "class": "metadata", "why": "Whether uploads are paused" },
+        "body:unexplained_changes": { "class": "metadata", "why": "Count of unexplained monitoring changes" },
+        "body:catch_up": { "class": "metadata", "why": "First heartbeat after failed ones" },
+        "body:offline_since": { "class": "metadata", "optional": true, "why": "Start of the offline stretch, on a catch-up" },
+        "body:platforms[].platform": { "class": "metadata", "why": "Agent platform name" },
+        "body:platforms[].hooks": { "class": "metadata", "why": "Hook state" },
+        "body:platforms[].plugin": { "class": "metadata", "why": "Plugin state" },
+        "body:platforms[].mcp": { "class": "metadata", "why": "MCP entry state" },
+        "body:platforms[].installs": { "class": "metadata", "why": "Installations checked" },
+        "body:platforms[].session_open": { "class": "metadata", "why": "Whether a session on this platform is open" }
+      }
+    },
+    "GET /api/v1/rules/update": {
+      "sender": "Pro rule bundle refresh",
+      "auth": "bearer",
+      "fields": {
+        "query:format": { "class": "protocol", "why": "Bundle format the client reads" },
+        "query:since": { "class": "metadata", "optional": true, "why": "Installed bundle version" },
+        "query:not_after": { "class": "metadata", "optional": true, "why": "Installed bundle expiry" }
+      }
+    },
+    "GET /api/v1/guardrails/update": {
+      "sender": "Guardrails module refresh",
+      "auth": "bearer",
+      "fields": {
+        "query:interface": { "class": "protocol", "why": "Module interface the client loads" },
+        "query:since": { "class": "metadata", "optional": true, "why": "Installed module version" },
+        "query:not_after": { "class": "metadata", "optional": true, "why": "Installed module expiry" }
+      }
+    },
+    "POST /api/v1/connect/claim": {
+      "sender": "Connection link from the CLI or the MCP proxy",
+      "auth": "bearer",
+      "fields": {
+        "body:machine_label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "body:platform": { "class": "metadata", "why": "Which agent platform asked" },
+        "body:project_label": { "class": "metadata", "why": "Project name the caller passed, or null" },
+        "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine is connecting" },
+        "body:passphrase_enc": { "class": "ciphertext", "why": "Stream secret under a one-time key that stays in the link's fragment" },
+        "body:passphrase_iv": { "class": "ciphertext", "why": "Nonce for passphrase_enc" }
+      }
+    },
+    "POST /api/v1/device/code": {
+      "sender": "Device code sign-in from the CLI or the MCP proxy",
+      "auth": "none",
+      "fields": {
+        "body:machine_label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine is connecting" },
+        "body:passphrase_enc": { "class": "ciphertext", "why": "Stream secret under a one-time key that stays in the link's fragment" },
+        "body:passphrase_iv": { "class": "ciphertext", "why": "Nonce for passphrase_enc" }
+      }
+    },
+    "POST /api/v1/device/token": {
+      "sender": "Device code polling",
+      "auth": "none",
+      "fields": {
+        "body:device_code": { "class": "credential", "why": "The code being polled" },
+        "body:grant_type": { "class": "protocol", "why": "RFC 8628 grant type" }
+      }
+    },
+    "POST /api/v1/features/submit": {
+      "sender": "Feature extractor transport. Nothing calls it; the test fails if anything outside its package imports it",
+      "auth": "bearer",
+      "unused": true,
+      "fields": {}
+    }
+  },
+  "documented_only": {
+    "about": "Endpoints named in source comments that the client does not call.",
+    "paths": []
+  },
+  "other_requests": {
+    "about": "Files that make network requests other than the endpoints above. A new file that calls fetch or https fails the test until it is listed here or its requests are covered above.",
+    "files": {
+      "packages/cli/src/update.ts": "Update check against the public npm registry; no body, no credentials",
+      "packages/cli/src/plugins.ts": "Plugin bundle downloads from downloads.omnodex.com; no body, no credentials",
+      "packages/cli/src/dashboard/App.tsx": "Local dashboard in the browser, talking to its own local server",
+      "packages/cli/src/dashboard/components/Panels.tsx": "Local dashboard in the browser, talking to its own local server",
+      "packages/cli/src/dashboard/useSnapshot.ts": "Local dashboard in the browser, talking to its own local server"
+    }
+  },
+  "senders": [
+    "packages/cli/src/connect.ts",
+    "packages/cli/src/device-auth.ts",
+    "packages/feature-extractor/src/transport.ts",
+    "packages/hooks-provider/src/container-hook.ts",
+    "packages/license-client/src/index.ts",
+    "packages/mcp-proxy/src/connect-tool.ts",
+    "packages/sync-encryptor/src/advanced-usage.ts",
+    "packages/sync-encryptor/src/guardrails-refresh.ts",
+    "packages/sync-encryptor/src/monitoring-heartbeat.ts",
+    "packages/sync-encryptor/src/rule-signals.ts",
+    "packages/sync-encryptor/src/segment-transport.ts",
+    "packages/sync-encryptor/src/shim-push.ts",
+    "packages/sync-encryptor/src/stream-credentials.ts",
+    "packages/sync-encryptor/src/streaming-transport.ts",
+    "packages/sync-encryptor/src/transport.ts"
+  ]
+}
