@@ -46,7 +46,7 @@ export type {
 } from "./module.js";
 export { loadEnforcement, readUserEnforcement, findRepoPolicy, userProjectSection, USER_CONFIG_FILE } from "./config.js";
 export type { LoadedEnforcement, LoadEnforcementOptions } from "./config.js";
-export { annotateFindings, enforcementRecord, verdictFor } from "./annotate.js";
+export { annotateFindings, enforcementRecord, verdictFor, withPolicySeverity } from "./annotate.js";
 export type { AnnotateOptions } from "./annotate.js";
 export { appendRuleSignals, signalLines, RULE_SIGNALS_LOG } from "./signals.js";
 export type { RuleSignalKind, RuleSignalLine } from "./signals.js";

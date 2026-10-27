@@ -38,6 +38,8 @@ import { detectRisks } from "./detect.js";
 import type { RuleRegistry } from "./registry.js";
 import { registryForHost } from "./evaluator.js";
 import { openMachineState, type MachineState } from "./machine-state.js";
+import { annotateFindings } from "./enforcement/annotate.js";
+import { credentialFingerprinter } from "./known-secrets.js";
 
 /** Watermark file written under OMNODEX_HOME by the background pass. */
 export const DETECT_STATE_FILE = "detect-state.json";
@@ -59,6 +61,14 @@ export interface DetectLogOptions {
   machineState?: MachineState;
   /** Called once per evaluated session, for progress output. */
   onSession?: (report: SessionDetectReport) => void;
+  /**
+   * OMNODEX_HOME whose policy entries apply to new findings: a severity an
+   * entry gives a finding replaces the rule's, which the finding keeps as
+   * recommended_severity. Findings also carry fingerprints of the credential
+   * values they matched, keyed to this home. Omit to record findings as the
+   * rules made them.
+   */
+  policyHome?: string;
 }
 
 export interface SessionDetectReport {
@@ -116,6 +126,8 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
     scanned: 0, unchanged: 0, newEvents: [], skipped: 0, advancedEvaluated: 0, advancedFindings: 0,
   };
 
+  const fingerprint = opts.policyHome ? credentialFingerprinter(opts.policyHome) : undefined;
+
   for (const root of opts.roots) {
     // A root with no index has no sessions. Skip it rather than init() it,
     // which would create an empty log on a home that has never recorded.
@@ -140,7 +152,12 @@ export async function detectEventLogs(opts: DetectLogOptions): Promise<DetectLog
           result.scanned++;
           const detection = detectRisks(events, newEventId, opts.registry, {
             machineState: opts.machineState,
+            ...(fingerprint ? { fingerprint } : {}),
           });
+          if (opts.policyHome && detection.newEvents.length > 0) {
+            const home = opts.policyHome;
+            detection.newEvents = annotateFindings(detection.newEvents, events, { home, stamp: false });
+          }
           result.skipped += detection.skipped;
           // Calls beyond the session's mark are new. A session evaluated
           // before the mark existed starts at its current count, so history
@@ -210,6 +227,7 @@ export async function runBackgroundDetection(
     statePath: path.join(home, DETECT_STATE_FILE),
     machineState: openMachineState(home, { seedRoots: roots }),
     newEventId: opts.newEventId,
+    policyHome: home,
     // A background pass is a batch host, so it runs advanced rules when this
     // installation has a bundle it can open.
     registry: opts.registry ?? registryForHost("batch", home),

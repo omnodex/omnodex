@@ -197,6 +197,11 @@ export interface RiskEventRow {
   evidence?: FindingEvidence;
   /** What enforcement made of the finding when it was captured (shadow or guardrails). */
   enforcement?: FindingEnforcement;
+  /**
+   * The rule's own severity, when a policy entry changed `severity`, which
+   * is then the user's. Absent means `severity` is the rule's.
+   */
+  recommended_severity?: RiskSeverity;
 }
 
 /**

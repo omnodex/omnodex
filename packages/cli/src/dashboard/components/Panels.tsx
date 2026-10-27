@@ -222,7 +222,10 @@ export function RiskEvents({ view, utc, detail, onSelect }: {
                 <span className={`severity-badge severity-${r.severity}`}>{r.severity}</span>
                 <div>
                   <div className="risk-desc">{r.description}</div>
-                  <div className="risk-meta">{r.category} / {r.rule_id} / {formatTime(r.detected_at, utc)}</div>
+                  <div className="risk-meta">
+                    {r.category} / {r.rule_id} / {formatTime(r.detected_at, utc)}
+                    {r.recommended_severity && ` / recommended ${r.recommended_severity}`}
+                  </div>
                 </div>
               </li>
             );
@@ -525,6 +528,11 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
       <>
         <h4 style={{ ...HEADING, color: "var(--cyan)" }}>Risk Event Detail</h4>
         <DetailRow label="Severity"><span className={`severity-badge severity-${r.severity}`}>{r.severity}</span></DetailRow>
+        {r.recommended_severity && (
+          <DetailRow label="Recommended">
+            <span className={`severity-badge severity-${r.recommended_severity}`}>{r.recommended_severity}</span> (your policy changed it)
+          </DetailRow>
+        )}
         <DetailRow label="Category">{r.category}</DetailRow>
         <DetailRow label="Description">{r.description}</DetailRow>
         <DetailRow label="Rule">{r.rule_id}</DetailRow>

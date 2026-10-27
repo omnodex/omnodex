@@ -565,6 +565,7 @@ async function cmdDetect(args: string[]): Promise<void> {
     newEventId,
     registry: registryForHost("batch", resolvePaths().home),
     machineState: openMachineState(resolvePaths().home, { seedRoots: eventLogRoots }),
+    policyHome: resolvePaths().home,
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
         console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);

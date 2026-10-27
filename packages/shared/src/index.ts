@@ -508,7 +508,14 @@ export interface FindingEvidence {
 
 export interface RiskDetectedEvent extends BaseEvent {
   event_type: "risk.detected";
+  /** The finding's effective severity: the user's, when a policy entry changed it. */
   severity: RiskSeverity;
+  /**
+   * The rule's own severity, set only when a policy entry changed it.
+   * Absent means `severity` is the rule's. Risk scores, filters and
+   * notifications use `severity`.
+   */
+  recommended_severity?: RiskSeverity;
   category: string;
   description: string;
   /**

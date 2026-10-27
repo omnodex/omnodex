@@ -347,6 +347,7 @@ export class Projector {
       ...(event.related_event_ids?.length ? { related_event_ids: event.related_event_ids } : {}),
       ...(event.evidence ? { evidence: event.evidence } : {}),
       ...(event.enforcement ? { enforcement: event.enforcement } : {}),
+      ...(event.recommended_severity ? { recommended_severity: event.recommended_severity } : {}),
     });
     if (!inserted) return;
     const score = riskScoreFor(event.severity);

@@ -53,8 +53,8 @@ export interface Verdict {
   source: VerdictSource;
   /** Set when an entry mutes the finding: it stays out of default views. */
   muted: boolean;
-  /** The finding's effective severity: an entry's, or the rule's own. */
-  severity: RiskSeverity;
+  /** The severity an entry gives the finding, when one sets it. */
+  severity?: RiskSeverity;
   /** The entry that decided the action, when one did. */
   entry?: PolicyEntry;
   safe_alternative?: SafeAlternative;
@@ -149,7 +149,7 @@ export function resolveVerdict(input: ResolveVerdictInput): Verdict {
     candidate: hint,
     source: decided?.source ?? (rule.blocking_hint ? "rule-hint" : "default"),
     muted: result.muted,
-    severity: result.severity,
+    ...(result.decided.severity ? { severity: result.severity } : {}),
     ...(decided ? { entry: decided.entry } : {}),
     ...(rule.safe_alternative ? { safe_alternative: rule.safe_alternative } : {}),
     ...(description !== undefined ? { description } : {}),

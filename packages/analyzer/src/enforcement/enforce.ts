@@ -30,7 +30,7 @@ import type {
   TraceEvent,
 } from "@omnodex/shared";
 import { loadEnforcement, type LoadedEnforcement } from "./config.js";
-import { annotateFindings, enforcementRecord, verdictFor } from "./annotate.js";
+import { annotateFindings, enforcementRecord, verdictFor, withPolicySeverity } from "./annotate.js";
 import { loadGuardrailsModule, type EnforcementHost, type GuardrailsModule } from "./module.js";
 import type { VerdictRule } from "./resolve-verdict.js";
 import { appendRuleSignals } from "./signals.js";
@@ -109,7 +109,8 @@ export async function enforceCaptured(
     const held = new Set(decision.held);
     const stamped = findings.map((f, i) => {
       const record = enforcementRecord("guardrails", verdicts[i]!, held.has(f.rule_id));
-      return record ? { ...f, enforcement: record } : f;
+      const g = withPolicySeverity(f, verdicts[i]!);
+      return record ? { ...g, enforcement: record } : g;
     });
     return { findings: stamped, extra: [], output: decision.output, action: decision.action, mode: "guardrails" };
   } catch (err) {

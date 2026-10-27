@@ -12,8 +12,9 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { evaluatePolicy, targetMatches, normalizePath, credentialFingerprinter, RuleEngine } from "../dist/index.js";
-import { resolveVerdict, targetCovers } from "../dist/enforcement/index.js";
+import { evaluatePolicy, targetMatches, normalizePath, credentialFingerprinter, RuleEngine, detectEventLogs } from "../dist/index.js";
+import { resolveVerdict, targetCovers, annotateFindings, enforceCaptured } from "../dist/enforcement/index.js";
+import { EventLog } from "@omnodex/event-log";
 import { policyEntries, parsePolicy, parseRepoEnforcementConfig } from "@omnodex/shared";
 
 let seq = 0;
@@ -546,5 +547,92 @@ describe("the older keys as entries", () => {
       },
     });
     assert.deepEqual([v.action, v.muted], ["alert_only", true]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Severity at capture
+// ---------------------------------------------------------------------------
+
+describe("a policy severity at capture", () => {
+  const risk = (c, overrides = {}) => ({
+    schema_version: 1, event_id: `f-${c.tool_call_id}`, session_id: c.session_id, occurred_at: c.occurred_at,
+    recorded_at: c.recorded_at, interceptor: "analyzer", event_type: "risk.detected", severity: "HIGH",
+    category: "cat_x", description: "something", related_event_id: c.tool_call_id, rule_id: "RULE_X", ...overrides,
+  });
+  const lower = { policy: [entry({ target: { path: "/home/case/repo/.env" } }, { severity: "LOW" })] };
+  const loaded = (mode, user) => () => ({ mode, on_error: "allow", user });
+
+  it("MUST_FIRE: in monitor mode too, with the rule's severity kept as recommended", () => {
+    const c = read("/home/case/repo/.env");
+    const [f] = annotateFindings([risk(c)], [c], { loaded: loaded("monitor", lower) });
+    assert.deepEqual([f.severity, f.recommended_severity, f.enforcement], ["LOW", "HIGH", undefined]);
+  });
+
+  it("MUST_FIRE: a category entry raises the severity and stamps alongside the shadow record", () => {
+    const c = bash("echo hi");
+    const user = { policy: [entry({ rule_id: undefined, category: "cat_x" }, { severity: "CRITICAL", verdict: "confirm" })] };
+    const [f] = annotateFindings([risk(c)], [c], { loaded: loaded("shadow", user) });
+    assert.deepEqual([f.severity, f.recommended_severity, f.enforcement.action], ["CRITICAL", "HIGH", "confirm"]);
+  });
+
+  it("MUST_NOT_FIRE: no severity entry, an entry giving the same severity, or a call the target does not cover", () => {
+    const c = read("/home/case/repo/.env");
+    const findings = [risk(c)];
+    assert.equal(annotateFindings(findings, [c], { loaded: loaded("monitor", {}) }), findings);
+    const same = { policy: [entry({}, { severity: "HIGH" })] };
+    assert.equal(annotateFindings(findings, [c], { loaded: loaded("monitor", same) }), findings);
+    const other = read("/home/case/repo/README.md");
+    const [f] = annotateFindings([risk(other)], [other], { loaded: loaded("monitor", lower) });
+    assert.equal(f.recommended_severity, undefined);
+  });
+
+  it("MUST_NOT_FIRE: a finding recorded below its rule's severity is not put back up by no entry", () => {
+    // Staged findings run one step below the rule; only an entry may change them.
+    const c = bash("echo hi");
+    const rule = () => ({ rule_id: "RULE_X", severity: "CRITICAL" });
+    const findings = [risk(c, { severity: "HIGH" })];
+    assert.equal(annotateFindings(findings, [c], { loaded: loaded("shadow", {}), rule }), findings);
+  });
+
+  it("keeps the first recommended severity when a finding is judged twice", () => {
+    const c = read("/home/case/repo/.env");
+    const [once] = annotateFindings([risk(c)], [c], { loaded: loaded("monitor", lower) });
+    const raise = { policy: [entry({}, { severity: "MEDIUM" })] };
+    const [twice] = annotateFindings([once], [c], { loaded: loaded("monitor", raise) });
+    assert.equal(twice.recommended_severity, "HIGH");
+  });
+
+  it("MUST_FIRE: guardrails applies it to the findings it stamps", async () => {
+    const c = read("/home/case/repo/.env");
+    const module = { GUARDRAILS_INTERFACE: 1, decide: () => ({ action: "alert_only", held: [], output: null }) };
+    const r = await enforceCaptured([risk(c)], [c], {
+      host: "claude-code", newEventId: () => "x", module,
+      loaded: { mode: "guardrails", on_error: "allow", user: lower },
+    });
+    assert.deepEqual([r.findings[0].severity, r.findings[0].recommended_severity], ["LOW", "HIGH"]);
+  });
+
+  it("MUST_FIRE: the background pass applies the home's entries to new findings, and records them once", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-pol-"));
+    try {
+      const root = path.join(home, "event-log");
+      const log = new EventLog({ root });
+      await log.init();
+      const c = read("/home/case/repo/.env", { session_id: "sess-bg" });
+      await log.append(c);
+      await log.close();
+      fs.writeFileSync(path.join(home, "omnodex-config.json"), JSON.stringify({
+        enforcement: { policy: [{ id: "bg", match: { category: "sensitive_path_read" }, effect: { severity: "LOW" } }] },
+      }));
+      const first = await detectEventLogs({ roots: [root], policyHome: home, newEventId: () => `bg-${++seq}` });
+      const found = first.newEvents.filter((e) => e.category === "sensitive_path_read");
+      assert.ok(found.length > 0, "the read of .env is a finding");
+      for (const f of found) assert.deepEqual([f.severity, f.recommended_severity === undefined], ["LOW", false]);
+      const again = await detectEventLogs({ roots: [root], policyHome: home, newEventId: () => `bg-${++seq}` });
+      assert.equal(again.newEvents.length, 0, "a changed severity does not make a finding new");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
