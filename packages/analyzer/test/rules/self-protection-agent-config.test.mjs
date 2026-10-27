@@ -238,6 +238,8 @@ test("no finding when the rewritten hook file keeps the entry", () => {
 // ---- Shell: the agent's CLI, hook files, disableAllHooks ----
 
 const shellFires = [
+  "omnodex clear sess-123",
+  "omnodex clear --all --confirm",
   "claude plugin uninstall omnodex-cowork@omnodex-local",
   "claude plugin disable omnodex-cowork",
   "claude mcp remove omnodex",
@@ -255,6 +257,20 @@ const shellFires = [
   "jq '.disableAllHooks = true' settings.json > tmp.json",
 ];
 
+test("MUST_FIRE: omnodex clear commands are self-protection risks", () => {
+  for (const command of ["omnodex clear sess-123", "omnodex clear --all --confirm"]) {
+    const findings = run(RULE_SELF_PROTECTION_BASH, "Bash", { command });
+    assert.equal(findings.length, 1, command);
+    assert.equal(findings[0].severity, "HIGH");
+  }
+});
+
+test("MUST_NOT_FIRE: similarly named and read-only commands stay quiet", () => {
+  for (const command of ["omnodex clear-history", "omnodex report"]) {
+    assert.equal(run(RULE_SELF_PROTECTION_BASH, "Bash", { command }).length, 0, command);
+  }
+});
+
 for (const command of shellFires) {
   test(`shell fires: ${command}`, () => {
     const findings = run(RULE_SELF_PROTECTION_BASH, "Bash", { command });
@@ -264,6 +280,8 @@ for (const command of shellFires) {
 }
 
 const shellQuiet = [
+  "omnodex clear-history",
+  "omnodex report",
   "claude plugin install omnodex-cowork@omnodex-local --scope user",
   "claude mcp remove github",
   "codex mcp list",

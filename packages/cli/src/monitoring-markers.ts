@@ -59,7 +59,7 @@ export function currentActor(): MonitoringActor {
 }
 
 /** Changes that take monitoring away; made unattended, they raise a finding. */
-const REMOVALS = new Set<MonitoringChange["action"]>(["uninstall", "exclude", "everywhere_off"]);
+const REMOVALS = new Set<MonitoringChange["action"]>(["uninstall", "exclude", "everywhere_off", "clear"]);
 
 function defaultHome(): string {
   return process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
