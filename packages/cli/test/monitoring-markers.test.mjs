@@ -178,3 +178,77 @@ test("uninstall --unattended removes the hooks, marks the change unattended and 
   assert.equal(finding.related_event_id, removal.event_id);
   assert.match(finding.description, /--unattended/);
 });
+
+test("clear without a terminal is refused and changes nothing", async (t) => {
+  const m = await machine(t);
+  const log = new EventLog({ root: path.join(m.omnodexHome, "event-log") });
+  await log.init();
+  await log.append({
+    schema_version: 1,
+    event_id: "sess-clear-start",
+    session_id: "sess-clear",
+    occurred_at: "2026-10-21T00:00:00.000Z",
+    recorded_at: "2026-10-21T00:00:00.000Z",
+    interceptor: "mock",
+    event_type: "session.started",
+    user: "case",
+    project_path: m.project,
+    mcp_servers: [],
+  });
+  await log.close();
+
+  const r = await run(["clear", "sess-clear"], m.env);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /needs a person at an interactive terminal/);
+  const remaining = new EventLog({ root: path.join(m.omnodexHome, "event-log") });
+  await remaining.init();
+  assert.deepEqual(await remaining.listSessions(), ["sess-clear"]);
+  await remaining.close();
+  assert.deepEqual(monitoringChangeRows(await controlEvents(m.omnodexHome)), []);
+});
+
+test("clear --unattended removes the session, records the clear and raises a MEDIUM finding", async (t) => {
+  const m = await machine(t);
+  const log = new EventLog({ root: path.join(m.omnodexHome, "event-log") });
+  await log.init();
+  await log.append({
+    schema_version: 1,
+    event_id: "sess-clear-start",
+    session_id: "sess-clear",
+    occurred_at: "2026-10-21T00:00:00.000Z",
+    recorded_at: "2026-10-21T00:00:00.000Z",
+    interceptor: "mock",
+    event_type: "session.started",
+    user: "case",
+    project_path: m.project,
+    mcp_servers: [],
+  });
+  await log.close();
+
+  const r = await run(["clear", "sess-clear", "--unattended"], m.env);
+  assert.equal(r.code, 0, r.out);
+  const events = await controlEvents(m.omnodexHome);
+  const rows = monitoringChangeRows(events);
+  const marker = rows.find((row) => row.action === "clear");
+  assert.ok(marker, "clear marker");
+  assert.equal(marker.actor, "unattended");
+  const finding = events.find((e) => e.event_type === "risk.detected");
+  assert.ok(finding, "finding");
+  assert.equal(finding.severity, "MEDIUM");
+  assert.equal(finding.rule_id, "RULE_SELF_PROTECTION_UNATTENDED_REMOVAL");
+  assert.equal(finding.related_event_id, marker.event_id);
+});
+
+test("clear --all --confirm --unattended leaves a clear marker in the new log", async (t) => {
+  const m = await machine(t);
+  await fs.mkdir(m.omnodexHome, { recursive: true });
+  await fs.writeFile(path.join(m.omnodexHome, "old-data"), "removed", "utf8");
+
+  const r = await run(["clear", "--all", "--confirm", "--unattended"], m.env);
+  assert.equal(r.code, 0, r.out);
+  await assert.rejects(() => fs.access(path.join(m.omnodexHome, "old-data")));
+  const rows = monitoringChangeRows(await controlEvents(m.omnodexHome));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].action, "clear");
+  assert.equal(rows[0].actor, "unattended");
+});

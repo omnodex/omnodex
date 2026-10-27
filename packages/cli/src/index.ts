@@ -29,7 +29,7 @@ import * as path from "node:path";
 import { promises as fs } from "node:fs";
 import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
-import { setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
+import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
 import { describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
@@ -109,6 +109,7 @@ import {
   updateStreamConfig,
   resolveCredentials,
   readStreamConfig,
+  writeStreamConfig,
 } from "./stream-config.js";
 import { canonicalTarget, createClaim, platformFromTarget } from "./connect.js";
 import {
@@ -373,13 +374,15 @@ async function cmdReplay(args: string[] = []): Promise<void> {
  *   omnodex clear <session-id>          remove one session from event log + read model
  *   omnodex clear --all --confirm       PERMANENTLY delete all data under OMNODEX_HOME
  *
- * The --all flag requires --confirm to prevent accidental data loss.
+ * The --all flag requires --confirm to prevent accidental data loss. Clearing
+ * needs a person at a terminal unless --unattended is explicitly passed.
  */
 async function cmdClear(args: string[]): Promise<void> {
   const paths = resolvePaths();
   const sessionId = args.find((a) => !a.startsWith("--"));
   const wipeAll = args.includes("--all");
   const confirmed = args.includes("--confirm");
+  const unattended = args.includes("--unattended");
 
   if (!sessionId && !wipeAll) {
     console.error(
@@ -411,9 +414,30 @@ async function cmdClear(args: string[]): Promise<void> {
     return;
   }
 
+  if (!unattended && !(process.stdin.isTTY && process.stdout.isTTY)) {
+    console.error(
+      "[clear] clearing Omnodex data needs a person at an interactive terminal, so an agent cannot erase its own history. " +
+        "Run it yourself in a terminal, or pass --unattended for a scripted clear (it is recorded and raises a finding).",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (unattended) setMonitoringActor("unattended");
+
   if (wipeAll && confirmed) {
+    // Preserve the connection just long enough to send the clear marker. The
+    // connection and all other state are removed again after that best-effort
+    // push; only the new event log remains.
+    const streamConfig = await readStreamConfig(paths.home);
     // Wipe everything
     await fs.rm(paths.home, { recursive: true, force: true });
+    if (streamConfig) await writeStreamConfig(paths.home, streamConfig);
+    await recordMonitoringChange({ action: "clear" }, paths.home);
+    if (streamConfig) {
+      for (const entry of await fs.readdir(paths.home)) {
+        if (entry !== "event-log") await fs.rm(path.join(paths.home, entry), { recursive: true, force: true });
+      }
+    }
     console.log(`[clear] removed all data at ${paths.home}`);
     return;
   }
@@ -470,6 +494,7 @@ async function cmdClear(args: string[]): Promise<void> {
   await closeRootLogs(freshLogs);
   await store.close();
 
+  await recordMonitoringChange({ action: "clear" }, paths.home);
   console.log(`[clear] removed session ${sessionId} from ${removedFrom}`);
 }
 
@@ -3263,7 +3288,8 @@ commands:
                      runs -- risks are detected and pushed to the browser
                      in real time via SSE.  Flags:
                        --no-detect  skip the historical detection pass
-  clear              delete all event log data and the read model.
+  clear              delete event log data; requires a terminal or --unattended.
+                     --unattended records the clear and raises a finding.
 `);
       return;
     default:

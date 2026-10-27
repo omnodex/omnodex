@@ -110,7 +110,7 @@ export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_BASH",
-  version: "1.2.0",
+  version: "1.3.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -120,6 +120,11 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
       // reported one severity lower. Mentions in documents are ignored.
       scope: ["exec", "staged"],
       patterns: [
+        {
+          // Clearing the event log erases an agent's audit trail.
+          regex: "\\bomnodex\\s+clear(?:\\s|$)",
+          type: "omnodex-clear",
+        },
         {
           // omnodex uninstall command
           regex: "\\bomnodex\\s+uninstall\\b",

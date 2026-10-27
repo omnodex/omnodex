@@ -298,7 +298,7 @@ test("clear removes a session that lives in a secondary root", async () => {
     "utf8",
   );
 
-  const result = runCli(["clear", "sess-secondary"], { OMNODEX_HOME: primary, FAKE_HOME: fakeHome });
+  const result = runCli(["clear", "sess-secondary", "--unattended"], { OMNODEX_HOME: primary, FAKE_HOME: fakeHome });
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   // Gone from disk, not merely from the read model.
@@ -316,7 +316,7 @@ test("clear says so when the session is in no root", async () => {
   const fakeHome = await mkTmp("home");
   await seedRoot(primary, "sess-primary");
 
-  const result = runCli(["clear", "sess-nope"], { OMNODEX_HOME: primary, FAKE_HOME: fakeHome });
+  const result = runCli(["clear", "sess-nope", "--unattended"], { OMNODEX_HOME: primary, FAKE_HOME: fakeHome });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /not found in any root/);
 });

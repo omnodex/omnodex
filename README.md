@@ -243,9 +243,11 @@ omnodex dashboard [port]            start the local dashboard (default port 7890
                                       --roots <path> [path...]  additional OMNODEX_HOME
                                                                 roots to tail
                                       --no-detect   skip the historical detection pass
-omnodex clear <session-id>          remove one session
+omnodex clear <session-id>          remove one session (terminal required)
 omnodex clear --all --confirm       delete the entire Omnodex home (events, config,
-                                      and cloud connection)
+                                      and cloud connection; terminal required)
+                                      --unattended permits scripts, records the clear,
+                                      and raises a self-protection finding
 omnodex license [clear]             show license tier, or clear the cached license
 ```
 

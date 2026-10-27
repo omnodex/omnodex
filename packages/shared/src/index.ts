@@ -897,7 +897,8 @@ export type MonitoringAction =
   | "everywhere_off"
   | "connect"
   | "disconnect"
-  | "enforce_mode";
+  | "enforce_mode"
+  | "clear";
 
 /**
  * Who made the change: a person at an interactive terminal, or a process
