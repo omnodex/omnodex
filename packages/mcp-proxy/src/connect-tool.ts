@@ -24,7 +24,7 @@ import { webcrypto, randomBytes } from "node:crypto";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { computeMachineId, readMachineLabel } from "@omnodex/sync-encryptor";
+import { computeMachineId, sealedMachineLabel } from "@omnodex/sync-encryptor";
 
 const subtle = webcrypto.subtle;
 
@@ -165,8 +165,8 @@ export async function handleConnect(params: {
     const { passphrase_enc, passphrase_iv, transfer_key } =
       await encryptForTransfer(passphrase);
 
-    const machineId = computeMachineId();
-    const machineLabel = await readMachineLabel(home);
+    const machineId = computeMachineId(home);
+    const machineLabel = await sealedMachineLabel(passphrase, home);
 
     const body = {
       machine_label: machineLabel,
@@ -241,8 +241,8 @@ async function initiateDeviceCodeFlow(
     const { passphrase_enc, passphrase_iv, transfer_key } =
       await encryptForTransfer(passphrase);
 
-    const machineId = computeMachineId();
-    const machineLabel = await readMachineLabel(home);
+    const machineId = computeMachineId(home);
+    const machineLabel = await sealedMachineLabel(passphrase, home);
 
     const body = {
       machine_label: machineLabel,

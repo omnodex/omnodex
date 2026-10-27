@@ -3,7 +3,7 @@
     "Every request the client sends to the hosted service, and every field in it the service can read.",
     "scripts/test/wire-contract.test.mjs drives each sender against a recording fetch and fails on a request, endpoint or field missing from this file, or on a field carrying data its entry does not allow.",
     "Classes: metadata (plaintext the service can read and keep), credential (tokens and verifiers the service checks), ciphertext (encrypted bytes, nonces and wrapped keys), protocol (fixed values).",
-    "carries names what a field may hold: session_id (agent session IDs), machine_id, machine_label (the user-set name), event_id. Captured content (paths, commands, parameters, tool names) may appear in no plaintext field at all.",
+    "carries names what a field may hold: session_id (agent session IDs), machine_id (random, generated once per machine), previous_machine_id (the hostname-derived ID older clients used), event_id. The user-set machine label leaves the machine only sealed, in ciphertext fields. Captured content (paths, commands, parameters, tool names) may appear in no plaintext field at all.",
     "Adding a field: add it here with its reason, and update the public list of what the hosted service can see in the same change."
   ],
   "endpoints": {
@@ -13,7 +13,7 @@
       "fields": {
         "header:x-omnodex-sessions": { "class": "metadata", "carries": ["session_id"], "why": "Which sessions the blob covers, so the dashboard picks blobs" },
         "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart for the multi-machine merge" },
-        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Name in the dashboard's machine picker; sent only when the user set one" },
+        "header:x-omnodex-machine-label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "body:<binary>": { "class": "ciphertext", "why": "The encrypted read model" }
       }
     },
@@ -23,7 +23,7 @@
       "fields": {
         "path:id": { "class": "metadata", "why": "Random segment ID" },
         "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart" },
-        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "header:x-omnodex-machine-label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "header:x-omnodex-segment-sessions": { "class": "metadata", "why": "Number of sessions in the segment" },
         "header:x-omnodex-first-at": { "class": "metadata", "why": "Earliest activity in the segment" },
         "header:x-omnodex-last-at": { "class": "metadata", "why": "Latest activity in the segment" },
@@ -35,8 +35,16 @@
       "auth": "bearer",
       "fields": {
         "header:x-omnodex-machine-id": { "class": "metadata", "carries": ["machine_id"], "why": "Keeps each machine's data apart" },
-        "header:x-omnodex-machine-label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "header:x-omnodex-machine-label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "body:segments[]": { "class": "metadata", "why": "The machine's current segment IDs" }
+      }
+    },
+    "POST /api/v1/sync/machine-remap": {
+      "sender": "Sync, once on a machine that synced under the hostname-derived machine ID older clients used",
+      "auth": "bearer",
+      "fields": {
+        "body:from": { "class": "metadata", "carries": ["previous_machine_id"], "why": "The old machine ID, so the service moves its data to the new one; sent once" },
+        "body:to": { "class": "metadata", "carries": ["machine_id"], "why": "The machine's random ID" }
       }
     },
     "PUT /api/v1/stream/verifier": {
@@ -153,7 +161,7 @@
       "sender": "Connection link from the CLI or the MCP proxy",
       "auth": "bearer",
       "fields": {
-        "body:machine_label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "body:machine_label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "body:platform": { "class": "metadata", "why": "Which agent platform asked" },
         "body:project_label": { "class": "metadata", "why": "Project name the caller passed, or null" },
         "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine is connecting" },
@@ -165,7 +173,7 @@
       "sender": "Device code sign-in from the CLI or the MCP proxy",
       "auth": "none",
       "fields": {
-        "body:machine_label": { "class": "metadata", "carries": ["machine_label"], "optional": true, "why": "Machine picker name; sent only when the user set one" },
+        "body:machine_label": { "class": "ciphertext", "optional": true, "why": "Machine picker name, sealed under the stream secret; only the dashboard opens it. Sent only when the user set one" },
         "body:machine_id": { "class": "metadata", "carries": ["machine_id"], "why": "Which machine is connecting" },
         "body:passphrase_enc": { "class": "ciphertext", "why": "Stream secret under a one-time key that stays in the link's fragment" },
         "body:passphrase_iv": { "class": "ciphertext", "why": "Nonce for passphrase_enc" }
@@ -202,6 +210,7 @@
     "packages/mcp-proxy/src/connect-tool.ts",
     "packages/sync-encryptor/src/advanced-usage.ts",
     "packages/sync-encryptor/src/guardrails-refresh.ts",
+    "packages/sync-encryptor/src/machine-id.ts",
     "packages/sync-encryptor/src/monitoring-heartbeat.ts",
     "packages/sync-encryptor/src/rule-signals.ts",
     "packages/sync-encryptor/src/segment-transport.ts",

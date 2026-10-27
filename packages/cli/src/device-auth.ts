@@ -16,7 +16,7 @@
 
 import path from "node:path";
 import os from "node:os";
-import { computeMachineId, readMachineLabel } from "@omnodex/sync-encryptor";
+import { computeMachineId, sealedMachineLabel } from "@omnodex/sync-encryptor";
 import { encryptForTransfer } from "./connect.js";
 
 // ---------------------------------------------------------------------------
@@ -76,13 +76,12 @@ export async function requestDeviceCode(
   const { passphrase_enc, passphrase_iv, transfer_key } =
     await encryptForTransfer(passphrase);
 
-  // Gather machine metadata
-  const machineId = computeMachineId();
+  // Gather machine metadata; the label leaves the machine only sealed
   const omnodexHome =
     process.env.OMNODEX_HOME ??
     path.join(os.homedir(), ".omnodex");
-  const machineLabel =
-    opts.machineLabel ?? (await readMachineLabel(omnodexHome));
+  const machineId = computeMachineId(omnodexHome);
+  const machineLabel = await sealedMachineLabel(passphrase, omnodexHome, opts.machineLabel);
 
   const body = {
     machine_label: machineLabel,

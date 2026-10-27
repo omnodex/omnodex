@@ -26,9 +26,11 @@ import { fileURLToPath } from "node:url";
 
 import { EventLog } from "../../packages/event-log/dist/index.js";
 import {
+  SEALED_LABEL_RE,
   StreamingTransport,
-  computeMachineId,
+  deriveLabelKey,
   deriveStreamingKey,
+  openLabel,
   pushEventsToCloud,
   refreshGuardrailsModule,
   refreshRuleBundle,
@@ -54,10 +56,12 @@ const SECRET = "wire contract case secret";
 /** Marked values, and where each may show up. */
 const MARKS = {
   session_id: "sess-wiremark-0001",
-  machine_label: "wirelabel-case-laptop",
   event_id: "evt-wiremark-0001",
-  machine_id: computeMachineId(),
+  machine_id: "c0ffee00c0ffee01",
+  previous_machine_id: "0dd0dd0dd0dd0d01",
 };
+/** The user-set machine label: it may leave the machine only sealed. */
+const LABEL = "wirelabel-case-laptop";
 const CONTENT = "WIRECANARY-captured-content";
 
 // ---------------------------------------------------------------------------
@@ -257,7 +261,9 @@ async function connectedHome(t) {
   const home = await tempHome(t);
   await fs.writeFile(path.join(home, "stream-config.json"), JSON.stringify({ api_token: "omx_test_case", passphrase: SECRET, api_url: API }));
   await fs.writeFile(path.join(home, "license-cache.json"), JSON.stringify({ response: LICENSE, fetched_at: Date.now() }));
-  await fs.writeFile(path.join(home, "config.json"), JSON.stringify({ machine: { label: MARKS.machine_label } }));
+  await fs.writeFile(path.join(home, "config.json"), JSON.stringify({ machine: { label: LABEL } }));
+  // A machine that synced under the hostname-derived ID, not yet remapped.
+  await fs.writeFile(path.join(home, "machine-id.json"), JSON.stringify({ id: MARKS.machine_id, previous: MARKS.previous_machine_id }));
   await fs.writeFile(path.join(home, "monitoring-check.json"), JSON.stringify({
     first_run_at: AT, last_run_at: AT, slots: { "claude-code|hooks": "ok", "claude-code|mcp": "ok" },
   }));
@@ -399,6 +405,33 @@ test("the marked values reach the requests, so the checks above can see them", a
   await exercise(t, calls);
   const text = calls.map((c) => [c.url.href, JSON.stringify(c.headers), c.body ? c.body.toString("latin1") : ""].join("\n")).join("\n");
   for (const [kind, mark] of Object.entries(MARKS)) assert.ok(text.includes(mark), `${kind} never appeared in any request`);
+});
+
+test("the machine label leaves the machine only sealed, and the stream secret opens it", async (t) => {
+  const calls = installRecorder(t);
+  await exercise(t, calls);
+  // The proxy's connect without a token starts a new stream with a new secret.
+  const config = JSON.parse(await fs.readFile(path.join(process.env.OMNODEX_HOME, "stream-config.json"), "utf8"));
+  const keys = [await deriveLabelKey(SECRET), await deriveLabelKey(config.stream_secret ?? config.passphrase)];
+  const open = async (s) => (await openLabel(keys[0], "machine_label", s)) ?? (await openLabel(keys[1], "machine_label", s));
+  const sealed = [];
+  for (const c of calls) {
+    const raw = [c.url.href, JSON.stringify(c.headers), c.body ? c.body.toString("latin1") : ""].join("\n");
+    assert.ok(!raw.includes(LABEL), `${c.method} ${c.url.pathname}: the machine label went out readable`);
+    if (c.headers["x-omnodex-machine-label"]) sealed.push(c.headers["x-omnodex-machine-label"]);
+    if (c.body && c.headers["content-type"] === "application/json") {
+      const label = JSON.parse(c.body.toString("utf8")).machine_label;
+      if (label) sealed.push(label);
+    }
+  }
+  // The three sync requests, the claim, and a device code each from the CLI and the proxy.
+  assert.ok(sealed.length >= 6, `only ${sealed.length} sealed labels sent`);
+  for (const s of sealed) {
+    assert.match(s, SEALED_LABEL_RE);
+    assert.equal(await open(s), LABEL, s);
+  }
+  // One sync seals once for all its requests; each seal takes a fresh nonce.
+  assert.ok(new Set(sealed).size >= 5, "sealed labels repeat across separate seals");
 });
 
 // ---------------------------------------------------------------------------
