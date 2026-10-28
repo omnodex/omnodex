@@ -187,7 +187,7 @@ export async function sendMonitoringHeartbeat(home: string, opts: SendHeartbeatO
         headers: {
           Authorization: `Bearer ${opts.apiToken}`,
           "Content-Type": "application/json",
-          "X-Omnodex-Machine-Id": computeMachineId(),
+          "X-Omnodex-Machine-Id": computeMachineId(home),
         },
         body: JSON.stringify(heartbeat),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),

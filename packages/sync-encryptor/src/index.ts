@@ -65,7 +65,24 @@ export type {
 
 export { StreamingTransport } from "./streaming-transport.js";
 
-export { computeMachineId, readMachineLabel } from "./machine-id.js";
+export {
+  computeMachineId,
+  readMachineLabel,
+  legacyMachineId,
+  pendingMachineIdRemap,
+  acknowledgeMachineIdRemap,
+  remapMachineId,
+  type RemapOptions,
+} from "./machine-id.js";
+export {
+  deriveLabelKey,
+  sealLabel,
+  openLabel,
+  sealedMachineLabel,
+  SEALED_LABEL_RE,
+  type LabelField,
+  type LabelKey,
+} from "./machine-label.js";
 export {
   TokenRotatedError,
   SecretMismatchError,
