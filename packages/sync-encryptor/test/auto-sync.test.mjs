@@ -327,7 +327,9 @@ describe("runAutoSync", () => {
     assert.equal(push.method, "PUT");
     assert.equal(push.url, "/api/v1/sync/push");
     assert.equal(push.headers.authorization, "Bearer omx_test_case");
-    assert.deepEqual(JSON.parse(push.headers["x-omnodex-sessions"]), ["sess-case-1"]);
+    // Session IDs stay inside the encrypted blob.
+    assert.equal(push.headers["x-omnodex-sessions"], undefined);
+    assert.ok(!JSON.stringify(push.headers).includes("sess-case-1"));
     assert.ok(push.bytes > 0);
 
     const state = await readAutoSyncState(home);

@@ -79,6 +79,7 @@ export {
   sealLabel,
   openLabel,
   sealedMachineLabel,
+  sealedText,
   SEALED_LABEL_RE,
   type LabelField,
   type LabelKey,

@@ -17,7 +17,7 @@
 import * as path from "node:path";
 import * as os from "node:os";
 import { webcrypto } from "node:crypto";
-import { computeMachineId, sealedMachineLabel } from "@omnodex/sync-encryptor";
+import { computeMachineId, sealedMachineLabel, sealedText } from "@omnodex/sync-encryptor";
 
 const subtle = webcrypto.subtle;
 
@@ -143,8 +143,9 @@ export async function createClaim(
 
   const body = {
     machine_label: machineLabel,
-    platform: opts.platform || null,
-    project_label: opts.projectLabel || null,
+    // Shown only on the connect page, which opens them with the secret.
+    platform: await sealedText(passphrase, "platform", opts.platform),
+    project_label: await sealedText(passphrase, "project_label", opts.projectLabel),
     machine_id: machineId,
     passphrase_enc,
     passphrase_iv,

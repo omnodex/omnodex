@@ -37,7 +37,7 @@ const LABEL_AAD_PREFIX = "omnodex-sealed-label-aad-v1";
 export const SEALED_LABEL_RE = /^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$/;
 
 /** Fields a sealed label may stand for. */
-export type LabelField = "machine_label";
+export type LabelField = "machine_label" | "platform" | "project_label";
 
 export type LabelKey = webcrypto.CryptoKey;
 
@@ -84,6 +84,12 @@ export async function openLabel(key: LabelKey, field: LabelField, sealed: string
   } catch {
     return undefined;
   }
+}
+
+/** `text` sealed for `field` under the stream secret, or null when there is none. */
+export async function sealedText(passphrase: string, field: LabelField, text: string | null | undefined): Promise<string | null> {
+  if (!text) return null;
+  return sealLabel(await deriveLabelKey(passphrase), field, text);
 }
 
 /**
