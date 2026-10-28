@@ -61,6 +61,7 @@
 
 import { refreshRuleBundle } from "./rules-refresh.js";
 import { refreshGuardrailsModule } from "./guardrails-refresh.js";
+import { pullAccountPolicy } from "./account-policy.js";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -211,6 +212,8 @@ export interface RunAutoSyncOptions {
   refreshRules?: (home: string) => Promise<unknown>;
   /** Guardrails module refresh. Defaults to refreshGuardrailsModule; tests replace it. */
   refreshGuardrails?: (home: string) => Promise<unknown>;
+  /** Account policy pull, after the license. Defaults to pullAccountPolicy; tests replace it. */
+  pullPolicy?: (home: string) => Promise<unknown>;
   /** Stale license re-validation, run first. Defaults to refreshStaleLicense. */
   refreshLicense?: (home: string) => Promise<unknown>;
   /** Advanced usage submission, after detection. Defaults to submitUsage. */
@@ -331,6 +334,9 @@ export async function runAutoSync(
     // Before anything reads the tier, so an upgrade starts the rule refresh
     // and a downgrade or cancellation stops sync in this same pass.
     await (opts.refreshLicense ?? refreshStaleLicense)(home).catch(() => undefined);
+    // The account's finding policy, for the capture paths: an edit in the
+    // dashboard reaches this machine within one pass.
+    await (opts.pullPolicy ?? pullAccountPolicy)(home).catch(() => undefined);
 
     if (opts.detect && detectionEnabled()) {
       // Pro and Enterprise only; anyone else returns before any request.

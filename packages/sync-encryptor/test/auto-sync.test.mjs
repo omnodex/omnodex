@@ -28,6 +28,9 @@ import {
 } from "../dist/auto-sync.js";
 
 const CUSTOMER_ID = "cust_case";
+// The account policy pull has its own tests (account-policy.test.mjs); here
+// it would add a request to every pass the local server counts.
+process.env.OMNODEX_POLICY_PULL = "0";
 
 async function writeJson(home, name, value) {
   await writeFile(path.join(home, name), JSON.stringify(value));
@@ -312,6 +315,16 @@ describe("runAutoSync", () => {
     await server?.close();
     server = undefined;
     await rm(home, { recursive: true, force: true });
+  });
+
+  it("pulls the account policy after refreshing the license, so a dashboard edit lands within one pass", async () => {
+    await writeCredentials(home);
+    const order = [];
+    await runAutoSync(home, {
+      refreshLicense: async () => order.push("license"),
+      pullPolicy: async (h) => order.push(`policy:${h === home}`),
+    });
+    assert.deepEqual(order.slice(0, 2), ["license", "policy:true"]);
   });
 
   it("pushes an encrypted blob, records success, and releases the lock", async () => {

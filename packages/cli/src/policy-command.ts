@@ -5,7 +5,8 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 /**
- * `omnodex policy list | add | remove`: this machine's policy entries.
+ * `omnodex policy list | add | remove | pull`: this machine's policy
+ * entries, and the account's.
  *
  * An entry says what to do with findings like one in front of you: block
  * them, hold them, let them through, mute them or change their severity,
@@ -14,7 +15,9 @@
  * path) and one project. Entries live in OMNODEX_HOME/omnodex-config.json,
  * `enforcement.policy`; the older per-rule, per-severity and exception keys
  * in the same section are listed as entries too, and can be removed by
- * their ids.
+ * their ids. Entries made for the whole account in the hosted dashboard
+ * are pulled by the background pass, or at once by `pull`, and listed
+ * beside them; they are changed in the dashboard, not here.
  *
  * Turning protection down is for a person, not an agent: an entry that
  * allows, mutes or lowers a severity, and removing one that blocks, holds,
@@ -48,13 +51,17 @@ export interface PolicyOptions {
   guardrailsEntitled?: () => Promise<boolean>;
   /** A rule's own severity, when the rule is known, to tell a lower severity from a higher one. */
   ruleSeverity?: (ruleId: string) => RiskSeverity | undefined;
+  /** Fetch the account's policy now. */
+  pull?: () => Promise<{ outcome: string; version?: number; entries?: number }>;
+  /** The account policy as last pulled. */
+  accountPolicy?: () => Promise<{ version: number; pulled_at: string; entries: PolicyEntry[] } | null>;
   /** For tests. */
   now?: () => Date;
   newId?: () => string;
 }
 
 const TAG = "[policy]";
-const USAGE = "omnodex policy list | add <match> [target] <effect> | remove <id>";
+const USAGE = "omnodex policy list | add <match> [target] <effect> | remove <id> | pull";
 const SEVERITIES: readonly RiskSeverity[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const RANK: Readonly<Record<RiskSeverity, number>> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
 
@@ -312,11 +319,13 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
         return 1;
       }
       const entries = policyEntries(parseEnforcementConfig(sectionOf(await readConfig(file))));
-      if (entries.length === 0) {
-        io.log(`${TAG} no policy entries in ${file}.`);
-        return 0;
-      }
+      if (entries.length === 0) io.log(`${TAG} no policy entries in ${file}.`);
       for (const e of entries) io.log(`${e.id}  ${describeEntry(e)}${e.note ? `  (${e.note})` : ""}`);
+      const account = await opts.accountPolicy?.();
+      if (account && account.entries.length > 0) {
+        io.log(`${TAG} for the whole account (version ${account.version}, pulled ${account.pulled_at}; edit in the hosted dashboard):`);
+        for (const e of account.entries) io.log(`${e.id}  ${describeEntry(e)}${e.note ? `  (${e.note})` : ""}`);
+      }
       return 0;
     }
 
@@ -372,6 +381,26 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
       await writeConfig(file, { ...config, enforcement: next });
       io.log(`${TAG} removed ${id}: ${describeEntry(entry)}.`);
       return 0;
+    }
+    if (sub === "pull") {
+      if (rest.length > 0 || !opts.pull) {
+        io.error(`${TAG} pull takes no arguments. Usage: ${USAGE}`);
+        return 1;
+      }
+      const r = await opts.pull();
+      const said: Record<string, string> = {
+        updated: `account policy version ${r.version} pulled: ${r.entries} entr${r.entries === 1 ? "y" : "ies"}.`,
+        current: `account policy already current (version ${r.version}).`,
+        none: "the account has no policy for this machine's stream.",
+        "no-credentials": "this machine is not connected to a dashboard account (`omnodex connect`).",
+        disabled: "pulling is switched off (OMNODEX_POLICY_PULL=0).",
+      };
+      if (r.outcome in said) {
+        io.log(`${TAG} ${said[r.outcome]}`);
+        return 0;
+      }
+      io.error(`${TAG} could not pull the account policy; the last one pulled stays in use.`);
+      return 1;
     }
   } catch (err) {
     io.error(`${TAG} ${(err as Error).message}`);

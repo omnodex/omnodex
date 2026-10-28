@@ -84,7 +84,7 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
     },
   },
   policy: {
-    usage: "policy list | add | remove <id>", description: "This machine's policy entries for findings. Allowing, muting, lowering a severity, or removing an entry that blocks, holds or raises one requires confirmation at a terminal.",
+    usage: "policy list | add | remove <id> | pull", description: "This machine's policy entries for findings. Allowing, muting, lowering a severity, or removing an entry that blocks, holds or raises one requires confirmation at a terminal.",
     subcommands: {
       list: { usage: "list", description: "Show every entry, the older per-rule and exception settings included." },
       add: {
@@ -94,6 +94,7 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
         values: [...POLICY_ADD_VALUES],
       },
       remove: { usage: "remove <id>", description: "Remove an entry by the id `policy list` shows." },
+      pull: { usage: "pull", description: "Fetch the entries made for your whole account in the hosted dashboard." },
     },
   },
   live: {

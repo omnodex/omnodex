@@ -128,6 +128,16 @@ export type { RuleSignalsState, RuleSignalCount } from "./rule-signals.js";
 // Advanced rule bundle refresh (background pass, Pro and Enterprise)
 export { refreshRuleBundle, RULE_BUNDLE_FILE, RULES_REFRESH_ENV } from "./rules-refresh.js";
 export {
+  pullAccountPolicy,
+  readPulledPolicy,
+  sealPolicy,
+  openPolicy,
+  derivePolicyKey,
+  ACCOUNT_POLICY_FILE,
+  ACCOUNT_POLICY_PULL_ENV,
+} from "./account-policy.js";
+export type { SealedPolicy, PulledPolicy, PolicyPullOutcome, PolicyPullResult, PolicyPullOptions } from "./account-policy.js";
+export {
   refreshGuardrailsModule,
   guardrailsEntitled,
   GUARDRAILS_MODULE_FILE,
