@@ -58,14 +58,14 @@ describe("policy add: every entry shape", () => {
     [["--rule", "RULE_X", "--block"], { rule_id: "RULE_X" }, { verdict: "deny" }],
     [["--category", "cat_x", "--hold"], { category: "cat_x" }, { verdict: "confirm" }],
     [["--severity", "high", "--set-severity", "critical"], { severity: "HIGH" }, { severity: "CRITICAL" }],
-    [["--rule", "RULE_X", "--path", "/home/case/repo/.env", "--block"], { rule_id: "RULE_X", target: { path: "/home/case/repo/.env" } }, { verdict: "deny" }],
+    [["--rule", "RULE_X", "--path", "/home/case/repo/.env", "--block"], { rule_id: "RULE_X", target: { path: path.resolve("/home/case/repo/.env") } }, { verdict: "deny" }],
     [["--rule", "RULE_X", "--destination", "paste.example.net", "--block"], { rule_id: "RULE_X", target: { destination: "paste.example.net" } }, { verdict: "deny" }],
     [["--rule", "RULE_X", "--command-prefix", "npm publish", "--hold"], { rule_id: "RULE_X", target: { command_prefix: "npm publish" } }, { verdict: "confirm" }],
     [["--rule", "RULE_X", "--credential", "0123456789abcdef", "--block"], { rule_id: "RULE_X", target: { credential: "0123456789abcdef" } }, { verdict: "deny" }],
     [["--category", "cat_x", "--tool", "fetch", "--server", "web", "--unmute"], { category: "cat_x", target: { tool: "fetch", server: "web" } }, { mute: false }],
-    [["--rule", "RULE_X", "--writes", "/home/case/repo/.github", "--block"], { rule_id: "RULE_X", target: { access: "write", path: "/home/case/repo/.github" } }, { verdict: "deny" }],
+    [["--rule", "RULE_X", "--writes", "/home/case/repo/.github", "--block"], { rule_id: "RULE_X", target: { access: "write", path: path.resolve("/home/case/repo/.github") } }, { verdict: "deny" }],
     [["--rule", "RULE_X", "--reads", "/etc", "--here", "--block"], { rule_id: "RULE_X", target: { access: "read", path: "/etc" }, project: "/home/case/repo" }, { verdict: "deny" }],
-    [["--rule", "RULE_X", "--project", "/home/case/other", "--block", "--note", "release only"], { rule_id: "RULE_X", project: "/home/case/other" }, { verdict: "deny" }],
+    [["--rule", "RULE_X", "--project", "/home/case/other", "--block", "--note", "release only"], { rule_id: "RULE_X", project: path.resolve("/home/case/other") }, { verdict: "deny" }],
   ];
 
   for (const [args, match, effect] of shapes) {
