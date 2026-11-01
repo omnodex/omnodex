@@ -251,6 +251,12 @@ test("SessionEnd starts a detached sync that uploads the session without delayin
         res.end(JSON.stringify({ ok: true }));
         return;
       }
+      // The account policy fetch the same pass makes: the account has none.
+      if (req.url === "/api/v1/policy") {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not_found" }));
+        return;
+      }
       pushes.push({ method: req.method, url: req.url.replace(/segments\/.+$/, "segments/:id") });
       if (req.url === "/api/v1/stream/verifier") {
         res.writeHead(200, { "Content-Type": "application/json" });
