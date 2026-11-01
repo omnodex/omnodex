@@ -258,3 +258,36 @@ describe("entryFromArgs", () => {
     assert.equal(c.entry.match.target.path, "notes", "relative to the project root");
   });
 });
+
+describe("policy pull", () => {
+  const pull = async (result) => {
+    const i = io();
+    const code = await runPolicy(["pull"], { home, io: i, cwd: "/p", pull: async () => result });
+    return { code, text: [...i.out, ...i.err].join("\n") };
+  };
+
+  it("says what each outcome was", async () => {
+    let r = await pull({ outcome: "updated", version: 3, entries: 1 });
+    assert.equal(r.code, 0);
+    assert.match(r.text, /version 3 pulled: 1 entry\./);
+    r = await pull({ outcome: "updated", version: 4, entries: 2 });
+    assert.match(r.text, /2 entries/);
+    r = await pull({ outcome: "current", version: 4 });
+    assert.match(r.text, /already current \(version 4\)/);
+    r = await pull({ outcome: "none" });
+    assert.match(r.text, /no policy for this machine's stream/);
+    r = await pull({ outcome: "no-credentials" });
+    assert.match(r.text, /omnodex connect/);
+    r = await pull({ outcome: "disabled" });
+    assert.match(r.text, /OMNODEX_POLICY_PULL=0/);
+  });
+
+  it("fails, keeping the old copy, when the pull errors, and takes no arguments", async () => {
+    const r = await pull({ outcome: "error" });
+    assert.equal(r.code, 1);
+    assert.match(r.text, /last one pulled stays in use/);
+    const i = io();
+    assert.equal(await runPolicy(["pull", "extra"], { home, io: i, cwd: "/p", pull: async () => ({ outcome: "none" }) }), 1);
+    assert.match(i.err.join("\n"), /takes no arguments/);
+  });
+});

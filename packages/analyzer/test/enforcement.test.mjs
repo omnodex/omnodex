@@ -293,6 +293,26 @@ describe("loadEnforcement", () => {
     assert.equal(findRepoPolicy(inHome, s.home), null);
   });
 
+  it("reads the pulled account policy, and this machine's entries beat it", () => {
+    const s = scratch();
+    const entry = (id, verdict) => ({ id, match: { rule_id: "RULE_X" }, effect: { verdict } });
+    const opts = { home: s.omnodexHome, cwd: s.repo, userHome: s.home };
+    assert.equal(loadEnforcement(opts).account, undefined);
+
+    writeJson(path.join(s.omnodexHome, "account-policy.json"), { v: 1, entries: [entry("a1", "deny")] });
+    writeJson(path.join(s.omnodexHome, "omnodex-config.json"), { enforcement: { mode: "guardrails" } });
+    const accountOnly = loadEnforcement(opts);
+    assert.equal(accountOnly.account.length, 1);
+    assert.equal(resolveVerdict({ rule: rule(), call: bash("npm test"), config: accountOnly }).action, "deny");
+
+    writeJson(path.join(s.omnodexHome, "omnodex-config.json"), {
+      enforcement: { mode: "guardrails", policy: [entry("m1", "allow")] },
+    });
+    const both = loadEnforcement(opts);
+    assert.equal(both.account.length, 1);
+    assert.notEqual(resolveVerdict({ rule: rule(), call: bash("npm test"), config: both }).action, "deny");
+  });
+
   it("survives a malformed file", () => {
     const s = scratch();
     fs.writeFileSync(path.join(s.omnodexHome, "omnodex-config.json"), "{ not json");
