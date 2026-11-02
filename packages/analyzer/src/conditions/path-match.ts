@@ -20,7 +20,7 @@ import type { ToolInvokedEvent } from "@omnodex/shared";
 import type { MatchContext, PathMatchCondition } from "../types.js";
 import { normalizeAction } from "../action.js";
 import { compiled } from "./regex-cache.js";
-import { isWriteTool, patchTargets } from "./scope.js";
+import { isExecTool, isWriteTool, patchTargets } from "./scope.js";
 
 // ---------------------------------------------------------------------------
 // Path extraction
@@ -58,8 +58,10 @@ export function extractPaths(event: ToolInvokedEvent): string[] {
   }
 
   // Bash/shell commands: extract paths from command strings heuristically.
-  // Covers Claude Code "command", Antigravity "CommandLine", and similar.
-  for (const cmdKey of ["command", "CommandLine"]) {
+  // Covers Claude Code "command", Antigravity "CommandLine", and Codex "cmd".
+  for (const cmdKey of ["command", "CommandLine", "cmd"]) {
+  // cmd can also be metadata on a non-shell tool; only shell tools execute it.
+  if (cmdKey === "cmd" && !isExecTool(event)) continue;
   if (typeof params[cmdKey] === "string") {
     const cmd = params[cmdKey] as string;
     const cmdPatterns = [
