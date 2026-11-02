@@ -39,6 +39,8 @@ export interface CallToolOptions {
   toolCallId: string;
   /** Session the call belongs to */
   sessionId: string;
+  /** The session's project directory, for project-scoped policy evaluation. */
+  cwd?: string;
   /** Aborts the upstream call when the agent cancels its request. */
   signal?: AbortSignal;
   /**
@@ -101,10 +103,12 @@ export async function callToolWithEvents(
     args,
     redact,
   });
+  if (opts.cwd !== undefined) invokedEvent.cwd = opts.cwd;
   // Guardrails decide before anything is forwarded or written.
   const fullEvent = redact
     ? buildToolInvokedEvent({ sessionId, toolCallId, at: invokedAt, toolName: invokedEvent.tool_name, mcpServer: serverName, args, redact: false })
     : invokedEvent;
+  if (opts.cwd !== undefined) fullEvent.cwd = opts.cwd;
   const decision = decide ? await decide(fullEvent, invokedEvent) : undefined;
 
   // Emit tool.invoked (fire-and-forget, non-blocking), then the decision's

@@ -63,7 +63,7 @@ export interface ProxyServerOptions {
   config: ProxyConfig;
   emit: EmitFn;
   sessionId: string;
-  /** Human-readable project path for session.started event. */
+  /** Session project directory, also used for capture-time enforcement. */
   projectPath?: string;
   /**
    * Inbound transport. Defaults to stdio. The HTTP front end passes one
@@ -368,6 +368,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
         args,
         toolCallId,
         sessionId,
+        cwd: projectPath,
         signal: extra.signal,
         ...(opts.guardrails ? { decide: opts.guardrails.decide } : {}),
       });
