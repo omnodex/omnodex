@@ -87,6 +87,8 @@ export interface SegmentManifest {
   sessions: Record<string, ManifestSession>;
   /** The cloud's id for the last commit. */
   last_commit_id?: string;
+  /** Hash of the plaintext machine label at the last successful commit. */
+  machine_label_hash?: string;
 }
 
 export interface SegmentSyncOptions {
@@ -98,6 +100,8 @@ export interface SegmentSyncOptions {
   apiUrl: string;
   machineId: string;
   machineLabel?: string;
+  /** Stable plaintext hash when machineLabel is sealed with a fresh nonce. Local only. */
+  machineLabelHash?: string;
   /** OMNODEX_HOME, where the manifest lives. */
   home: string;
   /** For the sync.pushed audit event. */
@@ -238,10 +242,13 @@ async function runOnce(
   }
 
   // 6. Commit the full list; nothing is visible to the dashboard before this.
-  // A sync that changed nothing commits nothing, so open dashboards are not
-  // told to reload.
+  // A changed label still needs a commit even when no segment changed.
+  // Compare plaintext hashes, since sealing uses a fresh nonce each time.
+  // Otherwise commit nothing, so open dashboards are not told to reload.
+  const machineLabelHash = opts.machineLabelHash ?? createHash("sha256").update(opts.machineLabel ?? "").digest("hex");
   const nextIds = segments.map((seg) => uploads.find((u) => u.seg === seg)?.id ?? seg.id);
-  const unchanged = uploads.length === 0 && sameList(nextIds, manifest.segments.map((s) => s.id)) && manifest.segments.length > 0;
+  const unchanged = uploads.length === 0 && sameList(nextIds, manifest.segments.map((s) => s.id)) && manifest.segments.length > 0
+    && machineLabelHash === manifest.machine_label_hash;
   const commitId = unchanged
     ? manifest.last_commit_id ?? ""
     : await opts.transport.commit(nextIds, { machineId: opts.machineId, machineLabel: opts.machineLabel });
@@ -254,6 +261,7 @@ async function runOnce(
   const next: SegmentManifest = {
     ...emptyManifest(opts),
     last_commit_id: commitId,
+    machine_label_hash: machineLabelHash,
     segments,
     sessions: Object.fromEntries([...slices.values()].map((s) => [s.id, {
       hash: s.hash, raw_bytes: s.json.length, first_at: s.firstAt, last_at: s.lastAt,
