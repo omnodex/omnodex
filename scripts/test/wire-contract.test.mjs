@@ -31,6 +31,7 @@ import {
   deriveLabelKey,
   deriveStreamingKey,
   openLabel,
+  pullAccountPolicy,
   pushEventsToCloud,
   refreshGuardrailsModule,
   refreshRuleBundle,
@@ -96,6 +97,7 @@ function answer(method, pathname) {
   if (pathname === "/api/v1/device/token") return json({ api_token: "omx_device_case", customer_id: "cust_case" });
   if (pathname === "/api/v1/ingest/events") return json({ accepted: 1 }, 202);
   if (pathname === "/api/v1/rules/update" || pathname === "/api/v1/guardrails/update") return new Response(null, { status: 503 });
+  if (pathname === "/api/v1/policy") return new Response(null, { status: 304 });
   if (pathname.startsWith("/api/v1/")) return json({});
   return new Response("not found", { status: 404 });
 }
@@ -345,6 +347,10 @@ async function exercise(t, calls) {
   // Pro rule and guardrails refresh.
   await refreshRuleBundle(home);
   await refreshGuardrailsModule(home, { force: true });
+
+  // The account policy, with a version already held.
+  await fs.writeFile(path.join(home, "account-policy.json"), JSON.stringify({ version: 3, pulled_at: AT, entries: [] }));
+  assert.equal((await pullAccountPolicy(home)).outcome, "current");
 
   // Connecting from the CLI.
   await createClaim({ apiUrl: API, apiToken: "omx_test_case", passphrase: SECRET, platform: "claude-code" });
