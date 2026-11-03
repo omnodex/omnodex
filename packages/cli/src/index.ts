@@ -32,7 +32,8 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
-import { describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
+import { runPolicy } from "./policy-command.js";
+import { annotateFindings, describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
@@ -64,6 +65,7 @@ import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
 import { resolveRoots, parseRootsFlag } from "./config.js";
 import {
   COMMUNITY_RULES,
+  credentialFingerprinter,
   describeRules,
   detectEventLogs,
   detectRisks,
@@ -101,6 +103,8 @@ import {
   SecretMismatchError,
   guardrailsEntitled,
   refreshGuardrailsModule,
+  pullAccountPolicy,
+  readPulledPolicy,
   checkMonitoringConfig,
 } from "@omnodex/sync-encryptor";
 import type { AdvancedUsageState, InstallationCheck, InstallationState } from "@omnodex/sync-encryptor";
@@ -565,6 +569,7 @@ async function cmdDetect(args: string[]): Promise<void> {
     newEventId,
     registry: registryForHost("batch", resolvePaths().home),
     machineState: openMachineState(resolvePaths().home, { seedRoots: eventLogRoots }),
+    policyHome: resolvePaths().home,
     onSession: ({ sessionId, newEvents }) => {
       if (newEvents.length > 0) {
         console.log(`[detect] ${sessionId}: ${newEvents.length} new risk(s) detected`);
@@ -635,9 +640,14 @@ async function cmdDashboard(args: string[]): Promise<void> {
       for (const sessionId of sessionIds) {
         const events = await log.readSession(sessionId);
         if (events.length === 0) continue;
-        const result = detectRisks(events, newEventId, registryForHost("batch", resolvePaths().home), { machineState });
+        const home = resolvePaths().home;
+        const result = detectRisks(events, newEventId, registryForHost("batch", home), {
+          machineState,
+          fingerprint: credentialFingerprinter(home),
+        });
         if (result.newEvents.length > 0) {
-          await log.appendMany(result.newEvents);
+          // The user's severity entries, as the background pass applies them.
+          await log.appendMany(annotateFindings(result.newEvents, events, { home, stamp: false }));
           detected += result.newEvents.length;
         }
       }
@@ -3158,6 +3168,19 @@ async function main(): Promise<void> {
         describeGuardrails: async () => describeGuardrails(await loadGuardrailsModule(resolvePaths().home)),
       });
       return;
+    case "policy": {
+      const severities = new Map(COMMUNITY_RULES.map((r) => [r.rule_id, r.severity]));
+      process.exitCode = await runPolicy(rest, {
+        home: resolvePaths().home,
+        io: processIo(),
+        cwd: process.cwd(),
+        guardrailsEntitled: () => guardrailsEntitled(resolvePaths().home),
+        ruleSeverity: (id) => severities.get(id),
+        pull: () => pullAccountPolicy(resolvePaths().home),
+        accountPolicy: () => readPulledPolicy(resolvePaths().home),
+      });
+      return;
+    }
     case "live":
       await cmdLive(rest);
       return;
@@ -3277,6 +3300,20 @@ commands:
                      shadow. Rules, per-rule settings and exceptions are
                      read from the enforcement section of
                      ~/.omnodex/omnodex-config.json.
+  policy list | add | remove | pull
+                     what to do with findings like one you have seen:
+                     block (--block) or hold (--hold) them (Pro), let them
+                     through (--allow), mute them (--mute), or change their
+                     severity (--set-severity), for a rule (--rule), a
+                     category (--category) or a severity (--severity),
+                     optionally only for one target (--path, --destination,
+                     --command-prefix, --credential, --tool [--server],
+                     --reads, --writes) and one project (--project, --here).
+                     Allowing, muting, lowering a severity, or removing an
+                     entry that blocks, holds or raises one needs a person
+                     at a terminal. pull fetches the entries made for your
+                     whole account in the hosted dashboard (the background
+                     pass also does, about every 15 minutes).
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.

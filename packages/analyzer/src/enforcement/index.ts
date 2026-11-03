@@ -19,6 +19,7 @@ export {
   targetCovers,
   stricter,
   blocks,
+  machineEntries,
 } from "./resolve-verdict.js";
 export type { Verdict, VerdictRule, VerdictConfig, VerdictSource, ResolveVerdictInput } from "./resolve-verdict.js";
 export {
@@ -43,9 +44,17 @@ export type {
   SealedModule,
   ModuleSkipReason,
 } from "./module.js";
-export { loadEnforcement, readUserEnforcement, findRepoPolicy, userProjectSection, USER_CONFIG_FILE } from "./config.js";
+export {
+  loadEnforcement,
+  readUserEnforcement,
+  readAccountPolicy,
+  findRepoPolicy,
+  userProjectSection,
+  USER_CONFIG_FILE,
+  ACCOUNT_POLICY_FILE,
+} from "./config.js";
 export type { LoadedEnforcement, LoadEnforcementOptions } from "./config.js";
-export { annotateFindings, enforcementRecord, verdictFor } from "./annotate.js";
+export { annotateFindings, enforcementRecord, verdictFor, withPolicySeverity } from "./annotate.js";
 export type { AnnotateOptions } from "./annotate.js";
 export { appendRuleSignals, signalLines, RULE_SIGNALS_LOG } from "./signals.js";
 export type { RuleSignalKind, RuleSignalLine } from "./signals.js";

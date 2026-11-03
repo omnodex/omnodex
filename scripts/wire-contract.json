@@ -154,6 +154,13 @@
         "query:not_after": { "class": "metadata", "optional": true, "why": "Installed module expiry" }
       }
     },
+    "GET /api/v1/policy": {
+      "sender": "Account finding policy pull, from the background pass and omnodex policy pull",
+      "auth": "bearer",
+      "fields": {
+        "header:if-none-match": { "class": "metadata", "optional": true, "why": "The policy version this machine already holds, so an unchanged policy is not sent again. The service stores that number; the entries stay inside the sealed copy" }
+      }
+    },
     "POST /api/v1/connect/claim": {
       "sender": "Connection link from the CLI or the MCP proxy",
       "auth": "bearer",
@@ -205,6 +212,7 @@
     "packages/hooks-provider/src/container-hook.ts",
     "packages/license-client/src/index.ts",
     "packages/mcp-proxy/src/connect-tool.ts",
+    "packages/sync-encryptor/src/account-policy.ts",
     "packages/sync-encryptor/src/advanced-usage.ts",
     "packages/sync-encryptor/src/guardrails-refresh.ts",
     "packages/sync-encryptor/src/machine-id.ts",

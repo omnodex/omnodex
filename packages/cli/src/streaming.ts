@@ -43,10 +43,12 @@ import type { ReadModelStore } from "@omnodex/projection";
 import {
   classesLeftAfterCapture,
   createEvaluator,
+  credentialFingerprinter,
   registryForHost,
   type Evaluator,
   type MachineState,
 } from "@omnodex/analyzer";
+import { annotateFindings } from "@omnodex/analyzer/enforcement";
 import type { TraceEvent } from "@omnodex/shared";
 import type { DashboardServer } from "./dashboard-server.js";
 import type { StreamingTransport } from "@omnodex/sync-encryptor";
@@ -138,6 +140,8 @@ export async function broadcastProjection(
  *   before entering the tail loop. Pass true for sessions that appeared after
  *   the initial startup replay (i.e. detected by the poll loop), and false for
  *   sessions already covered by cmdDashboard's replay pass.
+ * @param policyHome - OMNODEX_HOME whose policy entries apply to new
+ *   findings (a severity an entry sets). Null records them as the rules made them.
  *
  * Exported for unit testing.
  */
@@ -152,6 +156,7 @@ export async function tailSession(
   replayHistory = false,
   sourceRoot: string | null = null,
   cloudTransport: StreamingTransport | null = null,
+  policyHome: string | null = null,
 ): Promise<void> {
   // Create a child AbortController so we can stop the tail when the outer
   // signal fires.
@@ -208,7 +213,10 @@ export async function tailSession(
       // lands in the log just after the event, and judging the event here
       // too would race it and write the finding twice.
       const classes = classesLeftAfterCapture(event, "batch");
-      for (const riskEvent of evaluator.evaluate(event, { classes })) {
+      const found = evaluator.evaluate(event, { classes });
+      // The user's severity entries, as the capture path applies them.
+      const judged = policyHome && found.length > 0 ? annotateFindings(found, [event], { home: policyHome, stamp: false }) : found;
+      for (const riskEvent of judged) {
         // Pre-register the event_id so the tail loop does not re-process
         // this risk event when it reads the appended line back from disk.
         processedIds.add(riskEvent.event_id);
@@ -287,6 +295,7 @@ export function startStreamingLoop(
     registry: registryForHost("batch", options.home),
     newEventId,
     machineState: options.machineState,
+    fingerprint: options.home ? credentialFingerprinter(options.home) : null,
   });
 
   // A routed MCP call arrives twice, from the hook and from the proxy, in
@@ -343,7 +352,7 @@ export function startStreamingLoop(
     // tailSession passes rootPath with each apply, so concurrent tails of
     // different roots cannot stamp each other's sessions.
     track(
-      tailSession(sessionId, log, store, projector, tailServer, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport).catch(
+      tailSession(sessionId, log, store, projector, tailServer, evaluator, ctrl.signal, replayHistory, rootPath, cloudTransport, options.home ?? null).catch(
         (err: unknown) => {
           console.error(`[stream] tail error for ${sessionId} (${rootPath}):`, err);
         },

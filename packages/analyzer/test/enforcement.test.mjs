@@ -105,20 +105,20 @@ describe("resolveVerdict: precedence", () => {
     assert.equal(v.action, "deny");
   });
 
-  it("an exception beats everything, and a mute marks the finding", () => {
+  it("an exception for the whole rule beats the rule's verdict in its section, and a mute marks the finding", () => {
     const config = {
       user: { rules: { RULE_X: "deny" }, exceptions: [{ rule_id: "RULE_X", kind: "mute" }] },
     };
     const v = resolveVerdict({ rule: rule(), config });
     assert.equal(v.action, "alert_only");
-    assert.equal(v.source, "user-exception");
+    assert.equal(v.source, "user-rule");
     assert.equal(v.muted, true);
 
     const allow = resolveVerdict({
       rule: rule(),
       config: { userProject: { exceptions: [{ rule_id: "RULE_X", kind: "allow" }] }, user: { rules: { RULE_X: "deny" } } },
     });
-    assert.equal(allow.source, "project-exception");
+    assert.equal(allow.source, "project-rule");
     assert.equal(allow.muted, false);
   });
 
@@ -291,6 +291,26 @@ describe("loadEnforcement", () => {
     const inHome = path.join(s.home, "projects", "x");
     fs.mkdirSync(inHome, { recursive: true });
     assert.equal(findRepoPolicy(inHome, s.home), null);
+  });
+
+  it("reads the pulled account policy, and this machine's entries beat it", () => {
+    const s = scratch();
+    const entry = (id, verdict) => ({ id, match: { rule_id: "RULE_X" }, effect: { verdict } });
+    const opts = { home: s.omnodexHome, cwd: s.repo, userHome: s.home };
+    assert.equal(loadEnforcement(opts).account, undefined);
+
+    writeJson(path.join(s.omnodexHome, "account-policy.json"), { v: 1, entries: [entry("a1", "deny")] });
+    writeJson(path.join(s.omnodexHome, "omnodex-config.json"), { enforcement: { mode: "guardrails" } });
+    const accountOnly = loadEnforcement(opts);
+    assert.equal(accountOnly.account.length, 1);
+    assert.equal(resolveVerdict({ rule: rule(), call: bash("npm test"), config: accountOnly }).action, "deny");
+
+    writeJson(path.join(s.omnodexHome, "omnodex-config.json"), {
+      enforcement: { mode: "guardrails", policy: [entry("m1", "allow")] },
+    });
+    const both = loadEnforcement(opts);
+    assert.equal(both.account.length, 1);
+    assert.notEqual(resolveVerdict({ rule: rule(), call: bash("npm test"), config: both }).action, "deny");
   });
 
   it("survives a malformed file", () => {

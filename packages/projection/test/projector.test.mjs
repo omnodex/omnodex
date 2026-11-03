@@ -190,3 +190,28 @@ test("projector repairs legacy builtin attribution during replay", async () => {
   const session = await store.getSession("legacy-session");
   assert.deepEqual(session.mcp_servers, ["codex_apps"]);
 });
+
+test("a policy severity is the finding's severity for the risk score, and the rule's is kept beside it", async () => {
+  const root = await mkTmp();
+  const store = new SqliteReadModelStore({ dbPath: path.join(root, "traces.db") });
+  await store.init();
+  const projector = new Projector(store);
+  const events = new MockInterceptor({ sessionId: "sess_policy" }).buildSessionEvents().map((e) =>
+    // The user lowered the HIGH finding to LOW; the CRITICAL one is unchanged.
+    e.event_type === "risk.detected" && e.severity === "HIGH" ? { ...e, severity: "LOW", recommended_severity: "HIGH" } : e,
+  );
+  await projector.replay((async function* () {
+    for (const e of events) yield e;
+  })());
+
+  const [session] = await store.listSessions();
+  assert.equal(session.risk_score, 1.1); // LOW (0.1) + CRITICAL (1.0)
+  const risks = await store.listRiskEvents("sess_policy");
+  const lowered = risks.find((r) => r.category === "sensitive_path_read");
+  assert.equal(lowered.severity, "LOW");
+  assert.equal(lowered.recommended_severity, "HIGH");
+  const unchanged = risks.find((r) => r.category === "credential_exfiltration");
+  assert.equal("recommended_severity" in unchanged, false, "rows without an override keep their shape");
+  await store.close();
+  await fs.rm(root, { recursive: true, force: true });
+});

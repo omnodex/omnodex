@@ -13,6 +13,9 @@
  * and the verdict the user's settings give, so shadow mode needs no event
  * type of its own: the record travels wherever the finding goes.
  *
+ * A severity a policy entry gives the finding applies in every mode: the
+ * finding keeps the rule's own as recommended_severity.
+ *
  * Nothing is stamped in monitor mode, and a finding with nothing to say
  * (alert_only on both counts, no mute) is left as it was. Any failure
  * leaves the findings unstamped: this must never cost the finding itself.
@@ -41,6 +44,12 @@ export interface AnnotateOptions {
   held?: (verdict: Verdict) => boolean;
   /** Error reporting. Defaults to silence. */
   onError?: (err: unknown) => void;
+  /**
+   * Whether to stamp enforcement records. False for a pass over the log
+   * after the fact, which applies severity entries only: a verdict is
+   * recorded only when it could have acted.
+   */
+  stamp?: boolean;
 }
 
 /** The verdict for one finding on one call, under the loaded configuration. */
@@ -53,11 +62,21 @@ export function verdictFor(
   const known = rule(finding.rule_id);
   return resolveVerdict({
     // An unknown rule (an advanced one, say) still answers to overrides.
-    rule: known ?? { rule_id: finding.rule_id, severity: finding.severity },
+    rule: { category: finding.category, ...(known ?? { rule_id: finding.rule_id, severity: finding.severity }) },
     call,
     config: loaded,
     description: finding.description,
+    ...(finding.credential_fingerprints ? { credential_fingerprints: finding.credential_fingerprints } : {}),
   });
+}
+
+/**
+ * The finding with the severity a policy entry gives it, keeping the rule's
+ * as recommended_severity. The same finding when no entry changes it.
+ */
+export function withPolicySeverity(finding: RiskDetectedEvent, verdict: Verdict): RiskDetectedEvent {
+  if (!verdict.severity || verdict.severity === finding.severity) return finding;
+  return { ...finding, severity: verdict.severity, recommended_severity: finding.recommended_severity ?? finding.severity };
 }
 
 /** The enforcement record for a verdict, or undefined when it has nothing to say. */
@@ -108,12 +127,15 @@ export function annotateFindings(
     const out = findings.map((finding) => {
       const call = calls.get(finding.related_event_id);
       const loaded = load(call?.cwd);
-      if (loaded.mode === "monitor") return finding;
       const verdict = verdictFor(finding, call, loaded, opts.rule);
-      const record = enforcementRecord(loaded.mode, verdict, opts.held?.(verdict) ?? false);
-      if (!record) return finding;
-      changed = true;
-      return { ...finding, enforcement: record };
+      // Severity entries apply in every mode; enforcement records only outside monitor.
+      let out = withPolicySeverity(finding, verdict);
+      if (opts.stamp !== false && loaded.mode !== "monitor") {
+        const record = enforcementRecord(loaded.mode, verdict, opts.held?.(verdict) ?? false);
+        if (record) out = { ...out, enforcement: record };
+      }
+      if (out !== finding) changed = true;
+      return out;
     });
     return changed ? out : findings;
   } catch (err) {

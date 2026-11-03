@@ -38,7 +38,7 @@ export function detectRisks(
   events: TraceEvent[],
   newEventId: () => string,
   registry: RuleRegistry = new RuleRegistry(),
-  opts: { machineState?: MachineState } = {},
+  opts: { machineState?: MachineState; fingerprint?: (value: string) => string } = {},
 ): DetectionResult {
   const sessionId = events[0]?.session_id ?? "unknown";
   const evaluator = createEvaluator({
@@ -46,6 +46,7 @@ export function detectRisks(
     registry,
     newEventId,
     machineState: opts.machineState,
+    fingerprint: opts.fingerprint ?? null,
   });
 
   // Findings already in the log come after the calls they describe, so they

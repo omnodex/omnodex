@@ -88,9 +88,99 @@ export interface EnforcementException {
   created_at?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Policy entries
+// ---------------------------------------------------------------------------
+
+/**
+ * What a policy entry does to a matching call. "allow" lets it run, which is
+ * the "alert_only" blocking verdict: the finding is still recorded.
+ */
+export type PolicyVerdict = "deny" | "confirm" | "allow";
+
+export const POLICY_VERDICTS: readonly PolicyVerdict[] = ["deny", "confirm", "allow"];
+
+/**
+ * What a policy entry applies to within its rule, category or severity.
+ * Absent means every call. Exactly one shape:
+ *
+ * - path            -- a file or directory; a directory covers everything under it. ~ is the home folder.
+ * - destination     -- a host and its subdomains.
+ * - command_prefix  -- the start of a command that runs, on whole words.
+ * - credential      -- a short salted fingerprint of a credential value, as
+ *                      the finding records it. Never the value.
+ * - tool            -- a tool by name, optionally only on one MCP server.
+ * - access          -- reads of, or writes to, a file or directory.
+ */
+export type PolicyTarget =
+  | { path: string }
+  | { destination: string }
+  | { command_prefix: string }
+  | { credential: string }
+  | { tool: string; server?: string }
+  | { access: "read" | "write"; path: string };
+
+/**
+ * Which findings an entry applies to. Exactly one of rule_id, category and
+ * severity is set; severity matches the rule's own severity, before any
+ * entry changes it.
+ */
+export interface PolicyMatch {
+  rule_id?: string;
+  category?: string;
+  severity?: RiskSeverity;
+  /** Only calls touching this. */
+  target?: PolicyTarget;
+  /** Only calls made under this project root. */
+  project?: string;
+}
+
+/** What an entry changes. At least one field is set. */
+export interface PolicyEffect {
+  /** deny and confirm act only in guardrails. */
+  verdict?: PolicyVerdict;
+  /** The finding's effective severity, in place of the rule's. */
+  severity?: RiskSeverity;
+  /** Keep the finding out of default views, counts and notifications. */
+  mute?: boolean;
+}
+
+/**
+ * One decision a user made about findings like one in front of them: block
+ * them, hold them, let them through, mute them or change their severity,
+ * for a rule, a category or a severity, optionally for one target or one
+ * project. See the analyzer's evaluatePolicy for how entries combine.
+ */
+export interface PolicyEntry {
+  /** Stable, for edits and sync. */
+  id: string;
+  match: PolicyMatch;
+  effect: PolicyEffect;
+  /** Why the entry exists, in the user's words. */
+  note?: string;
+  /** When it was added, ISO 8601. Among equal entries, the most recent severity wins. */
+  created_at?: string;
+  /** Where it was written. "config" is an entry read from the older per-rule keys. */
+  created_by?: "dashboard" | "cli" | "config";
+}
+
+/** The rule's blocking verdict for a policy verdict. */
+export function blockingVerdict(v: PolicyVerdict): BlockingVerdict {
+  return v === "allow" ? "alert_only" : v;
+}
+
+/** The policy verdict for a rule's blocking verdict. */
+export function policyVerdict(v: BlockingVerdict): PolicyVerdict {
+  return v === "alert_only" ? "allow" : v;
+}
+
 /**
  * The `enforcement` section of a configuration file. Every field is
  * optional; a project file usually sets only `rules` or `exceptions`.
+ *
+ * `policy` holds entries in the current shape. `rules`, `severity_defaults`,
+ * `exceptions` and `projects` are the older keys: they are still read, and
+ * policyEntries turns them into entries with the same effect.
  */
 export interface EnforcementConfig {
   mode?: EnforcementMode;
@@ -111,6 +201,8 @@ export interface EnforcementConfig {
    * itself live with the user, not in the repository.
    */
   projects?: Record<string, EnforcementConfig>;
+  /** Policy entries. Read from the top level of the user's file only. */
+  policy?: PolicyEntry[];
 }
 
 /**
@@ -208,6 +300,11 @@ export function parseEnforcementConfig(raw: unknown, nested = true): Enforcement
     if (exceptions.length > 0) out.exceptions = exceptions;
   }
 
+  if (nested && Array.isArray(raw.policy)) {
+    const policy = parsePolicy(raw.policy);
+    if (policy.length > 0) out.policy = policy;
+  }
+
   if (nested && isRecord(raw.projects)) {
     const projects: Record<string, EnforcementConfig> = {};
     for (const [root, section] of Object.entries(raw.projects)) {
@@ -223,10 +320,172 @@ export function parseEnforcementConfig(raw: unknown, nested = true): Enforcement
 
 /**
  * The section a repository's shared policy file may set: per-rule and
- * severity verdicts only. Everything that could loosen protection (mode,
- * on_error, exceptions, per-project sections) is dropped.
+ * severity verdicts, and policy entries that can only tighten (a deny or
+ * confirm verdict, a severity, which applies only when it is higher). Everything
+ * that could loosen protection (mode, on_error, exceptions, allow and mute
+ * effects, per-project sections) is dropped.
  */
 export function parseRepoEnforcementConfig(raw: unknown): EnforcementConfig {
   const { rules, severity_defaults } = parseEnforcementConfig(raw, false);
-  return { ...(rules ? { rules } : {}), ...(severity_defaults ? { severity_defaults } : {}) };
+  const policy = isRecord(raw) && Array.isArray(raw.policy)
+    ? parsePolicy(raw.policy).flatMap((e): PolicyEntry[] => {
+        const effect: PolicyEffect = {};
+        if (e.effect.verdict === "deny" || e.effect.verdict === "confirm") effect.verdict = e.effect.verdict;
+        if (e.effect.severity) effect.severity = e.effect.severity;
+        if (Object.keys(effect).length === 0) return [];
+        const { project: _, ...match } = e.match;
+        return [{ ...e, match, effect }];
+      })
+    : [];
+  return {
+    ...(rules ? { rules } : {}),
+    ...(severity_defaults ? { severity_defaults } : {}),
+    ...(policy.length > 0 ? { policy } : {}),
+  };
+}
+
+function parsePolicyTarget(raw: unknown): PolicyTarget | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!isRecord(raw)) return null;
+  const keys = Object.keys(raw).filter((k) => raw[k] !== undefined);
+  const only = (...allowed: string[]): boolean => keys.every((k) => allowed.includes(k));
+  if ("access" in raw) {
+    if ((raw.access !== "read" && raw.access !== "write") || !nonEmpty(raw.path) || !only("access", "path")) return null;
+    return { access: raw.access, path: raw.path.trim() };
+  }
+  if ("tool" in raw) {
+    if (!nonEmpty(raw.tool) || !only("tool", "server")) return null;
+    if (raw.server !== undefined && !nonEmpty(raw.server)) return null;
+    return { tool: raw.tool.trim(), ...(nonEmpty(raw.server) ? { server: raw.server.trim() } : {}) };
+  }
+  if (keys.length !== 1) return null;
+  const [key] = keys;
+  if (key !== "path" && key !== "destination" && key !== "command_prefix" && key !== "credential") return null;
+  const value = raw[key];
+  if (!nonEmpty(value)) return null;
+  return { [key]: value.trim() } as PolicyTarget;
+}
+
+/** One policy entry, or null when it is malformed or does nothing. */
+export function parsePolicyEntry(raw: unknown): PolicyEntry | null {
+  if (!isRecord(raw) || !nonEmpty(raw.id) || !isRecord(raw.match) || !isRecord(raw.effect)) return null;
+  const m = raw.match;
+  const kinds = [nonEmpty(m.rule_id), nonEmpty(m.category), SEVERITIES.includes(m.severity as RiskSeverity)];
+  if (kinds.filter(Boolean).length !== 1) return null;
+  for (const [key, ok] of [["rule_id", kinds[0]], ["category", kinds[1]], ["severity", kinds[2]]] as const) {
+    if (m[key] !== undefined && !ok) return null;
+  }
+  const target = parsePolicyTarget(m.target);
+  if (target === null) return null;
+  if (m.project !== undefined && !nonEmpty(m.project)) return null;
+  const match: PolicyMatch = {};
+  if (kinds[0]) match.rule_id = m.rule_id as string;
+  if (kinds[1]) match.category = m.category as string;
+  if (kinds[2]) match.severity = m.severity as RiskSeverity;
+  if (target) match.target = target;
+  if (nonEmpty(m.project)) match.project = m.project;
+
+  const f = raw.effect;
+  const effect: PolicyEffect = {};
+  if (f.verdict !== undefined) {
+    if (!POLICY_VERDICTS.includes(f.verdict as PolicyVerdict)) return null;
+    effect.verdict = f.verdict as PolicyVerdict;
+  }
+  if (f.severity !== undefined) {
+    if (!SEVERITIES.includes(f.severity as RiskSeverity)) return null;
+    effect.severity = f.severity as RiskSeverity;
+  }
+  if (f.mute !== undefined) {
+    if (typeof f.mute !== "boolean") return null;
+    effect.mute = f.mute;
+  }
+  if (Object.keys(effect).length === 0) return null;
+
+  const out: PolicyEntry = { id: raw.id, match, effect };
+  if (typeof raw.note === "string") out.note = raw.note;
+  if (typeof raw.created_at === "string") out.created_at = raw.created_at;
+  if (raw.created_by === "dashboard" || raw.created_by === "cli" || raw.created_by === "config") out.created_by = raw.created_by;
+  return out;
+}
+
+/**
+ * A list of policy entries. Malformed entries are dropped one by one, as are
+ * later entries reusing an id.
+ */
+export function parsePolicy(raw: unknown): PolicyEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: PolicyEntry[] = [];
+  for (const item of raw) {
+    const entry = parsePolicyEntry(item);
+    if (!entry || seen.has(entry.id)) continue;
+    seen.add(entry.id);
+    out.push(entry);
+  }
+  return out;
+}
+
+function targetKey(t: EnforcementTarget | undefined): string {
+  if (!t) return "any";
+  const [key] = Object.keys(t) as (keyof EnforcementTarget)[];
+  return key ? `${key}=${t[key]}` : "any";
+}
+
+/**
+ * Every decision in a configuration section, as policy entries: its
+ * `policy` list, and its older keys (`rules`, `severity_defaults`,
+ * `exceptions` and the user's per-project sections) turned into entries
+ * with the same effect. The older keys are never rewritten or dropped; this
+ * is how they are read.
+ *
+ * Entries for a per-project section are scoped to its root. `project`
+ * scopes the section itself, for a section already chosen for one project.
+ *
+ * One older behavior needs care: an exception beat a per-rule verdict in the
+ * same section, where entries at the same level take the stricter verdict.
+ * So a rule's verdict is left out of the entries when the same section has
+ * an exception covering the whole rule.
+ */
+export function policyEntries(config: EnforcementConfig, project?: string): PolicyEntry[] {
+  const out: PolicyEntry[] = [];
+  const scope = project !== undefined ? { project } : {};
+  const prefix = project !== undefined ? `config:project:${project}:` : "config:";
+  const wholeRule = new Set((config.exceptions ?? []).filter((e) => !e.target).map((e) => e.rule_id));
+
+  for (const [rule_id, verdict] of Object.entries(config.rules ?? {})) {
+    if (wholeRule.has(rule_id)) continue;
+    out.push({
+      id: `${prefix}rule:${rule_id}`,
+      match: { rule_id, ...scope },
+      effect: { verdict: policyVerdict(verdict) },
+      created_by: "config",
+    });
+  }
+  for (const sev of SEVERITIES) {
+    const verdict = config.severity_defaults?.[sev];
+    if (!verdict) continue;
+    out.push({
+      id: `${prefix}severity:${sev}`,
+      match: { severity: sev, ...scope },
+      effect: { verdict: policyVerdict(verdict) },
+      created_by: "config",
+    });
+  }
+  for (const e of config.exceptions ?? []) {
+    const entry: PolicyEntry = {
+      id: `${prefix}exception:${e.rule_id}:${e.kind}:${targetKey(e.target)}`,
+      match: { rule_id: e.rule_id, ...(e.target ? { target: { ...e.target } as PolicyTarget } : {}), ...scope },
+      effect: e.kind === "mute" ? { verdict: "allow", mute: true } : { verdict: "allow" },
+      created_by: "config",
+    };
+    if (e.note !== undefined) entry.note = e.note;
+    if (e.created_at !== undefined) entry.created_at = e.created_at;
+    out.push(entry);
+  }
+  if (project === undefined) {
+    for (const [root, section] of Object.entries(config.projects ?? {})) out.push(...policyEntries(section, root));
+  }
+  // Explicit entries take a scope only from their own match.
+  out.push(...(config.policy ?? []));
+  return out;
 }

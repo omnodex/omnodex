@@ -9,7 +9,9 @@
  *
  * The user's file is `$OMNODEX_HOME/omnodex-config.json`, section
  * `enforcement`; its `projects` map holds the user's overrides per project
- * root. The repository's shared policy is `<root>/.omnodex/config.json`,
+ * root. The account's policy, as the background pass last pulled it, is
+ * `$OMNODEX_HOME/account-policy.json`; this machine's entries beat it at
+ * equal specificity. The repository's shared policy is `<root>/.omnodex/config.json`,
  * section `enforcement`, found by walking up from the call's working
  * directory, and it can only tighten (see resolveVerdict).
  *
@@ -25,13 +27,17 @@ import {
   PROJECT_CONFIG_DIR,
   PROJECT_CONFIG_FILE,
   parseEnforcementConfig,
+  parsePolicy,
   parseRepoEnforcementConfig,
   type EnforcementConfig,
+  type PolicyEntry,
   type EnforcementMode,
 } from "@omnodex/shared";
 import type { VerdictConfig } from "./resolve-verdict.js";
 
 export const USER_CONFIG_FILE = "omnodex-config.json";
+/** The account's policy as last pulled. Must match the sync-encryptor's writer. */
+export const ACCOUNT_POLICY_FILE = "account-policy.json";
 
 export interface LoadedEnforcement extends VerdictConfig {
   mode: EnforcementMode;
@@ -48,6 +54,12 @@ function readJson(file: string): unknown {
 
 function section(raw: unknown): unknown {
   return typeof raw === "object" && raw !== null ? (raw as { enforcement?: unknown }).enforcement : undefined;
+}
+
+/** The account's policy entries as this home last pulled them; none when it never has. */
+export function readAccountPolicy(home: string): PolicyEntry[] {
+  const raw = readJson(path.join(home, ACCOUNT_POLICY_FILE));
+  return typeof raw === "object" && raw !== null ? parsePolicy((raw as { entries?: unknown }).entries) : [];
 }
 
 /** The user's enforcement section. */
@@ -108,6 +120,8 @@ export function loadEnforcement(opts: LoadEnforcementOptions = {}): LoadedEnforc
   const home = opts.home ?? process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
   const user = readUserEnforcement(home);
   const out: LoadedEnforcement = { mode: user.mode ?? "monitor", on_error: user.on_error ?? "allow", user };
+  const account = readAccountPolicy(home);
+  if (account.length > 0) out.account = account;
   if (!opts.cwd) return out;
 
   const project = userProjectSection(user, opts.cwd);
