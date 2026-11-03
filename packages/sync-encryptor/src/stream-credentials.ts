@@ -176,7 +176,7 @@ export async function collectRotatedToken(opts: CredentialOptions): Promise<stri
     res = await (opts.fetchFn ?? fetch)(opts.apiUrl.replace(/\/$/, "") + "/api/v1/stream/collect-token", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ old_token: opts.apiToken, machine_id: computeMachineId(), secret_verifier: verifier }),
+      body: JSON.stringify({ old_token: opts.apiToken, machine_id: computeMachineId(opts.home), secret_verifier: verifier }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? 15_000),
     });
   } catch (err) {

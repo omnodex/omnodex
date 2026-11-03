@@ -22,6 +22,7 @@ import {
   SEGMENT_MANIFEST_FILE,
 } from "../dist/index.js";
 import { syncReadModel } from "../dist/sync-runner.js";
+import { deriveLabelKey, openLabel } from "../dist/machine-label.js";
 
 const PASSPHRASE = "case-segment-passphrase";
 const SALT = new Uint8Array(16).fill(3);
@@ -153,6 +154,47 @@ describe("segmented sync", () => {
     assert.equal(cloud.commits, 1);
     assert.equal(r.uploaded, 0);
     assert.equal(r.commitId, "commit-1");
+  });
+
+  it("a label-only change commits once without uploading segments", async () => {
+    await addSession(projector, "s1", NOW - DAY);
+    await sync();
+    const ids = [...cloud.current];
+    const renamed = await sync({ machineLabel: "case desktop" });
+    assert.equal(cloud.commits, 2);
+    assert.equal(renamed.commitId, "commit-2");
+    assert.equal(renamed.uploaded, 0);
+    assert.deepEqual(cloud.current, ids);
+    await sync({ machineLabel: "case desktop" });
+    assert.equal(cloud.commits, 2);
+    assert.equal(cloud.uploads.length, 1);
+  });
+
+  it("a failed label-only commit preserves the manifest and retries", async () => {
+    await addSession(projector, "s1", NOW - DAY);
+    await sync();
+    const saved = await fs.readFile(path.join(home, SEGMENT_MANIFEST_FILE), "utf8");
+    cloud.failCommit = true;
+    await assert.rejects(sync({ machineLabel: "case desktop" }), /HTTP 503/);
+    assert.equal(await fs.readFile(path.join(home, SEGMENT_MANIFEST_FILE), "utf8"), saved);
+    cloud.failCommit = false;
+    await sync({ machineLabel: "case desktop" });
+    await sync({ machineLabel: "case desktop" });
+    assert.equal(cloud.commits, 2);
+    assert.equal(cloud.uploads.length, 1);
+  });
+
+  it("a manifest without a label hash refreshes the label once", async () => {
+    await addSession(projector, "s1", NOW - DAY);
+    await sync();
+    const old = await manifest();
+    delete old.machine_label_hash;
+    await fs.writeFile(path.join(home, SEGMENT_MANIFEST_FILE), JSON.stringify(old));
+    await sync();
+    assert.equal(cloud.commits, 2);
+    await sync();
+    assert.equal(cloud.commits, 2);
+    assert.equal(cloud.uploads.length, 1);
   });
 
   it("a new session rewrites only the open segment", async () => {
@@ -360,6 +402,7 @@ describe("segmented sync: monitoring changes", () => {
 function startApi({ segments = true } = {}) {
   const seen = [];
   const bodies = [];
+  const labels = [];
   const server = createServer((req, res) => {
     const chunks = [];
     req.on("data", (c) => chunks.push(c));
@@ -371,6 +414,7 @@ function startApi({ segments = true } = {}) {
         return;
       }
       seen.push(`${req.method} ${req.url}`);
+      if (req.url === "/api/v1/sync/manifest") labels.push(req.headers["x-omnodex-machine-label"]);
       if (req.method === "PUT" && req.url !== "/api/v1/sync/manifest") bodies.push(new Uint8Array(Buffer.concat(chunks)));
       const json = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
       if (req.url.startsWith("/api/v1/sync/segments/") || req.url === "/api/v1/sync/manifest") {
@@ -383,7 +427,7 @@ function startApi({ segments = true } = {}) {
     });
   });
   return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({
-    url: `http://127.0.0.1:${server.address().port}`, seen, bodies, close: () => new Promise((r) => server.close(r)),
+    url: `http://127.0.0.1:${server.address().port}`, seen, bodies, labels, close: () => new Promise((r) => server.close(r)),
   })));
 }
 
@@ -399,6 +443,39 @@ async function writeLog(dir) {
 }
 
 describe("sync runner", () => {
+  it("commits a configured label change once despite fresh sealing nonces", async () => {
+    await writeLog(home);
+    const api = await startApi();
+    const config = path.join(home, "config.json");
+    const setLabel = (label) => fs.writeFile(config, JSON.stringify({ machine: { label } }));
+    try {
+      const opts = { home, apiUrl: api.url, apiToken: "omx_test_case", passphrase: PASSPHRASE, customerId: "cust_case" };
+      // An idle machine can first sync without a label, then set one later.
+      await syncReadModel(opts);
+      assert.deepEqual(api.labels, [undefined]);
+      for (const label of ["case laptop", "case desktop"]) {
+        await setLabel(label);
+        api.seen.length = 0;
+        const changed = await syncReadModel(opts);
+        assert.equal(changed.segments.uploaded, 0);
+        assert.deepEqual(api.seen, ["PUT /api/v1/sync/manifest"]);
+        const sealed = api.labels.at(-1);
+        assert.equal(await openLabel(await deriveLabelKey(PASSPHRASE), "machine_label", sealed), label);
+        const saved = await manifest();
+        assert.match(saved.machine_label_hash, /^[0-9a-f]{64}$/);
+        assert.ok(!JSON.stringify(saved).includes(label));
+        api.seen.length = 0;
+        await syncReadModel(opts);
+        await syncReadModel(opts);
+        assert.deepEqual(api.seen, []);
+      }
+      assert.equal(api.bodies.length, 1);
+      assert.equal(api.labels.length, 3);
+    } finally {
+      await api.close();
+    }
+  });
+
   it("syncs as segments, and a second sync with nothing new sends nothing", async () => {
     await writeLog(home);
     const api = await startApi();

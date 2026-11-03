@@ -15,7 +15,8 @@
  * body -- a v1 self-describing envelope (magic | version | salt | iv |
  * ciphertext, see envelope.ts). The salt and IV travel inside the blob so
  * the cloud stores opaque bytes and the browser dashboard can decrypt from
- * the pulled blob alone. Session IDs ride in the X-Omnodex-Sessions header.
+ * the pulled blob alone. Session IDs stay inside it; only the machine ID
+ * and the sealed machine label travel as headers.
  */
 
 import { isReceivingPaused } from "./live-gate.js";
@@ -107,9 +108,9 @@ export interface SyncPushRequest {
   kdf_salt: Uint8Array;
   /** Original plaintext byte count (before encryption). */
   payload_bytes: number;
-  /** Session IDs covered by this sync. */
+  /** Session IDs covered by this sync (kept locally; not sent). */
   sessions_included: string[];
-  /** Stable machine identifier (SHA-256 prefix of hostname). */
+  /** Random machine identifier (machine-id.ts). */
   machine_id: string;
   /** Optional human-readable machine label. */
   machine_label?: string;
@@ -173,7 +174,6 @@ export class HttpSyncTransport implements SyncTransport {
         headers: {
           "Content-Type": "application/octet-stream",
           "Authorization": "Bearer " + this.apiToken,
-          "X-Omnodex-Sessions": JSON.stringify(req.sessions_included),
           "X-Omnodex-Machine-Id": req.machine_id,
           ...(req.machine_label ? { "X-Omnodex-Machine-Label": req.machine_label } : {}),
         },

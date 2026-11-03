@@ -30,7 +30,9 @@ import { Projector, SqliteReadModelStore, runCorrelation } from "@omnodex/projec
 import { SyncEncryptor } from "./sync-encryptor.js";
 import type { SyncResult } from "./sync-encryptor.js";
 import { HttpSyncTransport } from "./transport.js";
-import { computeMachineId, readMachineLabel } from "./machine-id.js";
+import { computeMachineId, readMachineLabel, remapMachineId } from "./machine-id.js";
+import { sealedText } from "./machine-label.js";
+import { sha256Hex } from "./crypto.js";
 import { syncSegments } from "./segment-sync.js";
 import { HttpSegmentTransport, SegmentsUnsupportedError } from "./segment-transport.js";
 import { TokenRotatedError, collectRotatedToken, ensureSecretVerifier } from "./stream-credentials.js";
@@ -163,8 +165,11 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
       // First sync: SyncEncryptor generates a fresh salt.
     }
 
-    const machineId = computeMachineId();
-    const machineLabel = await readMachineLabel(opts.home);
+    const machineId = computeMachineId(opts.home);
+    await remapMachineId({ home: opts.home, apiUrl: opts.apiUrl, apiToken: opts.apiToken });
+    const labelText = await readMachineLabel(opts.home);
+    const machineLabel = await sealedText(opts.passphrase, "machine_label", labelText) ?? undefined;
+    const machineLabelHash = await sha256Hex(new TextEncoder().encode(labelText ?? ""));
     // Pauses go up with every sync, so the dashboard shows them later even
     // if it was not open (live push is its only other source).
     const controlEvents = await log.readSession(CAPTURE_CONTROL_SESSION_ID);
@@ -200,6 +205,7 @@ async function syncOnce(opts: SyncReadModelOptions): Promise<SyncRunResult> {
           apiUrl: opts.apiUrl,
           machineId,
           machineLabel,
+          machineLabelHash,
           home: opts.home,
           eventLog: log,
           pauses,
