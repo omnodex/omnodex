@@ -84,7 +84,7 @@ const STAGED_TARGETS: readonly RegExp[] = [
   /(?:^|\/)hooks\.json$/i,
 ];
 
-function bareToolName(toolName: string): string {
+export function bareToolName(toolName: string): string {
   const i = toolName.lastIndexOf("__");
   return (i === -1 ? toolName : toolName.slice(i + 2)).toLowerCase();
 }

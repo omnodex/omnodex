@@ -291,3 +291,92 @@ describe("policy pull", () => {
     assert.match(i.err.join("\n"), /takes no arguments/);
   });
 });
+
+describe("policy watch", () => {
+  const markers = async () => {
+    const dir = path.join(home, "event-log");
+    const names = await fs.readdir(dir, { recursive: true }).catch(() => []);
+    const out = [];
+    for (const n of names) {
+      if (!String(n).endsWith(".jsonl")) continue;
+      const text = await fs.readFile(path.join(dir, String(n)), "utf8");
+      for (const line of text.split("\n")) {
+        if (!line) continue;
+        const e = JSON.parse(line);
+        if (e.event_type === "monitoring.changed") out.push(e);
+      }
+    }
+    return out;
+  };
+
+  it("adds a watch from an agent's shell, with a marker that does not name the path", async () => {
+    const o = io();
+    assert.equal(await run(["watch", "/home/case/repo/monitoring/alerts.yml"], { io: o }), 0);
+    const [entry] = (await readFile()).enforcement.policy;
+    assert.deepEqual(entry.match, { rule_id: "RULE_WATCHED_PATH", target: { access: "write", path: path.resolve("/home/case/repo/monitoring/alerts.yml") } });
+    assert.deepEqual(entry.effect, { severity: "HIGH" });
+    assert.match(o.out.join("\n"), /watching .*alerts\.yml, everywhere: HIGH finding/);
+    assert.match(o.out.join("\n"), /a script run later, or another process, is not/);
+    const [marker] = await markers();
+    assert.equal(marker.action, "watch_add");
+    assert.equal(marker.scope, "user");
+    assert.equal(marker.to, entry.id);
+    assert.ok(!JSON.stringify(marker).includes("alerts.yml"));
+  });
+
+  it("keeps a glob anywhere as written, and makes other relative paths absolute", async () => {
+    assert.equal(await run(["watch", "**/alerts.yml"]), 0);
+    assert.equal(await run(["watch", "rel/alerts.yml"]), 0);
+    const [any, rel] = (await readFile()).enforcement.policy;
+    assert.equal(any.match.target.path, "**/alerts.yml");
+    assert.ok(path.isAbsolute(rel.match.target.path));
+  });
+
+  it("scopes a watch to the project with --here, keeping a relative path", async () => {
+    assert.equal(await run(["watch", "config/*.yml", "--here"]), 0);
+    const [entry] = (await readFile()).enforcement.policy;
+    assert.equal(entry.match.project, "/home/case/repo");
+    assert.equal(entry.match.target.path, "config/*.yml");
+    assert.equal((await markers())[0].project_path, "/home/case/repo");
+  });
+
+  it("--block and --hold need a plan with guardrails", async () => {
+    assert.equal(await run(["watch", "/srv/a", "--block"], { entitled: false }), 1);
+    assert.equal(await run(["watch", "/srv/a", "--block"], { entitled: true }), 0);
+    assert.deepEqual((await readFile()).enforcement.policy[0].effect, { verdict: "deny" });
+  });
+
+  it("takes no loosening flag and needs a path", async () => {
+    assert.equal(await run(["watch", "/srv/a", "--allow"]), 1);
+    assert.equal(await run(["watch", "--here"]), 1);
+    assert.equal(await run(["watch"]), 1);
+  });
+
+  it("removing a watch is refused from an agent's shell and leaves it in place", async () => {
+    await run(["watch", "/srv/a"]);
+    const { id } = (await readFile()).enforcement.policy[0];
+    const o = io();
+    assert.equal(await run(["remove", id], { io: o }), 1);
+    assert.match(o.err.join("\n"), /needs a person at an interactive terminal/);
+    assert.equal((await readFile()).enforcement.policy.length, 1);
+    assert.deepEqual((await markers()).map((m) => m.action), ["watch_add"]);
+  });
+
+  it("a person can remove one, which leaves a marker; declining leaves it", async () => {
+    await run(["watch", "/srv/a"]);
+    const { id } = (await readFile()).enforcement.policy[0];
+    assert.equal(await run(["remove", id], { io: io({ tty: true, answers: ["no"] }) }), 1);
+    assert.equal((await readFile()).enforcement.policy.length, 1);
+    assert.equal(await run(["remove", id], { io: io({ tty: true, answers: ["remove"] }) }), 0);
+    assert.equal((await readFile()).enforcement.policy.length, 0);
+    const removed = (await markers()).find((m) => m.action === "watch_remove");
+    assert.equal(removed.from, id);
+  });
+
+  it("a watch added through policy add is marked and protected the same way", async () => {
+    assert.equal(await run(["add", "--rule", "RULE_WATCHED_PATH", "--writes", "/srv/a", "--set-severity", "HIGH"]), 0);
+    const { id } = (await readFile()).enforcement.policy[0];
+    assert.equal((await markers())[0].action, "watch_add");
+    assert.equal(await run(["remove", id]), 1);
+  });
+});

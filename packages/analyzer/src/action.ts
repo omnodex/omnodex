@@ -36,7 +36,7 @@
 import type { ToolInvokedEvent } from "@omnodex/shared";
 import { extractPaths } from "./conditions/path-match.js";
 import { extractExecText, isWriteTool, stripFileHeredocs } from "./conditions/scope.js";
-import { commandTargets, extractWriteTargets } from "./conditions/write-targets.js";
+import { commandTargets, extractChangeTargets, extractWriteTargets } from "./conditions/write-targets.js";
 
 export type ActionKind = "read" | "write" | "exec" | "network";
 
@@ -69,6 +69,10 @@ export interface NormalizedAction {
   kinds: ReadonlySet<ActionKind>;
   paths: readonly string[];
   writes: readonly string[];
+  /** Everything it writes, changes, moves or deletes: writes, and more. */
+  changed: readonly string[];
+  /** Those it moves away or deletes. */
+  removed: readonly string[];
   command: string | null;
   exec: string | null;
   destinations: readonly Destination[];
@@ -91,6 +95,7 @@ function computeAction(event: ToolInvokedEvent): NormalizedAction {
   const command = extractExecText(event);
   const exec = command === null ? null : stripFileHeredocs(command);
   const writes = extractWriteTargets(event);
+  const { changed, removed } = extractChangeTargets(event);
   const paths = extractPaths(event);
 
   const name = event.tool_name.toLowerCase();
@@ -128,7 +133,7 @@ function computeAction(event: ToolInvokedEvent): NormalizedAction {
   if (paths.some((p) => !writes.includes(p))) kinds.add("read");
   if (outbound || destinations.some((d) => d.ipClass !== "loopback")) kinds.add("network");
 
-  return { kinds, paths, writes, command, exec, destinations, outbound, staging };
+  return { kinds, paths, writes, changed, removed, command, exec, destinations, outbound, staging };
 }
 
 // ---------------------------------------------------------------------------

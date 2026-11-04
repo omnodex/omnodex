@@ -44,7 +44,9 @@ for (const seed of [0, 1, 42, -1, 2147483647]) {
       assert.equal(row.risk_score, roundRiskScore(risks.reduce((n, r) => n + riskScoreFor(r.severity), 0)));
       assert.equal((await store.listToolCalls(id)).length, calls.length);
     }
-    assert.deepEqual([...new Set(findings.map(e => e.rule_id))].sort(), COMMUNITY_RULES.map(r => r.rule_id).sort());
+    // A watched path fires only on a list the user made, which a scenario has none of.
+    const catalog = COMMUNITY_RULES.map(r => r.rule_id).filter(id => id !== "RULE_WATCHED_PATH");
+    assert.deepEqual([...new Set(findings.map(e => e.rule_id))].sort(), catalog.sort());
     assert.deepEqual([...new Set(findings.map(e => e.severity))].sort(), ["CRITICAL", "HIGH", "LOW", "MEDIUM"]);
     const rows = await store.listSessions();
     assert.deepEqual([...new Set(rows.map(r => r.status))].sort(), ["completed", "errored", "in_progress", "interrupted"]);

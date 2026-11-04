@@ -861,7 +861,9 @@ export type MonitoringAction =
   | "connect"
   | "disconnect"
   | "enforce_mode"
-  | "clear";
+  | "clear"
+  | "watch_add"
+  | "watch_remove";
 
 /**
  * Who made the change: a person at an interactive terminal, or a process

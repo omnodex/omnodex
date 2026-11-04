@@ -56,6 +56,7 @@ import {
   evaluateRememberedSecret,
   evaluateFileEdit,
 } from "./conditions/index.js";
+import { evaluateWatchedPath } from "./conditions/watched-path.js";
 import {
   type RateThresholdState,
   createRateThresholdState,
@@ -124,6 +125,8 @@ function evaluateCondition(
       return evaluateStaging(condition, event);
     case "file_edit":
       return evaluateFileEdit(condition, event);
+    case "watched_path":
+      return evaluateWatchedPath(event, context);
     case "destination_first_seen":
       return evaluateDestinationFirstSeen(event, context);
     case "remembered_secret":

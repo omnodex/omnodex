@@ -3300,7 +3300,7 @@ commands:
                      shadow. Rules, per-rule settings and exceptions are
                      read from the enforcement section of
                      ~/.omnodex/omnodex-config.json.
-  policy list | add | remove | pull
+  policy list | add | watch | remove | pull
                      what to do with findings like one you have seen:
                      block (--block) or hold (--hold) them (Pro), let them
                      through (--allow), mute them (--mute), or change their
@@ -3311,7 +3311,10 @@ commands:
                      --reads, --writes) and one project (--project, --here).
                      Allowing, muting, lowering a severity, or removing an
                      entry that blocks, holds or raises one needs a person
-                     at a terminal. pull fetches the entries made for your
+                     at a terminal. watch <path> raises a HIGH finding when
+                     a tool call changes, moves or deletes a file, folder
+                     or glob; removing a watch needs a person too. pull
+                     fetches the entries made for your
                      whole account in the hosted dashboard (the background
                      pass also does, about every 15 minutes).
   live [resume]      show whether live pushes to the hosted dashboard are

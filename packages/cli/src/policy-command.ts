@@ -5,7 +5,7 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 /**
- * `omnodex policy list | add | remove | pull`: this machine's policy
+ * `omnodex policy list | add | watch | remove | pull`: this machine's policy
  * entries, and the account's.
  *
  * An entry says what to do with findings like one in front of you: block
@@ -18,6 +18,11 @@
  * their ids. Entries made for the whole account in the hosted dashboard
  * are pulled by the background pass, or at once by `pull`, and listed
  * beside them; they are changed in the dashboard, not here.
+ *
+ * `watch` adds an entry that raises a finding of its own: a tool call that
+ * changes, moves or deletes the path, folder or glob. Adding one leaves a
+ * marker. Removing one needs a person, as other loosening does, and leaves a
+ * marker too.
  *
  * Turning protection down is for a person, not an agent: an entry that
  * allows, mutes or lowers a severity, and removing one that blocks, holds,
@@ -34,6 +39,8 @@ import {
   parsePolicy,
   parsePolicyEntry,
   policyEntries,
+  isWatchEntry,
+  WATCHED_PATH_RULE_ID,
   type EnforcementConfig,
   type PolicyEntry,
   type PolicyTarget,
@@ -41,6 +48,7 @@ import {
 } from "@omnodex/shared";
 import type { ControlIo } from "./capture-controls.js";
 import { USER_CONFIG_FILE } from "./enforce-command.js";
+import { recordMonitoringChange } from "./monitoring-markers.js";
 
 export interface PolicyOptions {
   home: string;
@@ -61,7 +69,7 @@ export interface PolicyOptions {
 }
 
 const TAG = "[policy]";
-const USAGE = "omnodex policy list | add <match> [target] <effect> | remove <id> | pull";
+const USAGE = "omnodex policy list | add <match> [target] <effect> | watch <path> | remove <id> | pull";
 const SEVERITIES: readonly RiskSeverity[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 const RANK: Readonly<Record<RiskSeverity, number>> = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
 
@@ -71,6 +79,9 @@ export const POLICY_ADD_VALUES = [
   "--path", "--destination", "--command-prefix", "--credential", "--tool", "--server", "--reads", "--writes",
   "--project", "--set-severity", "--note",
 ] as const;
+/** The flags `policy watch` takes, beside the path. */
+export const POLICY_WATCH_VALUES = ["--project", "--note"] as const;
+export const POLICY_WATCH_FLAGS = ["--here", "--block", "--hold"] as const;
 /** The flags `policy add` takes alone. */
 export const POLICY_ADD_FLAGS = ["--here", "--block", "--hold", "--allow", "--mute", "--unmute"] as const;
 
@@ -118,6 +129,10 @@ function describeTarget(t: PolicyTarget): string {
 /** One line for an entry: what it matches and what it does. */
 export function describeEntry(e: PolicyEntry): string {
   const m = e.match;
+  if (isWatchEntry(e) && m.target && "path" in m.target) {
+    const acts = e.effect.verdict === "deny" ? ", block" : e.effect.verdict === "confirm" ? ", hold" : "";
+    return `watching ${m.target.path}, ${m.project ? `in ${m.project}` : "everywhere"}: ${e.effect.severity ?? "HIGH"} finding on a change${acts}`;
+  }
   const what = m.rule_id ? `rule ${m.rule_id}` : m.category ? `category ${m.category}` : `severity ${m.severity}`;
   const where = [m.target ? describeTarget(m.target) : null, m.project ? `in ${m.project}` : "everywhere"].filter(Boolean).join(", ");
   const does: string[] = [];
@@ -133,6 +148,7 @@ export function describeEntry(e: PolicyEntry): string {
  * whose severity is unknown, counts as lower unless it is CRITICAL.
  */
 export function loosens(e: PolicyEntry, ruleSeverity?: (id: string) => RiskSeverity | undefined): boolean {
+  if (isWatchEntry(e)) return false;
   if (e.effect.verdict === "allow" || e.effect.mute === true) return true;
   const set = e.effect.severity;
   if (!set) return false;
@@ -210,7 +226,7 @@ export function entryFromArgs(
   // A relative path target in a project resolves against the project root,
   // as the evaluator reads it; elsewhere it is made absolute here.
   const tgt = match.target as Record<string, string> | undefined;
-  if (tgt?.path !== undefined && !match.project && !/^~([\\/]|$)/.test(tgt.path)) tgt.path = path.resolve(tgt.path);
+  if (tgt?.path !== undefined && !match.project && !/^(?:~([\\/]|$)|\*\*[\\/])/.test(tgt.path)) tgt.path = path.resolve(tgt.path);
 
   const verdicts = ["--block", "--hold", "--allow"].filter((k) => flags.has(k));
   if (verdicts.length > 1) return { error: "give at most one of --block, --hold or --allow" };
@@ -305,6 +321,58 @@ async function confirmLoosening(io: ControlIo, what: string, word: string): Prom
   return true;
 }
 
+/** The marker for a watch added or removed. It names the entry and never the watched path. */
+async function markWatch(action: "watch_add" | "watch_remove", entry: PolicyEntry, home: string): Promise<void> {
+  const project = entry.match.project;
+  await recordMonitoringChange(
+    {
+      action,
+      scope: project !== undefined ? "project" : "user",
+      ...(project !== undefined ? { project_path: project } : {}),
+      ...(action === "watch_add" ? { to: entry.id } : { from: entry.id }),
+    },
+    home,
+  );
+}
+
+/** `policy watch <path> [--here | --project <root>] [--block | --hold] [--note <text>]`. */
+async function runWatch(args: string[], opts: PolicyOptions, file: string): Promise<number> {
+  const { io, home } = opts;
+  const [target, ...rest] = args;
+  if (!target || target.startsWith("-")) {
+    io.error(`${TAG} watch takes a file, folder or glob. Usage: ${USAGE}`);
+    return 1;
+  }
+  const known: readonly string[] = [...POLICY_WATCH_VALUES, ...POLICY_WATCH_FLAGS];
+  const bad = rest.find((a, i) => a.startsWith("--") && !known.includes(a) && !(POLICY_WATCH_VALUES as readonly string[]).includes(rest[i - 1] ?? ""));
+  if (bad) {
+    io.error(`${TAG} watch does not take ${bad}. Usage: ${USAGE}`);
+    return 1;
+  }
+  const stops = rest.includes("--block") || rest.includes("--hold");
+  const built = entryFromArgs(
+    ["--rule", WATCHED_PATH_RULE_ID, "--writes", target, ...rest, ...(stops ? [] : ["--set-severity", "HIGH"])],
+    { cwd: opts.cwd, now: opts.now?.() ?? new Date(), id: opts.newId?.() ?? `p-${randomUUID().slice(0, 8)}` },
+  );
+  if ("error" in built) {
+    io.error(`${TAG} ${built.error}. Usage: ${USAGE}`);
+    return 1;
+  }
+  const { entry } = built;
+  if (stops && opts.guardrailsEntitled && !(await opts.guardrailsEntitled())) {
+    io.error(`${TAG} block and hold act through guardrails, which are part of Omnodex Pro. Watching a path without them is free.`);
+    return 1;
+  }
+  const config = await readConfig(file);
+  const section = sectionOf(config);
+  await writeConfig(file, { ...config, enforcement: { ...section, policy: [...parsePolicy(section.policy), entry] } });
+  await markWatch("watch_add", entry, home);
+  io.log(`${TAG} added ${entry.id}: ${describeEntry(entry)}.`);
+  io.log(`${TAG} only changes a tool call names are seen; a script run later, or another process, is not.`);
+  if (stops) io.log(`${TAG} it stops or holds calls in guardrails mode; in shadow mode it is recorded on each finding.`);
+  return 0;
+}
+
 /** Run `omnodex policy <sub>`. Returns the exit code. */
 export async function runPolicy(args: string[], opts: PolicyOptions): Promise<number> {
   const { home, io } = opts;
@@ -350,12 +418,15 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
       const section = sectionOf(config);
       const policy = parsePolicy(section.policy);
       await writeConfig(file, { ...config, enforcement: { ...section, policy: [...policy, entry] } });
+      if (isWatchEntry(entry)) await markWatch("watch_add", entry, home);
       io.log(`${TAG} added ${entry.id}: ${describeEntry(entry)}.`);
       if (verdict === "deny" || verdict === "confirm") {
         io.log(`${TAG} it stops or holds calls in guardrails mode; in shadow mode it is recorded on each finding.`);
       }
       return 0;
     }
+
+    if (sub === "watch") return await runWatch(rest, opts, file);
 
     if (sub === "remove") {
       const id = rest[0];
@@ -370,7 +441,8 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
         io.error(`${TAG} no entry '${id}' in ${file}.`);
         return 1;
       }
-      if (tightens(entry, opts.ruleSeverity) && !(await confirmLoosening(io, `removing "${describeEntry(entry)}"`, "remove"))) {
+      const watch = isWatchEntry(entry);
+      if ((watch || tightens(entry, opts.ruleSeverity)) && !(await confirmLoosening(io, `removing "${describeEntry(entry)}"`, "remove"))) {
         return 1;
       }
       let next = withoutLegacy(section, id);
@@ -379,6 +451,7 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
         next = { ...section, policy: policy.filter((e) => (e as { id?: unknown }).id !== id) };
       }
       await writeConfig(file, { ...config, enforcement: next });
+      if (watch) await markWatch("watch_remove", entry, home);
       io.log(`${TAG} removed ${id}: ${describeEntry(entry)}.`);
       return 0;
     }

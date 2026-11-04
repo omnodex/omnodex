@@ -35,6 +35,10 @@
  * `npm test && curl ...`. An effect that tightens (deny, confirm, a higher
  * severity) needs only one: blocking writes to a file blocks a call that
  * writes it and others too.
+ *
+ * A target path may be a glob. A write target covers changing, moving and
+ * deleting as well, and, when tightening, moving or deleting a folder holding
+ * the path.
  */
 
 import {
@@ -285,25 +289,25 @@ export function targetMatches(target: PolicyTarget, subject: TargetSubject, mode
     return call.tool_name === target.tool && (target.server === undefined || call.mcp_server === target.server);
   }
   const action = normalizeAction(call);
-  const resolve = (p: string, base: string | undefined): string => normalizePath(p, base, opts.home);
+  const resolve = (p: string, base: string | undefined): string => normalizePath(p, anywhere(p) ? undefined : base, opts.home);
   const some = mode === "any";
 
   if ("access" in target) {
     const root = resolve(target.path, opts.base ?? call.cwd);
-    const writes = action.writes.map((p) => resolve(p, call.cwd));
+    const writes = action.changed.map((p) => resolve(shellHome(p), call.cwd));
     if (target.access === "write") {
-      if (some) return writes.some((p) => pathUnder(p, root));
-      const touched = [...action.paths, ...action.writes].map((p) => resolve(p, call.cwd));
-      return writes.length > 0 && touched.every((p) => pathUnder(p, root));
+      if (some) return changeHits(action.changed, action.removed, root, (p) => resolve(shellHome(p), call.cwd)).length > 0;
+      const touched = [...action.paths, ...action.changed].map((p) => resolve(shellHome(p), call.cwd));
+      return writes.length > 0 && touched.every((p) => covers(p, root));
     }
     const reads = action.paths.filter((p) => !action.writes.includes(p)).map((p) => resolve(p, call.cwd));
-    if (some) return reads.some((p) => pathUnder(p, root));
-    return writes.length === 0 && reads.length > 0 && reads.every((p) => pathUnder(p, root));
+    if (some) return reads.some((p) => covers(p, root));
+    return writes.length === 0 && reads.length > 0 && reads.every((p) => covers(p, root));
   }
   if ("path" in target) {
     const root = resolve(target.path, opts.base ?? call.cwd);
     const paths = [...new Set([...action.paths, ...action.writes])].map((p) => resolve(p, call.cwd));
-    return some ? paths.some((p) => pathUnder(p, root)) : paths.length > 0 && paths.every((p) => pathUnder(p, root));
+    return some ? paths.some((p) => covers(p, root)) : paths.length > 0 && paths.every((p) => covers(p, root));
   }
   if ("destination" in target) {
     const host = target.destination.toLowerCase().replace(/\.$/, "");
@@ -322,6 +326,29 @@ export function targetMatches(target: PolicyTarget, subject: TargetSubject, mode
     return segments.length > 0 && segments.every(starts);
   }
   return false;
+}
+
+export interface WatchOptions {
+  /** The user's home folder, for ~. */
+  home?: string;
+  /** Project roots the call is known to be in, beside its working directory. */
+  projectRoots?: readonly string[];
+}
+
+/** The paths a call changes that a watch entry covers, as the call names them. None when it is outside the entry's project. */
+export function watchHits(entry: PolicyEntry, call: ToolInvokedEvent, opts: WatchOptions = {}): string[] {
+  const t = entry.match.target;
+  if (!t || !("access" in t)) return [];
+  const project = entry.match.project;
+  if (project !== undefined) {
+    const root = normalizePath(project, undefined, opts.home);
+    const roots = [...(opts.projectRoots ?? []), ...(call.cwd ? [call.cwd] : [])];
+    if (!roots.some((r) => pathUnder(normalizePath(r, undefined, opts.home), root))) return [];
+  }
+  const base = project !== undefined && isAbsolute(project) ? project : call.cwd;
+  const root = normalizePath(t.path, anywhere(t.path) ? undefined : base, opts.home);
+  const action = normalizeAction(call);
+  return changeHits(action.changed, action.removed, root, (p) => normalizePath(shellHome(p), call.cwd, opts.home));
 }
 
 // ---------------------------------------------------------------------------
@@ -361,4 +388,82 @@ export function normalizePath(p: string, base: string | undefined, home: string 
 
 function pathUnder(p: string, root: string): boolean {
   return p === root || p.startsWith(root.endsWith("/") ? root : `${root}/`);
+}
+
+function isGlob(p: string): boolean {
+  return /[*?]/.test(p);
+}
+
+/** A leading double-star segment matches anywhere, so it takes no base folder. */
+function anywhere(p: string): boolean {
+  return /^\*\*[\\/]/.test(p);
+}
+
+/** A shell's $HOME is the home folder too. */
+function shellHome(p: string): string {
+  return p.replace(/^\$(?:HOME\b|\{HOME\})/, "~");
+}
+
+const globs = new Map<string, RegExp>();
+
+/** A glob as a regex that also takes anything under what it matches. */
+function globRegex(glob: string): RegExp {
+  let re = globs.get(glob);
+  if (re) return re;
+  let body = "";
+  for (let i = 0; i < glob.length; i++) {
+    const c = glob[i]!;
+    if (c === "*" && glob[i + 1] === "*") {
+      i++;
+      if (glob[i + 1] === "/") {
+        i++;
+        body += "(?:.*/)?";
+      } else {
+        body += ".*";
+      }
+    } else if (c === "*") body += "[^/]*";
+    else if (c === "?") body += "[^/]";
+    else body += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  re = new RegExp(`^${body}(?:/.*)?$`);
+  globs.set(glob, re);
+  return re;
+}
+
+/** Whether a path is covered by a root that may be a glob. */
+function covers(p: string, root: string): boolean {
+  return isGlob(root) ? globRegex(root).test(p) : pathUnder(p, root);
+}
+
+/** The folder a glob starts in: everything before its first wildcard's segment. Empty when it can match anywhere. */
+function literalPrefix(root: string): string {
+  const at = root.search(/[*?]/);
+  if (at === -1) return root;
+  const cut = root.lastIndexOf("/", at);
+  return cut <= 0 ? "" : root.slice(0, cut);
+}
+
+/**
+ * Which changed paths touch a root: a path under it, a wildcard in the
+ * command that reaches it, or a moved or deleted folder holding it.
+ */
+function changeHits(
+  changed: readonly string[],
+  removed: readonly string[],
+  root: string,
+  resolve: (p: string) => string,
+): string[] {
+  const literal = literalPrefix(root);
+  const hit = (written: string): boolean => {
+    const p = resolve(written);
+    if (!isGlob(p)) return covers(p, root);
+    // rm config/*: the command's own wildcard against the watched path.
+    if (!isGlob(root)) return globRegex(p).test(root);
+    return literal !== "" && (pathUnder(literal, literalPrefix(p)) || pathUnder(literalPrefix(p), literal));
+  };
+  const holds = (written: string): boolean => {
+    const p = resolve(written);
+    return !isGlob(p) && literal !== "" && pathUnder(literal, p);
+  };
+  return [...new Set([...changed.filter(hit), ...removed.filter(holds)])];
 }

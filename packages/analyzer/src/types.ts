@@ -131,6 +131,7 @@ export type Condition =
   | DestinationFirstSeenCondition
   | RememberedSecretCondition
   | FileEditCondition
+  | WatchedPathCondition
   | ServerDriftCondition;
 
 /**
@@ -447,6 +448,8 @@ export interface EvaluationContext {
   secretState?: import("./machine-state.js").MachineState;
   /** How the event's MCP server is reached, when its session recorded it. */
   mcpServerTransport?: import("@omnodex/shared").McpServerTransport;
+  /** The user's watch entries, for watched_path conditions. */
+  watches?: readonly import("@omnodex/shared").PolicyEntry[];
 }
 
 /**
@@ -578,6 +581,10 @@ export interface ServerDriftCondition {
  * Yields one context per matching file, with {{matched_path}} and the
  * pattern's {{matched_label}}.
  */
+export interface WatchedPathCondition {
+  type: "watched_path";
+}
+
 export interface FileEditCondition {
   type: "file_edit";
   /** Files this applies to; tested against the path with forward slashes. */
