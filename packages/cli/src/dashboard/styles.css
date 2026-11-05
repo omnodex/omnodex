@@ -893,3 +893,31 @@ header {
   white-space: pre-wrap; word-break: break-word; background: var(--navy-light); border: 1px solid var(--navy-border); border-radius: 4px; color: var(--white);
 }
 .param-actions { margin-bottom: 8px; }
+
+/* --- Finding actions --- */
+.fa-title { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 12px; color: var(--cyan); }
+.fa-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.fa-btn {
+  background: var(--navy-card); color: var(--white); border: 1px solid var(--navy-border); border-radius: 6px;
+  padding: 6px 12px; font-size: 13px; cursor: pointer;
+}
+.fa-btn:hover, .fa-btn.active { border-color: var(--cyan); }
+.fa-btn.primary { background: var(--cyan); color: var(--navy); border-color: var(--cyan); font-weight: 600; }
+.fa-btn:disabled { opacity: 0.6; cursor: default; }
+.fa-pro { margin-left: 6px; font-size: 10px; font-family: var(--mono); color: var(--orange); }
+.fa-form { margin-top: 12px; font-size: 13px; }
+.fa-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.fa-row > span:first-child { min-width: 84px; color: var(--slate); }
+.fa-row select, .fa-input {
+  background: var(--navy-card); color: var(--white); border: 1px solid var(--navy-border); border-radius: 6px;
+  padding: 6px 10px; font-family: var(--mono); font-size: 12px; max-width: 100%;
+}
+.fa-input { width: 100%; box-sizing: border-box; margin-bottom: 8px; }
+.fa-note { font-size: 12px; color: var(--slate); margin: 8px 0; line-height: 1.5; }
+.fa-note p { margin: 0 0 8px; }
+.fa-error { font-size: 12px; color: var(--red); margin: 8px 0; }
+.fa-link { color: var(--cyan); }
+.fa-command {
+  margin: 0 0 8px; padding: 10px 12px; background: var(--navy-light); border: 1px solid var(--navy-border); border-radius: 4px;
+  color: var(--white); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-all;
+}

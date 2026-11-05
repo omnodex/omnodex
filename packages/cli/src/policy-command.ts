@@ -113,6 +113,16 @@ function sectionOf(config: Record<string, unknown>): Record<string, unknown> {
   return typeof s === "object" && s !== null && !Array.isArray(s) ? { ...(s as Record<string, unknown>) } : {};
 }
 
+/** Add an entry to this machine's policy. The caller has already checked who may add it. */
+export async function appendPolicyEntry(home: string, entry: PolicyEntry): Promise<void> {
+  const file = path.join(home, USER_CONFIG_FILE);
+  const config = await readConfig(file);
+  const section = sectionOf(config);
+  const policy = parsePolicy(section.policy);
+  await writeConfig(file, { ...config, enforcement: { ...section, policy: [...policy, entry] } });
+  if (isWatchEntry(entry)) await markWatch("watch_add", entry, home);
+}
+
 // ---------------------------------------------------------------------------
 // Describing entries
 // ---------------------------------------------------------------------------
@@ -252,6 +262,41 @@ export function entryFromArgs(
     return { error: bad ? `unknown severity '${String(bad)}': use LOW, MEDIUM, HIGH or CRITICAL` : "that entry is not valid" };
   }
   return { entry };
+}
+
+/** One argument quoted for the user's shell when it needs it. */
+function shellQuote(v: string, windows: boolean): string {
+  if (/^[A-Za-z0-9_@%+=:,./~-]+$/.test(v)) return v;
+  return windows ? `'${v.replace(/'/g, "''")}'` : `'${v.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The `omnodex policy add` command that makes `e`: the inverse of
+ * entryFromArgs. A project is given with --project, so the command does not
+ * depend on the directory it is run from.
+ */
+export function commandForEntry(e: PolicyEntry, windows: boolean = process.platform === "win32"): string {
+  const q = (v: string): string => shellQuote(v, windows);
+  const m = e.match;
+  const parts = ["omnodex", "policy", "add"];
+  if (m.rule_id) parts.push("--rule", q(m.rule_id));
+  else if (m.category) parts.push("--category", q(m.category));
+  else if (m.severity) parts.push("--severity", m.severity);
+  const t = m.target;
+  if (t) {
+    if ("access" in t) parts.push(t.access === "read" ? "--reads" : "--writes", q(t.path));
+    else if ("tool" in t) parts.push("--tool", q(t.tool), ...(t.server ? ["--server", q(t.server)] : []));
+    else if ("path" in t) parts.push("--path", q(t.path));
+    else if ("destination" in t) parts.push("--destination", q(t.destination));
+    else if ("command_prefix" in t) parts.push("--command-prefix", q(t.command_prefix));
+    else parts.push("--credential", q(t.credential));
+  }
+  if (m.project) parts.push("--project", q(m.project));
+  if (e.effect.verdict) parts.push({ deny: "--block", confirm: "--hold", allow: "--allow" }[e.effect.verdict]);
+  if (e.effect.severity) parts.push("--set-severity", e.effect.severity);
+  if (e.effect.mute !== undefined) parts.push(e.effect.mute ? "--mute" : "--unmute");
+  if (e.note) parts.push("--note", q(e.note));
+  return parts.join(" ");
 }
 
 // ---------------------------------------------------------------------------
@@ -414,11 +459,7 @@ export async function runPolicy(args: string[], opts: PolicyOptions): Promise<nu
         return 1;
       }
       if (loosens(entry, opts.ruleSeverity) && !(await confirmLoosening(io, `"${describeEntry(entry)}"`, "add"))) return 1;
-      const config = await readConfig(file);
-      const section = sectionOf(config);
-      const policy = parsePolicy(section.policy);
-      await writeConfig(file, { ...config, enforcement: { ...section, policy: [...policy, entry] } });
-      if (isWatchEntry(entry)) await markWatch("watch_add", entry, home);
+      await appendPolicyEntry(home, entry);
       io.log(`${TAG} added ${entry.id}: ${describeEntry(entry)}.`);
       if (verdict === "deny" || verdict === "confirm") {
         io.log(`${TAG} it stops or holds calls in guardrails mode; in shadow mode it is recorded on each finding.`);

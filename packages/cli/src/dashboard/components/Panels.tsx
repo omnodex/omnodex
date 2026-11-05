@@ -34,6 +34,7 @@ import {
   type ViewTotals,
 } from "../../dashboard-model/index.js";
 import { ParamView } from "./Views.js";
+import { FindingActions } from "./FindingActions.js";
 import { riskLibraryUrl } from "../../dashboard-model/docs.js";
 import { advancedFindingsText } from "../../dashboard-model/advanced.js";
 import type { CollapsedToolCallRow, RiskEventRow, SessionRow, SessionView } from "../../dashboard-model/view.js";
@@ -561,6 +562,7 @@ export function DetailPanel({ view, utc, detail }: { view: SessionView; utc: boo
           </a>
         </DetailRow>
         {r.evidence?.drift && <DriftDetail drift={r.evidence.drift} />}
+        <FindingActions event={r} />
         {related && (
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--navy-border)" }}>
             <h4 style={{ ...HEADING, color: "var(--orange)", marginBottom: 12 }}>Related Tool Call</h4>
