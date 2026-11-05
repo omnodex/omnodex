@@ -33,7 +33,7 @@ import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from 
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
 import { runPolicy } from "./policy-command.js";
-import { annotateFindings, describeGuardrails, loadGuardrailsModule } from "@omnodex/analyzer/enforcement";
+import { annotateFindings, describeGuardrails, loadGuardrailsModule, machineEntries, readAccountPolicy, readUserEnforcement } from "@omnodex/analyzer/enforcement";
 import { pauseRows } from "./dashboard-model/pauses.js";
 import {
   Projector,
@@ -685,6 +685,13 @@ async function cmdDashboard(args: string[]): Promise<void> {
     store, port, assetsDir, pauses, version: getInstalledVersion(),
     advancedEntitled: () => advancedEntitled(resolvePaths().home),
     toolList,
+    policy: {
+      home: () => resolvePaths().home,
+      guardrailsEntitled: () => guardrailsEntitled(resolvePaths().home),
+      ruleSeverity: (id) => COMMUNITY_RULES.find((r) => r.rule_id === id)?.severity,
+      machineEntries: () => machineEntries({ user: readUserEnforcement(resolvePaths().home) }),
+      accountEntries: () => readAccountPolicy(resolvePaths().home),
+    },
   });
   try {
     await server.ready;

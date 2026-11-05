@@ -49,5 +49,5 @@ test("/api/info reports the CLI version", async (t) => {
       res.on("end", () => resolve(data));
     }).on("error", reject);
   });
-  assert.deepEqual(JSON.parse(body), { version: "0.7.1" });
+  assert.deepEqual(JSON.parse(body), { version: "0.7.1", policy: false });
 });

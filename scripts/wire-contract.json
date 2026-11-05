@@ -203,6 +203,7 @@
       "packages/cli/src/plugins.ts": "Plugin bundle downloads from downloads.omnodex.com; no body, no credentials",
       "packages/cli/src/dashboard/App.tsx": "Local dashboard in the browser, talking to its own local server",
       "packages/cli/src/dashboard/components/Panels.tsx": "Local dashboard in the browser, talking to its own local server",
+      "packages/cli/src/dashboard/components/FindingActions.tsx": "Local dashboard in the browser, talking to its own local server",
       "packages/cli/src/dashboard/useSnapshot.ts": "Local dashboard in the browser, talking to its own local server"
     }
   },

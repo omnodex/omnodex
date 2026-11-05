@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import { collapseCorrelated, readSnapshot } from "@omnodex/projection";
 import type { PauseRow } from "./dashboard-model/pauses.js";
 import { shownFindings, withoutAdvancedFindings } from "./advanced-findings.js";
+import { draftPolicy, parseDraftRequest, savePolicy, type DashboardPolicyHooks } from "./dashboard-policy.js";
 import type {
   FileEventRow,
   ReadModelStore,
@@ -56,7 +57,15 @@ export interface DashboardServerOptions {
    * after of a drift finding. Undefined when no root holds it.
    */
   toolList?: (fingerprint: string) => unknown[] | undefined;
+  /**
+   * What the finding actions need from this machine's policy. Without it the
+   * actions are not offered.
+   */
+  policy?: DashboardPolicyHooks;
 }
+
+/** The largest request body the policy routes read. */
+const MAX_BODY_BYTES = 64 * 1024;
 
 /**
  * Addresses the server listens on. IPv4 loopback is required; IPv6 loopback
@@ -219,6 +228,7 @@ export class DashboardServer {
   private readonly version: string | null;
   private readonly advancedEntitled: () => boolean;
   private readonly toolList: (fingerprint: string) => unknown[] | undefined;
+  private readonly policy: DashboardPolicyHooks | null;
   private readonly servers: http.Server[] = [];
   private readonly sseClients = new Set<http.ServerResponse>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -237,6 +247,7 @@ export class DashboardServer {
     this.version = options.version ?? null;
     this.advancedEntitled = options.advancedEntitled ?? (() => false);
     this.toolList = options.toolList ?? (() => undefined);
+    this.policy = options.policy ?? null;
     this.ready = this.listen(options.port);
 
     // Heartbeat keeps SSE connections alive through proxies and firewalls.
@@ -373,7 +384,13 @@ export class DashboardServer {
 
     // The CLI version, for the page's feedback link.
     if (pathname === "/api/info") {
-      return sendJson(res, { version: this.version });
+      return sendJson(res, { version: this.version, policy: this.policy !== null });
+    }
+
+    // Finding actions: preview an entry, or save one that tightens this
+    // machine's policy. Nothing here loosens it; see dashboard-policy.ts.
+    if (pathname === "/api/policy/draft" || pathname === "/api/policy/save") {
+      return this.handlePolicy(req, res, pathname === "/api/policy/save");
     }
 
     if (pathname === "/api/sessions") {
@@ -438,6 +455,31 @@ export class DashboardServer {
     send404(res);
   }
 
+  private async handlePolicy(req: http.IncomingMessage, res: http.ServerResponse, save: boolean): Promise<void> {
+    if (!this.policy) return send404(res);
+    if (req.method !== "POST") return sendError(res, 405, "use POST");
+    if (!/^application\/json\b/i.test(req.headers["content-type"] ?? "")) {
+      return sendError(res, 415, "send application/json");
+    }
+    let body: unknown;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch (err) {
+      return sendError(res, (err as { status?: number }).status ?? 400, (err as { status?: number }).status === 413 ? "the request body is too large" : "the request body is not valid JSON");
+    }
+    const parsed = parseDraftRequest(body);
+    if (typeof parsed === "string") return sendError(res, 400, parsed);
+    const snapshot = withoutAdvancedFindings(collapseCorrelated(await readSnapshot(this.store)), this.advancedEntitled());
+    if (!save) {
+      const draft = await draftPolicy(snapshot, parsed, this.policy);
+      return draft ? sendJson(res, draft) : sendError(res, 404, "no such finding");
+    }
+    const result = await savePolicy(snapshot, parsed, this.policy);
+    if ("saved" in result) return sendJson(res, { saved: result.saved });
+    const status = result.blocked === "not-found" ? 404 : result.blocked === "invalid" ? 400 : 403;
+    return sendError(res, status, result.error ?? `not saved: ${result.blocked}`, { blocked: result.blocked });
+  }
+
   // -------------------------------------------------------------------------
   // SSE connection handler
   // -------------------------------------------------------------------------
@@ -481,6 +523,28 @@ function listenOn(server: http.Server, port: number, host: string): Promise<void
 function sendJson(res: http.ServerResponse, data: unknown): void {
   res.writeHead(200, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
+}
+
+function sendError(res: http.ServerResponse, status: number, error: string, extra: Record<string, unknown> = {}): void {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error, ...extra }));
+}
+
+/** The request body as text, refused past MAX_BODY_BYTES (the rest is read and dropped so the refusal can be sent). */
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size <= MAX_BODY_BYTES) chunks.push(c);
+    });
+    req.on("end", () => {
+      if (size > MAX_BODY_BYTES) reject(Object.assign(new Error("body too large"), { status: 413 }));
+      else resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+    req.on("error", reject);
+  });
 }
 
 function send404(res: http.ServerResponse): void {
