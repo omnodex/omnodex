@@ -104,13 +104,16 @@ export const POLICY_VERDICTS: readonly PolicyVerdict[] = ["deny", "confirm", "al
  * What a policy entry applies to within its rule, category or severity.
  * Absent means every call. Exactly one shape:
  *
- * - path            -- a file or directory; a directory covers everything under it. ~ is the home folder.
+ * - path            -- a file, directory or glob; a directory covers everything under it. ~ is the home folder.
+ *                      In a glob, * and ? stay within one path segment and ** crosses them; a leading
+ *                      double-star segment matches anywhere on the machine.
  * - destination     -- a host and its subdomains.
  * - command_prefix  -- the start of a command that runs, on whole words.
  * - credential      -- a short salted fingerprint of a credential value, as
  *                      the finding records it. Never the value.
  * - tool            -- a tool by name, optionally only on one MCP server.
- * - access          -- reads of, or writes to, a file or directory.
+ * - access          -- reads of, or writes to, a file, directory or glob. Writes include
+ *                      changing, moving and deleting.
  */
 export type PolicyTarget =
   | { path: string }
@@ -143,6 +146,22 @@ export interface PolicyEffect {
   severity?: RiskSeverity;
   /** Keep the finding out of default views, counts and notifications. */
   mute?: boolean;
+}
+
+/** The rule a watched path raises. */
+export const WATCHED_PATH_RULE_ID = "RULE_WATCHED_PATH";
+
+/**
+ * Whether an entry watches a path: it names the watched-path rule, targets
+ * writes to a path or glob, and keeps the finding at full strength. An entry
+ * for the same rule that allows, mutes or lowers it is an exception, not a
+ * watch.
+ */
+export function isWatchEntry(e: PolicyEntry): boolean {
+  const t = e.match.target;
+  if (e.match.rule_id !== WATCHED_PATH_RULE_ID || !t || !("access" in t) || t.access !== "write") return false;
+  if (e.effect.verdict === "allow" || e.effect.mute === true) return false;
+  return e.effect.verdict !== undefined || e.effect.severity === "HIGH" || e.effect.severity === "CRITICAL";
 }
 
 /**

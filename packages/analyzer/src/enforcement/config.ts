@@ -26,7 +26,9 @@ import path from "node:path";
 import {
   PROJECT_CONFIG_DIR,
   PROJECT_CONFIG_FILE,
+  isWatchEntry,
   parseEnforcementConfig,
+  policyEntries,
   parsePolicy,
   parseRepoEnforcementConfig,
   type EnforcementConfig,
@@ -65,6 +67,26 @@ export function readAccountPolicy(home: string): PolicyEntry[] {
 /** The user's enforcement section. */
 export function readUserEnforcement(home: string): EnforcementConfig {
   return parseEnforcementConfig(section(readJson(path.join(home, USER_CONFIG_FILE))));
+}
+
+/**
+ * A function returning the watch entries from this machine's file and the
+ * account's policy. It reads them again only when one of the files changes,
+ * so a long-lived host notices a new watch at the cost of two stats a call.
+ */
+export function watchEntriesLoader(home?: string): () => PolicyEntry[] {
+  const dir = home ?? process.env.OMNODEX_HOME ?? path.join(os.homedir(), ".omnodex");
+  const files = [USER_CONFIG_FILE, ACCOUNT_POLICY_FILE].map((f) => path.join(dir, f));
+  let stamp: string | null = null;
+  let entries: PolicyEntry[] = [];
+  return () => {
+    const now = files.map((f) => fs.statSync(f, { throwIfNoEntry: false })?.mtimeMs ?? 0).join();
+    if (now !== stamp) {
+      stamp = now;
+      entries = [...policyEntries(readUserEnforcement(dir)), ...readAccountPolicy(dir)].filter(isWatchEntry);
+    }
+    return entries;
+  };
 }
 
 /**

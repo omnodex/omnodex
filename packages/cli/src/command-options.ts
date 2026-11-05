@@ -5,7 +5,7 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 
-import { POLICY_ADD_FLAGS, POLICY_ADD_VALUES } from "./policy-command.js";
+import { POLICY_ADD_FLAGS, POLICY_ADD_VALUES, POLICY_WATCH_FLAGS, POLICY_WATCH_VALUES } from "./policy-command.js";
 
 interface CommandOptions {
   usage: string;
@@ -84,7 +84,7 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
     },
   },
   policy: {
-    usage: "policy list | add | remove <id> | pull", description: "This machine's policy entries for findings. Allowing, muting, lowering a severity, or removing an entry that blocks, holds or raises one requires confirmation at a terminal.",
+    usage: "policy list | add | watch <path> | remove <id> | pull", description: "This machine's policy entries for findings. Allowing, muting, lowering a severity, or removing a watch or an entry that blocks, holds or raises one requires confirmation at a terminal.",
     subcommands: {
       list: { usage: "list", description: "Show every entry, the older per-rule and exception settings included." },
       add: {
@@ -92,6 +92,12 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
         description: "Add an entry. Targets: --path, --destination, --command-prefix, --credential, --tool [--server], --reads, --writes. Effects: --block or --hold (Pro), --allow, --mute, --unmute, --set-severity <level>.",
         flags: [...POLICY_ADD_FLAGS],
         values: [...POLICY_ADD_VALUES],
+      },
+      watch: {
+        usage: "watch <path> [--project <root> | --here] [--block | --hold] [--note <text>]",
+        description: "Raise a HIGH finding when a tool call changes, moves or deletes a file, folder or glob. Reads do not count, and neither do changes a tool call does not name. --block and --hold need Pro.",
+        flags: [...POLICY_WATCH_FLAGS],
+        values: [...POLICY_WATCH_VALUES],
       },
       remove: { usage: "remove <id>", description: "Remove an entry by the id `policy list` shows." },
       pull: { usage: "pull", description: "Fetch the entries made for your whole account in the hosted dashboard." },

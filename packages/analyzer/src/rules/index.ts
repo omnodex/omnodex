@@ -76,6 +76,7 @@ import {
   RULE_SELF_PROTECTION_HOOKS_DISABLED,
   RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
 } from "./community/self-protection.js";
+import { RULE_WATCHED_PATH } from "./community/watched-path.js";
 import { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 import { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
 import { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
@@ -143,6 +144,7 @@ export {
   RULE_SELF_PROTECTION_HOOKS_DISABLED,
   RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
 } from "./community/self-protection.js";
+export { RULE_WATCHED_PATH } from "./community/watched-path.js";
 export { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 export { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
 export { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
@@ -200,6 +202,7 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   RULE_SELF_PROTECTION_HOOK_REMOVED,
   RULE_SELF_PROTECTION_HOOKS_DISABLED,
   RULE_SELF_PROTECTION_HOOK_FILE_REWRITE,
+  RULE_WATCHED_PATH,
   // API base URL override
   RULE_THREAT_API_BASE_URL_OVERRIDE,
   // Working-directory boundary

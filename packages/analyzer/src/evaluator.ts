@@ -32,7 +32,7 @@
  * does not load the event log or batch helpers.
  */
 
-import type { RiskDetectedEvent, ServerObservedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
+import type { PolicyEntry, RiskDetectedEvent, ServerObservedEvent, TraceEvent, ToolInvokedEvent } from "@omnodex/shared";
 import { SCHEMA_VERSION } from "@omnodex/shared";
 export { RULE_FORMAT_VERSION } from "@omnodex/shared";
 import { RuleEngine, STATEFUL_CONDITION_TYPES } from "./engine.js";
@@ -47,6 +47,7 @@ import { findCredentials } from "./conditions/credential-match.js";
 import { CAPTURE_HOSTS } from "./capture.js";
 import { loadAdvancedRules } from "./bundle.js";
 import { credentialFingerprinter } from "./known-secrets.js";
+import { watchEntriesLoader } from "./enforcement/config.js";
 
 export type EvaluationClass = "event" | "session" | "machine";
 export type EvaluatorHost = "hook" | "proxy" | "batch";
@@ -104,6 +105,7 @@ const CONDITION_TYPES: Readonly<Record<Condition["type"], true>> = {
   destination_first_seen: true,
   remembered_secret: true,
   file_edit: true,
+  watched_path: true,
   server_drift: true,
 };
 
@@ -239,6 +241,8 @@ export interface EvaluatorOptions {
    * records none.
    */
   fingerprint?: ((value: string) => string) | null;
+  /** The user's watch entries. Defaults to reading them from OMNODEX_HOME, again when they change. */
+  watches?: () => readonly PolicyEntry[];
 }
 
 export interface EvaluatorStats {
@@ -349,6 +353,11 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
     }
   };
 
+  // Read only when a rule looks at them, and only for a call being judged.
+  const watches = rules.some((r) => r.conditions.some((c) => c.type === "watched_path"))
+    ? (opts.watches ?? watchEntriesLoader(opts.home))
+    : null;
+
   const recorded = new Set<string>();
   const stats: EvaluatorStats = { evaluated: 0, findings: 0, skipped: 0, byRule: {}, byTier: {}, unreadableRules };
 
@@ -441,7 +450,7 @@ export function createEvaluator(opts: EvaluatorOptions): Evaluator {
           return [];
         case "tool.invoked": {
           stats.evaluated++;
-          const context = contextFor(event);
+          const context = { ...contextFor(event), ...(watches ? { watches: watches() } : {}) };
           const wanted = options.classes ? new Set(options.classes) : null;
           const findings = [
             ...(!wanted || wanted.has("event") ? eventEngine.evaluate(event, context) : []),
