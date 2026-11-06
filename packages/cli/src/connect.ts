@@ -191,6 +191,7 @@ const TARGET_PLATFORM_MAP: Record<string, string> = {
   "claude-code": "claude-code-hook",
   codex: "codex-hook",
   antigravity: "antigravity-hook",
+  copilot: "copilot-hook",
   cowork: "cowork-plugin",
 };
 

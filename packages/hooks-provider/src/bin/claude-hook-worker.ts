@@ -51,6 +51,7 @@ import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
 import type { ClaudeCodeHookPayload } from "../claude-code-payload.js";
 import { mapClaudeCodePayload } from "../claude-code-payload.js";
+import { copilotCaptureInstalled, looksLikeCopilotRun } from "../copilot-run.js";
 import { TITLE_HOOKS, titleFromTranscript } from "../session-title.js";
 import { MODEL_HOOKS, modelFromTranscript } from "../session-model.js";
 import {
@@ -134,6 +135,13 @@ async function main(): Promise<number> {
       console.error(
         `[omnodex-hook] payload missing hook_event_name, discarding`,
       );
+    return 0;
+  }
+
+  // Copilot runs the hooks in a project's .claude/settings.json too. Where
+  // Omnodex records Copilot itself, that run is recorded there, as Copilot.
+  if (looksLikeCopilotRun(payload) && (await copilotCaptureInstalled(home))) {
+    if (debug) console.error("[omnodex-hook] this is a Copilot run, which the Copilot hooks record");
     return 0;
   }
 

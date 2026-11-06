@@ -27,6 +27,8 @@ import { interceptorLabel, interceptorTone, runtimeLabel } from "../dist/dashboa
 
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 const NEW_PLATFORMS = ["copilot", "cursor", "opencode"];
+// Providers that have not shipped yet.
+const PENDING = ["cursor", "opencode"];
 
 async function machine(t) {
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-platforms-")));
@@ -69,12 +71,12 @@ function run(args, env) {
   });
 }
 
-test("the registry lists all six platforms; only the shipped three are available", () => {
+test("the registry lists all six platforms; only the shipped four are available", () => {
   assert.deepEqual([...PLATFORMS], ["claude-code", "codex", "antigravity", "copilot", "cursor", "opencode"]);
-  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity"]);
+  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity", "copilot"]);
   for (const p of NEW_PLATFORMS) {
     assert.equal(isPlatform(p), true);
-    assert.equal(PLATFORM_AVAILABLE[p], false);
+    assert.equal(PLATFORM_AVAILABLE[p], !PENDING.includes(p));
     assert.ok(PLATFORM_LABELS[p]);
     assert.equal(SURFACE_LABELS[p], PLATFORM_LABELS[p]);
   }
@@ -91,10 +93,13 @@ test("detection ignores the new agents until their providers ship", async (t) =>
   const m = await machine(t);
   const bin = path.join(m.root, "bin");
   await fs.mkdir(bin);
-  for (const cmd of ["copilot", "cursor-agent", "opencode"]) await fs.writeFile(path.join(bin, cmd), "#!/bin/sh\n", { mode: 0o755 });
+  for (const cmd of ["cursor-agent", "opencode"]) await fs.writeFile(path.join(bin, cmd), "#!/bin/sh\n", { mode: 0o755 });
   await fs.mkdir(path.join(m.home, ".cursor"), { recursive: true });
   const found = detectSurfaces({ home: m.home, platform: "linux", env: { PATH: bin } });
   assert.deepEqual(found, []);
+  // Copilot has shipped, so it is found.
+  await fs.writeFile(path.join(bin, "copilot"), "#!/bin/sh\n", { mode: 0o755 });
+  assert.deepEqual(detectSurfaces({ home: m.home, platform: "linux", env: { PATH: bin } }).map((d) => d.surface), ["copilot"]);
 });
 
 test("each new platform has a user-level hooks file, and the agent's own folder variable moves it", () => {
@@ -176,9 +181,9 @@ test("the dashboard names the new sources", () => {
   assert.equal(runtimeLabel({ interceptor: "mcp-proxy", platform: "opencode", mcp_client_name: null }), "OpenCode via MCP Proxy");
 });
 
-test("install and uninstall name the new targets but report them as not available yet", async (t) => {
+test("install and uninstall name the pending targets but report them as not available yet", async (t) => {
   const m = await machine(t);
-  for (const target of NEW_PLATFORMS) {
+  for (const target of PENDING) {
     const install = await run(["install", target, m.project, "--no-connect", "--yes"], m.env);
     assert.equal(install.code, 1, install.out);
     assert.match(install.out, /not available yet/);
@@ -188,6 +193,7 @@ test("install and uninstall name the new targets but report them as not availabl
   assert.match(uninstall.out, /not available yet/);
   // Nothing was written for any of them.
   assert.equal(existsSync(userHooksFile("cursor", m.home, m.env)), false);
+  assert.equal(existsSync(userHooksFile("copilot", m.home, m.env)), false);
   assert.equal(existsSync(path.join(m.omnodexHome, "bin")), false);
 });
 
@@ -196,4 +202,34 @@ test("an unknown target lists every valid one", async (t) => {
   const r = await run(["install", "emacs"], m.env);
   assert.equal(r.code, 1);
   for (const p of ["claude-code", "codex", "antigravity", "copilot", "cursor", "opencode"]) assert.match(r.out, new RegExp(p));
+});
+
+test("install copilot writes the hooks file and the launcher, records it, and uninstall removes the file", async (t) => {
+  const m = await machine(t);
+  const file = path.join(m.project, ".github", "hooks", "omnodex.json");
+  const install = await run(["install", "copilot", m.project, "--this-project", "--no-connect", "--yes"], m.env);
+  assert.equal(install.code, 0, install.out);
+  const hooks = JSON.parse(await fs.readFile(file, "utf8"));
+  assert.equal(hooks.version, 1);
+  assert.ok(hooks.hooks.PreToolUse && hooks.hooks.PostToolUse && hooks.hooks.SessionEnd);
+  assert.match(JSON.stringify(hooks), /copilot-hook-launcher\.js/);
+  assert.ok(existsSync(path.join(m.omnodexHome, "bin", "copilot-hook-launcher.js")));
+  const registry = JSON.parse(await fs.readFile(path.join(m.omnodexHome, "installations.json"), "utf8"));
+  assert.ok(registry.installations.some((e) => e.target === "copilot" && e.component === "hooks"));
+  const status = await run(["status", m.project], m.env);
+  assert.match(status.out, /Copilot: installed/);
+
+  const uninstall = await run(["uninstall", "copilot", m.project, "--confirm", "--unattended"], m.env);
+  assert.equal(uninstall.code, 0, uninstall.out);
+  assert.equal(existsSync(file), false);
+});
+
+test("install copilot --everywhere writes the user-level file with the user-scope marker", async (t) => {
+  const m = await machine(t);
+  const install = await run(["install", "copilot", m.project, "--everywhere", "--no-connect", "--yes"], { ...m.env, COPILOT_HOME: path.join(m.home, ".copilot") });
+  assert.equal(install.code, 0, install.out);
+  const file = path.join(m.home, ".copilot", "hooks", "omnodex.json");
+  const text = await fs.readFile(file, "utf8");
+  assert.match(text, /--user-scope/);
+  assert.deepEqual((await readHookScope(m.omnodexHome)).everywhere, ["copilot"]);
 });

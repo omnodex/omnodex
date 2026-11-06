@@ -20,6 +20,9 @@
       "path": "./packages/codex-provider"
     },
     {
+      "path": "./packages/copilot-provider"
+    },
+    {
       "path": "./packages/mcp-proxy"
     },
     {

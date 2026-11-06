@@ -1,0 +1,30 @@
+{
+  "name": "@omnodex/copilot-provider",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Omnodex interceptor for GitHub Copilot (CLI and VS Code) via the Copilot hooks system.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "bin": {
+    "omnodex-copilot-hook": "./dist/bin/copilot-hook-shim.js"
+  },
+  "dependencies": {
+    "@omnodex/analyzer": "*",
+    "@omnodex/event-log": "*",
+    "@omnodex/hooks-provider": "*",
+    "@omnodex/shared": "*",
+    "@omnodex/sync-encryptor": "*"
+  }
+}
