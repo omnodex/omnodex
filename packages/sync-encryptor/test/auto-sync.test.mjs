@@ -327,6 +327,18 @@ describe("runAutoSync", () => {
     assert.deepEqual(order.slice(0, 2), ["license", "policy:true"]);
   });
 
+  it("seals under the lock after the license and policy steps, and a failing seal does not stop the pass", async () => {
+    await writeCredentials(home);
+    const order = [];
+    await runAutoSync(home, {
+      refreshLicense: async () => order.push("license"),
+      pullPolicy: async () => order.push("policy"),
+      seal: async (h) => { order.push(`seal:${h === home}`); throw new Error("disk full"); },
+      checkMonitoring: async () => order.push("monitoring"),
+    });
+    assert.deepEqual(order, ["license", "policy", "seal:true", "monitoring"]);
+  });
+
   it("pushes an encrypted blob, records success, and releases the lock", async () => {
     server = await startSyncServer();
     await writeCredentials(home, { api_url: server.url });

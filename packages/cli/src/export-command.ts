@@ -17,6 +17,7 @@
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { TraceEvent } from "@omnodex/shared";
+import { buildBundle } from "./evidence/bundle.js";
 import {
   inWindow,
   normalizeEvent,
@@ -29,7 +30,7 @@ import {
 export const EXPORT_FORMATS = ["jsonl", "ocsf"] as const;
 export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 
-export const EXPORT_FLAGS = ["--follow"] as const;
+export const EXPORT_FLAGS = ["--follow", "--bundle"] as const;
 export const EXPORT_VALUES = ["--format", "--since", "--until", "--out", "--include", "--max-size", "--keep"] as const;
 
 export const DEFAULT_MAX_SIZE = 50 * 1024 * 1024;
@@ -46,6 +47,8 @@ export interface ExportDeps {
   /** Omnodex roots to read; each holds an `event-log` folder. */
   roots: string[];
   io: ExportIo;
+  /** The Omnodex home, where seals and the signing key live (needed for --bundle). */
+  home?: string;
   /** Ends --follow. */
   signal?: AbortSignal;
   /** How often --follow looks for new events. */
@@ -59,6 +62,8 @@ export interface ExportOptions {
   until?: number;
   out: string;
   follow: boolean;
+  /** Write a signed evidence bundle instead of an event feed. */
+  bundle: boolean;
   include: Set<ContentGroup>;
   maxSize: number;
   keep: number;
@@ -89,6 +94,12 @@ export function parseExportArgs(args: readonly string[], now: number = Date.now(
     return { error: `unknown format '${format}' (use ${EXPORT_FORMATS.join(" or ")})` };
   }
   const follow = flags.has("--follow");
+  const bundle = flags.has("--bundle");
+  if (bundle) {
+    for (const incompatible of ["--follow", "--format", "--include", "--max-size", "--keep"]) {
+      if (flags.has(incompatible) || values.has(incompatible)) return { error: `${incompatible} cannot be used with --bundle` };
+    }
+  }
   let since: number | undefined;
   let until: number | undefined;
   if (values.has("--since")) {
@@ -114,7 +125,7 @@ export function parseExportArgs(args: readonly string[], now: number = Date.now(
     if (!Number.isInteger(parsed) || parsed < 0) return { error: `cannot read --keep '${values.get("--keep")}' (use a whole number, 0 or more)` };
     keep = parsed;
   }
-  return { format: format as ExportFormat, since, until, out, follow, include: include.groups, maxSize, keep };
+  return { format: format as ExportFormat, since, until, out, follow, bundle, include: include.groups, maxSize, keep };
 }
 
 /** One output line for an event, or undefined for a format the code does not know. */
@@ -310,6 +321,7 @@ export async function runExport(args: readonly string[], deps: ExportDeps): Prom
     return 1;
   }
   const toStdout = options.out === "-";
+  if (options.bundle) return runBundle(options, deps, now);
   const lines = (events: TraceEvent[]) => events.map((e) => formatEvent(e, options)).join("");
 
   if (!options.follow) {
@@ -352,4 +364,30 @@ export async function runExport(args: readonly string[], deps: ExportDeps): Prom
   }
   deps.io.error(`[export] stopped after ${total} event(s).`);
   return 0;
+}
+
+/** `omnodex export --bundle`: seal what is pending and write the signed bundle. */
+async function runBundle(options: ExportOptions, deps: ExportDeps, now: number): Promise<number> {
+  if (!deps.home) {
+    deps.io.error("[export] --bundle needs the Omnodex home.");
+    return 1;
+  }
+  try {
+    const built = await buildBundle({ home: deps.home, roots: deps.roots, since: options.since, until: options.until, now: () => now });
+    if (options.out === "-") {
+      deps.io.write(built.text);
+    } else {
+      await fs.mkdir(path.dirname(path.resolve(options.out)), { recursive: true });
+      await fs.writeFile(options.out, built.text, "utf8");
+    }
+    deps.io.error(`[export] wrote a bundle of ${built.seals} seal(s) and ${built.events} event(s)${options.out === "-" ? "" : ` to ${options.out}`}.`);
+    deps.io.error("[export] The bundle holds every event in full, prompts and tool parameters included. Check it before handing it on.");
+    if (built.missing.length > 0) {
+      deps.io.error(`[export] ${built.missing.length} sealed event(s) are no longer in the log and are missing from the bundle; omnodex verify will report them as dropped.`);
+    }
+    return 0;
+  } catch (err) {
+    deps.io.error(`[export] ${err instanceof Error ? err.message : String(err)}.`);
+    return 1;
+  }
 }

@@ -32,6 +32,8 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { runExport } from "./export-command.js";
+import { runSeal, runVerify } from "./evidence/commands.js";
+import { sealPending } from "./evidence/seal.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
 import { runPolicy } from "./policy-command.js";
 import { annotateFindings, describeGuardrails, loadGuardrailsModule, machineEntries, readAccountPolicy, readUserEnforcement } from "@omnodex/analyzer/enforcement";
@@ -3106,7 +3108,10 @@ async function main(): Promise<void> {
   // to a stdout nobody is reading.
   if (process.env[AUTO_SYNC_CHILD_ENV] === "1") {
     const { home } = resolvePaths();
-    await runAutoSync(home, { detect: () => runBackgroundDetection(home) });
+    await runAutoSync(home, {
+      detect: () => runBackgroundDetection(home),
+      seal: async () => { await sealPending({ home, roots: (await resolveRoots()).all }); },
+    });
     return;
   }
 
@@ -3224,6 +3229,18 @@ async function main(): Promise<void> {
     case "live":
       await cmdLive(rest);
       return;
+    case "seal": {
+      const resolved = await resolveRoots();
+      process.exitCode = await runSeal(rest, {
+        home: resolvePaths().home,
+        roots: resolved.all,
+        io: { log: (l) => console.log(l), error: (l) => console.error(l) },
+      });
+      return;
+    }
+    case "verify":
+      process.exitCode = await runVerify(rest, { io: { log: (l) => console.log(l), error: (l) => console.error(l) } });
+      return;
     case "export": {
       const stop = new AbortController();
       const onSignal = () => stop.abort();
@@ -3232,6 +3249,7 @@ async function main(): Promise<void> {
       const resolved = await resolveRoots();
       process.exitCode = await runExport(rest, {
         roots: resolved.all,
+        home: resolvePaths().home,
         signal: stop.signal,
         io: {
           write: (text) => { process.stdout.write(text); },
@@ -3393,6 +3411,19 @@ commands:
                        --include <groups>    add content that is left out by
                                              default: prompts, parameters,
                                              titles, errors, or all
+                       --bundle              instead write a signed evidence
+                                             bundle (seals pending events
+                                             first; events are included in
+                                             full) for omnodex verify
+  seal [key]         seal the events recorded since the last seal: hash them
+                     into a chain and sign it with this machine's key. The
+                     background pass seals too. seal key prints this
+                     machine's key id and public key.
+  verify <bundle>    check an evidence bundle: signatures, hashes, order and
+                     gaps, plus the capture pauses and monitoring changes in
+                     it. --key <public key or id> names a key you trust
+                     (repeatable); --json prints the report. Exits 2 when a
+                     problem is found.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       build synthetic sessions through the real pipeline.

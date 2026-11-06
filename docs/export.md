@@ -29,6 +29,9 @@ omnodex export --format ocsf --follow --out /var/log/omnodex/events.ocsf.jsonl
 All roots Omnodex reads elsewhere (`OMNODEX_HOME`, the default home, and roots
 named in its configuration) are exported together, oldest event first.
 
+`omnodex export --bundle --out <file>` writes a signed evidence bundle instead of
+an event feed; see [evidence.md](evidence.md). A bundle holds events in full.
+
 ## What is left out
 
 Metadata and findings are exported. Anything a person typed or a tool printed
