@@ -39,7 +39,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Buffer } from "node:buffer";
 import { applyCapturePause, EventLog, isPauseMarker, newEventId, sessionModelChangedIfChanged, sessionRenamedIfChanged, withProjectRemote } from "@omnodex/event-log";
-import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured } from "@omnodex/analyzer/capture";
+import { CaptureTimeoutError, captureDetectEnabled, judgeCaptured, maskCaptured } from "@omnodex/analyzer/capture";
 import { enforceCapturedCall, stampCaptured } from "@omnodex/analyzer/stamp";
 import type { TraceEvent } from "@omnodex/shared";
 import type { CodexHookPayload } from "../codex-payload.js";
@@ -165,7 +165,8 @@ async function main(): Promise<number> {
     await log.init();
     // A capture pause drops the events (record) or keeps them on this
     // machine only (sync); pause markers are always written.
-    const written = await applyCapturePause(events, home);
+    // Masked as written: the rules below still judge the call as captured.
+    const written = await maskCaptured(await applyCapturePause(events, home), home);
     for (const event of written) {
       await log.append(event);
     }

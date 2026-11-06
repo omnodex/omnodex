@@ -123,3 +123,28 @@ export async function judgeCaptured(
     clearTimeout(timer);
   }
 }
+
+/**
+ * The events as they are written: every credential in a tool call's
+ * parameters replaced by its marker (see mask-secrets.ts). Call it after
+ * judging, since the rules read the value, and before anything is appended
+ * or pushed. Never rejects: if masking cannot run, the parameters are
+ * dropped instead of written.
+ */
+export async function maskCaptured<T extends TraceEvent>(events: readonly T[], home: string): Promise<T[]> {
+  if (!events.some((e) => e.event_type === "tool.invoked")) return [...events];
+  try {
+    const [{ maskEventSecrets }, { credentialFingerprinter }] = await Promise.all([
+      import("./mask-secrets.js"),
+      import("./known-secrets.js"),
+    ]);
+    const fingerprint = credentialFingerprinter(home);
+    return events.map((e) => maskEventSecrets(e, fingerprint));
+  } catch {
+    return events.map((e) =>
+      e.event_type === "tool.invoked" && "parameters" in e
+        ? ({ ...e, parameters: { _omnodex_masking_failed: true } } as T)
+        : e,
+    );
+  }
+}

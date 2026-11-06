@@ -12,7 +12,7 @@
  * credential is. Values never leave the page.
  */
 
-import { CREDENTIAL_PATTERNS, findCredentials } from "@omnodex/analyzer";
+import { CREDENTIAL_PATTERNS, displayHint, findCredentials, parseSecretMarker } from "@omnodex/analyzer";
 import type { CollapsedToolCallRow } from "@omnodex/projection";
 
 export interface LedgerEntry {
@@ -27,7 +27,16 @@ export interface LedgerEntry {
 
 /** Keeps the first 8 and last 4 characters of a long value. */
 export function maskCredential(value: string): string {
+  // Already masked at capture: show the kept characters recorded with it.
+  const marker = parseSecretMarker(value);
+  if (marker) return displayHint(marker.hint);
   return value.length <= 8 ? value : `${value.slice(0, 8)}...${value.slice(-4)}`;
+}
+
+/** What makes two sightings the same credential: the recorded fingerprint, or the value in an older log. */
+function credentialId(value: string): string {
+  const marker = parseSecretMarker(value);
+  return marker ? `fp:${marker.fingerprint}` : value;
 }
 
 /** One entry per distinct credential per call, in call order. */
@@ -36,7 +45,7 @@ export function credentialLedger(toolCalls: readonly CollapsedToolCallRow[]): Le
   const seen = new Set<string>();
   for (const tc of toolCalls) {
     for (const { type, value } of findCredentials(tc.parameters_json || "{}", CREDENTIAL_PATTERNS)) {
-      const key = `${type}:${value}`;
+      const key = `${type}:${credentialId(value)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       entries.push({ type, masked: maskCredential(value), tool: tc.tool_name, server: tc.mcp_server, toolCallId: tc.tool_call_id });
@@ -77,7 +86,7 @@ export function groupedLedger(toolCalls: readonly CollapsedToolCallRow[]): Crede
   for (const tc of toolCalls) {
     const seenInCall = new Set<string>();
     for (const { type, value } of findCredentials(tc.parameters_json || "{}", CREDENTIAL_PATTERNS)) {
-      const identity = `${type}\u0000${value}`;
+      const identity = `${type}\u0000${credentialId(value)}`;
       if (seenInCall.has(identity)) continue;
       seenInCall.add(identity);
       let key = ids.get(identity);

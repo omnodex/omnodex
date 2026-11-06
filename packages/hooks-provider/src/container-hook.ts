@@ -29,6 +29,7 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import type { TraceEvent } from "@omnodex/shared";
+import { maskCaptured } from "@omnodex/analyzer/capture";
 import {
   base64ToBytes,
   computePublicKeyId,
@@ -612,7 +613,8 @@ export async function handleHookPayload(
       if (typeof p.session_id !== "string") return null;
       trackDuration(options.home, p, now());
       const sealed: HpkeEventWire[] = [];
-      for (const event of mapClaudeCodePayload(p, { newEventId })) {
+      const mapped = await maskCaptured(mapClaudeCodePayload(p, { newEventId }), options.home);
+      for (const event of mapped) {
         const prepared = prepareEvent(event, config.redactParameters);
         if (!prepared) continue;
         sealed.push(

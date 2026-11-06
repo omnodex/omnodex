@@ -13,3 +13,4 @@
 
 export { findCredentials } from "../../../analyzer/src/conditions/credential-match.js";
 export { CREDENTIAL_PATTERNS } from "../../../analyzer/src/rules/community/credential-in-params.js";
+export { parseSecretMarker, displayHint } from "../../../analyzer/src/secret-marker.js";
