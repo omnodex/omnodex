@@ -256,6 +256,13 @@ omnodex export --out <file|->       write events and findings to a file as JSON 
                                       prompts, tool parameters and error text are left
                                       out unless named in --include; --follow keeps
                                       appending and rotates the file (docs/export.md)
+omnodex export --bundle --out <file|->
+                                    write a signed evidence bundle (seals pending
+                                      events first; events are included in full)
+omnodex seal [key]                  seal events recorded since the last seal with this
+                                      machine's key; the background pass does too
+omnodex verify <bundle> [--key <k>] check a bundle's signatures, hashes, order and gaps,
+                                      and list capture pauses in it (docs/evidence.md)
 ```
 
 ---

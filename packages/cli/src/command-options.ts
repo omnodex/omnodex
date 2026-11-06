@@ -105,10 +105,18 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
     },
   },
   export: {
-    usage: "export --out <file|-> [--format jsonl|ocsf] [--since <time>] [--until <time>] [--follow]",
-    description: "Write events and findings from the local event log to a file as JSON lines (jsonl) or OCSF, for a SIEM collector to read. Prompt text, tool parameters, session titles and error text are left out unless named in --include (prompts, parameters, titles, errors or all). --since takes a date or an age such as 24h or 7d. --follow keeps running, appends new events, rotates the file at --max-size (default 50m, keeping --keep files, default 5) and resumes from a watermark file after a restart.",
+    usage: "export --out <file|-> [--format jsonl|ocsf] [--since <time>] [--until <time>] [--follow] | export --bundle --out <file|->",
+    description: "Write events and findings from the local event log to a file as JSON lines (jsonl) or OCSF, for a SIEM collector to read. Prompt text, tool parameters, session titles and error text are left out unless named in --include (prompts, parameters, titles, errors or all). --since takes a date or an age such as 24h or 7d. --follow keeps running, appends new events, rotates the file at --max-size (default 50m, keeping --keep files, default 5) and resumes from a watermark file after a restart. --bundle writes a signed evidence bundle instead (seals pending events first; holds events in full) for omnodex verify.",
     flags: [...EXPORT_FLAGS],
     values: [...EXPORT_VALUES],
+  },
+  seal: {
+    usage: "seal [key]", description: "Seal the events recorded since the last seal: hash them into the chain and sign it with this machine's key. The background pass does this too. `seal key` prints this machine's key id and public key.",
+    subcommands: { key: { usage: "key", description: "Print this machine's seal key id and public key, creating the key if needed." } },
+  },
+  verify: {
+    usage: "verify <bundle> [--key <public key or key id>] [--json]", description: "Check an evidence bundle: signatures, hashes, order and gaps, and list capture pauses and monitoring changes in it. Exits 2 when a problem is found. --key (repeatable) names the keys you trust; without it the bundle is only checked against its own keys.",
+    flags: ["--json"], values: ["--key"],
   },
   live: {
     usage: "live [resume | status]", description: "Show or clear the live push back-off gate.",

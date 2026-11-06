@@ -203,6 +203,12 @@ export interface RunAutoSyncOptions {
    * analyzer inside it, so the per-event hook path never imports it.
    */
   detect?: () => Promise<DetectResult>;
+  /**
+   * Seals the events recorded since the last seal. Runs under the lock after
+   * detection, so findings from this pass are sealed too, and whether or not
+   * detection is switched off.
+   */
+  seal?: (home: string) => Promise<unknown>;
   /** Live push override for tests. */
   pushFn?: (events: TraceEvent[], home: string) => Promise<boolean>;
   /**
@@ -344,6 +350,7 @@ export async function runAutoSync(
       await (opts.refreshGuardrails ?? refreshGuardrailsModule)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
+    await opts.seal?.(home).catch(() => undefined);
     // Whether every installation still matches the agent's config; runs
     // whether or not detection is on, and needs no credentials.
     await (opts.checkMonitoring ?? ((h: string) => checkMonitoring(h, opts.pushFn ?? pushEventsToCloud)))(home).catch(
