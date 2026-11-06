@@ -148,6 +148,22 @@ test("the credential ledger groups uses of one credential, newest first", () => 
   assert.ok(!JSON.stringify(ledger).includes(token), "the full value never leaves the ledger");
 });
 
+test("the credential ledger groups masked uses by fingerprint and shows no value", () => {
+  const marker = "[omnodex:secret:github-pat:ghp_.2Ue4:0123456789abcdef]";
+  const other = "[omnodex:secret:github-pat:ghp_.9Xy9:fedcba9876543210]";
+  const calls = [
+    call("m1", "a", { started_at: hoursAgo(3), parameters_json: JSON.stringify({ token: marker }) }),
+    call("m2", "b", { started_at: hoursAgo(1), parameters_json: JSON.stringify({ auth: `Bearer ${marker}` }) }),
+    call("m3", "b", { started_at: hoursAgo(2), parameters_json: JSON.stringify({ token: other }) }),
+  ];
+  const ledger = groupedLedger(calls);
+  assert.equal(ledger.length, 2);
+  const grouped = ledger.find((g) => g.uses.length === 2);
+  assert.deepEqual(grouped.uses.map((u) => u.toolCallId), ["m2", "m1"]);
+  assert.equal(grouped.type, "github-pat");
+  assert.equal(grouped.masked, "ghp_...2Ue4");
+});
+
 test("tool calls sort by any column, ties newest first", () => {
   const calls = [call("1", "a", { tool_name: "b", duration_ms: 5, started_at: hoursAgo(3) }), call("2", "a", { tool_name: "a", duration_ms: 50, started_at: hoursAgo(1) }), call("3", "a", { tool_name: "a", duration_ms: null, started_at: hoursAgo(2) })];
   assert.deepEqual(sortCalls(calls, "time", "desc").map((c) => c.tool_call_id), ["2", "3", "1"]);

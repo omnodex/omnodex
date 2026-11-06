@@ -54,6 +54,7 @@ import {
 import { createCloudPushQueue, type CloudPushFn } from "./cloud-push.js";
 import { createProxyEvaluation, type LoadEvaluatorFn } from "./evaluation.js";
 import { createProxyGuardrails } from "./guardrails.js";
+import { maskCaptured } from "@omnodex/analyzer/capture";
 import {
   startAutoSyncTimer,
   type AutoSyncTimer,
@@ -165,9 +166,12 @@ export class MCPProxy implements Interceptor {
             loadEvaluator: this.hooks?.loadEvaluator,
             skip: (finding) => guardrails.alreadyWritten(finding),
           });
+    // Written and pushed with credentials masked; the rules judge the call as
+    // it was captured.
     const emitAndPush: EmitFn = async (event) => {
-      await emit(event);
-      push.enqueue(event);
+      const [masked] = await maskCaptured([event], this.home);
+      await emit(masked!);
+      push.enqueue(masked!);
       evaluation?.observe(event);
     };
 

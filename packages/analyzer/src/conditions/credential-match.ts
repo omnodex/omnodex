@@ -21,6 +21,7 @@ import type { CredentialMatchCondition, MatchContext } from "../types.js";
 import { compiled } from "./regex-cache.js";
 import { credentialRole, isCredentialProvider, normalizeAction } from "../action.js";
 import { extractStagedContent } from "./scope.js";
+import { SECRET_MARKER_PREFIX, findSecretMarkers } from "../secret-marker.js";
 
 /**
  * Scan a string for credential patterns and return the unique set of
@@ -72,6 +73,13 @@ export function findCredentials(
       found.push({ type, value });
     }
   }
+  // A credential masked at capture reads as one of its type, with the marker
+  // as its value.
+  if (text.includes(SECRET_MARKER_PREFIX)) {
+    for (const { marker, type } of findSecretMarkers(text)) {
+      if (!found.some((c) => c.value === marker)) found.push({ type, value: marker });
+    }
+  }
   return found;
 }
 
@@ -111,6 +119,8 @@ const CODE_REFERENCES = new Set([
  * underscores or hyphens ("dev_stream_token_1"), or a code identifier.
  */
 export function isPlaceholder(value: string): boolean {
+  // A masked credential is reported as its own type, not as a password.
+  if (value.includes(SECRET_MARKER_PREFIX)) return true;
   if (/^[$%]|\$\{|\$\(|\{\{|<|>/.test(value)) return true;
   if (/(.)\1{5,}/.test(value)) return true;
   if (hasSequentialRun(value, 6)) return true;
