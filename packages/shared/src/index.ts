@@ -168,6 +168,9 @@ export type InterceptorKind =
   | "claude-code-hook"
   | "codex-hook"
   | "antigravity-hook"
+  | "copilot-hook"
+  | "cursor-hook"
+  | "opencode-plugin"
   | "cowork-desktop"
   | "mcp-proxy"
   | "mock"
@@ -185,7 +188,9 @@ export type PlatformKind =
   | "cowork"
   | "web"
   | "antigravity"
-  | "copilot";
+  | "copilot"
+  | "cursor"
+  | "opencode";
 
 /** Fields present on every trace event, regardless of type. */
 export interface BaseEvent {

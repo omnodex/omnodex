@@ -22,6 +22,9 @@ export function interceptorTone(interceptor: string | null | undefined): SourceT
     case "claude-code-hook": return "mint";
     case "codex-hook": return "purple";
     case "antigravity-hook": return "orange";
+    case "copilot-hook": return "blue";
+    case "cursor-hook": return "cyan";
+    case "opencode-plugin": return "mint";
     case "cowork-desktop": return "blue";
     default: return "slate";
   }
@@ -33,6 +36,9 @@ export function interceptorLabel(interceptor: string | null | undefined): string
     case "claude-code-hook": return "Claude Code";
     case "codex-hook": return "Codex";
     case "antigravity-hook": return "Antigravity";
+    case "copilot-hook": return "Copilot";
+    case "cursor-hook": return "Cursor";
+    case "opencode-plugin": return "OpenCode";
     case "cowork-desktop": return "Cowork";
     default: return interceptor || "unknown";
   }
@@ -45,6 +51,8 @@ const PLATFORM_LABELS: Readonly<Record<string, string>> = {
   antigravity: "Antigravity",
   web: "Web",
   copilot: "Copilot",
+  cursor: "Cursor",
+  opencode: "OpenCode",
 };
 
 type LabelledSession = Pick<SessionRow, "interceptor" | "platform" | "mcp_client_name">;

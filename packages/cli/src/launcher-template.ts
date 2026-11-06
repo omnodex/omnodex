@@ -34,8 +34,9 @@
  * <OMNODEX_HOME>/hook-scope.json says a platform records every project, a
  * launcher run from project hooks exits without recording, so the project is
  * not recorded twice. A project listed as excluded for the platform is not
- * recorded at all. The project is the payload's `cwd` (Claude Code, Codex) or
- * first `workspacePaths` entry (Antigravity), read from stdin and passed on to
+ * recorded at all. The project is the payload's `cwd` (Claude Code, Codex,
+ * Copilot, OpenCode), first `workspacePaths` entry (Antigravity) or first
+ * `workspace_roots` entry (Cursor), read from stdin and passed on to
  * the shim unchanged; stdin is read only when an exclusion could apply.
  */
 
@@ -44,8 +45,9 @@ import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 import { HOOK_SCOPE_FILE, USER_SCOPE_ARG } from "./hook-scope.js";
+import { availablePlatforms, type Platform } from "./platforms.js";
 
-export type LauncherPlatform = "claude-code" | "codex" | "antigravity";
+export type LauncherPlatform = Platform;
 
 interface PlatformShimInfo {
   /** npm package name under @omnodex/ */
@@ -72,10 +74,25 @@ const PLATFORM_INFO: Record<LauncherPlatform, PlatformShimInfo> = {
     shimRelative: "dist/bin/antigravity-hook-shim.js",
     launcherFilename: "antigravity-hook-launcher.js",
   },
+  copilot: {
+    packageName: "copilot-provider",
+    shimRelative: "dist/bin/copilot-hook-shim.js",
+    launcherFilename: "copilot-hook-launcher.js",
+  },
+  cursor: {
+    packageName: "cursor-provider",
+    shimRelative: "dist/bin/cursor-hook-shim.js",
+    launcherFilename: "cursor-hook-launcher.js",
+  },
+  opencode: {
+    packageName: "opencode-provider",
+    shimRelative: "dist/bin/opencode-plugin-shim.js",
+    launcherFilename: "opencode-plugin-launcher.js",
+  },
 };
 
-/** All platforms that have a hook launcher. */
-export const LAUNCHER_PLATFORMS: LauncherPlatform[] = ["claude-code", "codex", "antigravity"];
+/** All platforms that have a hook launcher: those whose provider has shipped. */
+export const LAUNCHER_PLATFORMS: LauncherPlatform[] = availablePlatforms();
 
 /**
  * Filename of a platform's shim. The published npm package ships each shim
@@ -329,6 +346,7 @@ export function generateLauncherSource(platform: LauncherPlatform): string {
     '    var payload = JSON.parse(buf.toString("utf8"));',
     '    if (payload && typeof payload.cwd === "string" && payload.cwd) return payload.cwd;',
     '    if (payload && Array.isArray(payload.workspacePaths) && typeof payload.workspacePaths[0] === "string") return payload.workspacePaths[0];',
+    '    if (payload && Array.isArray(payload.workspace_roots) && typeof payload.workspace_roots[0] === "string") return payload.workspace_roots[0];',
     '  } catch (e) {}',
     '  return null;',
     '}',

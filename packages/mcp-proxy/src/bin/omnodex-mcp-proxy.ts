@@ -39,7 +39,7 @@
  *   OMNODEX_PROXY_HTTP_TOKEN   bearer token required from HTTP clients (optional
  *                              on loopback, required with --allow-remote)
  *   OMNODEX_PLATFORM           the runtime this proxy serves (claude-code, codex,
- *                              cowork, antigravity, copilot, web); --platform
+ *                              cowork, antigravity, copilot, cursor, opencode, web); --platform
  *                              overrides it. Plugins pass --platform.
  *   OMNODEX_TOOL_NAME_MAX      longest tool name to offer (16 or more); longer
  *                              names are shortened. Defaults to the platform's

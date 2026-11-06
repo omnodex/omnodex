@@ -19,14 +19,11 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
+import { PLATFORM_LABELS, availablePlatforms, type Platform } from "./platforms.js";
 
-export type Surface = "claude-code" | "codex" | "antigravity";
+export type Surface = Platform;
 
-export const SURFACE_LABELS: Record<Surface, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  antigravity: "Antigravity",
-};
+export const SURFACE_LABELS: Record<Surface, string> = PLATFORM_LABELS;
 
 interface SurfaceSignals {
   /** Commands that mean the surface is installed when found on PATH. */
@@ -47,9 +44,13 @@ const SIGNALS: Record<Surface, SurfaceSignals> = {
     homeDirs: [path.join(".gemini", "config"), path.join(".gemini", "antigravity-cli")],
     macApps: ["Antigravity.app"],
   },
+  copilot: { commands: ["copilot"], homeDirs: [".copilot"], macApps: [] },
+  cursor: { commands: ["cursor-agent"], homeDirs: [".cursor"], macApps: ["Cursor.app"] },
+  opencode: { commands: ["opencode"], homeDirs: [path.join(".config", "opencode")], macApps: [] },
 };
 
-export const SURFACES: Surface[] = ["claude-code", "codex", "antigravity"];
+/** Surfaces detection looks for: those whose provider has shipped. */
+export const SURFACES: Surface[] = availablePlatforms();
 
 export interface HostEnv {
   home: string;

@@ -40,7 +40,7 @@ export interface ServerObservation {
   tools: { name: string; fingerprint: string }[];
 }
 
-const PLATFORMS: readonly PlatformKind[] = ["claude-code", "codex", "cowork", "web", "antigravity", "copilot"];
+const PLATFORMS: readonly PlatformKind[] = ["claude-code", "codex", "cowork", "web", "antigravity", "copilot", "cursor", "opencode"];
 
 /** The value as a PlatformKind, or undefined when it names no known platform. */
 export function asPlatform(value: string | undefined): PlatformKind | undefined {

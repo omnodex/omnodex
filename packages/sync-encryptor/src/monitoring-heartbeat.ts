@@ -103,6 +103,9 @@ const HOOK_PLATFORMS: Record<string, string> = {
   "claude-code-hook": "claude-code",
   "codex-hook": "codex",
   "antigravity-hook": "antigravity",
+  "copilot-hook": "copilot",
+  "cursor-hook": "cursor",
+  "opencode-plugin": "opencode",
 };
 
 /** Worst first: what a platform reports when its installations differ. */

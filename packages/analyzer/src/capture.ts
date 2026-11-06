@@ -51,6 +51,9 @@ export const CAPTURE_HOSTS: Readonly<Record<string, EvaluatorHost>> = {
   "claude-code-hook": "hook",
   "codex-hook": "hook",
   "antigravity-hook": "hook",
+  "copilot-hook": "hook",
+  "cursor-hook": "hook",
+  "opencode-plugin": "hook",
   "mcp-proxy": "proxy",
 };
 

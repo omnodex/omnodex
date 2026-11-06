@@ -258,3 +258,13 @@ test("a proxy-only row keeps its original tool name", () => {
   snap.tool_calls.hook = [];
   assert.equal(collapseCorrelated(snap).tool_calls.proxy[0].tool_name, snap.tool_calls.proxy[0].tool_name);
 });
+
+for (const kind of ["copilot-hook", "cursor-hook", "opencode-plugin"]) {
+  test(`${kind}: a correlated pair lists the agent first and the proxy last`, () => {
+    const snap = pairSnapshot();
+    snap.sessions[0] = session("hook", kind, { risk_score: 0.7 });
+    snap.tool_calls.hook = [call("tc-hook", "hook", kind)];
+    const kept = collapseCorrelated(snap).tool_calls.hook[0];
+    assert.deepEqual(kept.sources, [kind, "mcp-proxy"]);
+  });
+}
