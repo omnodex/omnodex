@@ -79,6 +79,11 @@ const STAGED_TARGETS: readonly RegExp[] = [
   /(?:^|\/)\.(?:claude|codex|gemini|cursor)\/[^/]*\.(?:json|toml)$/i,
   /(?:^|\/)\.gemini\/(?:config|antigravity(?:-cli|-ide)?)\/[^/]*\.json$/i,
   /(?:^|\/)\.agents\/mcp_config\.json$/i,
+  // Copilot (user and repo hooks, settings) and OpenCode (config, plugins).
+  /(?:^|\/)\.copilot\/(?:hooks\/)?[^/]*\.jsonc?$/i,
+  /(?:^|\/)\.github\/(?:hooks\/[^/]*|copilot\/settings[^/]*)\.json$/i,
+  /(?:^|\/)\.?opencode(?:\.jsonc?|\/(?:plugins?\/)?[^/]*\.(?:jsonc?|[cm]?[jt]s))$/i,
+  /(?:^|\/)opencode\/(?:plugins?\/[^/]*\.[cm]?[jt]s|[^/]*\.jsonc?)$/i,
   /(?:^|\/)\.claude\.json$/i,
   /(?:^|\/)\.?mcp\.json$/i,
   /(?:^|\/)hooks\.json$/i,

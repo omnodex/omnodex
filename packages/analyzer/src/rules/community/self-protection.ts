@@ -56,7 +56,7 @@ import type { RuleDefinition } from "../../types.js";
  */
 const OMNODEX_ENTRIES = [
   {
-    regex: "omnodex-managed|(?:claude|codex|antigravity)-hook-(?:launcher|shim)\\.js",
+    regex: "omnodex-managed|(?:claude|codex|antigravity|copilot|cursor)-hook-(?:launcher|shim)\\.js|opencode-plugin-(?:launcher|shim)\\.js",
     label: "Omnodex hook entry",
   },
   {
@@ -76,7 +76,10 @@ const OMNODEX_ENTRIES = [
 const HOOK_FILE =
   "(?:\\.claude|\\$\\{?CLAUDE_CONFIG_DIR\\}?)[/\\\\]settings(?:\\.local)?\\.json" +
   "|(?:\\.codex|\\$\\{?CODEX_HOME\\}?)[/\\\\]hooks\\.json" +
-  "|\\.gemini[/\\\\]config[/\\\\]hooks\\.json";
+  "|\\.gemini[/\\\\]config[/\\\\]hooks\\.json" +
+  "|(?:\\.copilot|\\$\\{?COPILOT_HOME\\}?|\\.github)[/\\\\]hooks[/\\\\]omnodex\\.json" +
+  "|\\.cursor[/\\\\]hooks\\.json" +
+  "|opencode[/\\\\]plugins[/\\\\]omnodex\\.[cm]?[jt]s";
 
 export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_CONFIG_WRITE",
@@ -110,7 +113,7 @@ export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_BASH",
-  version: "1.3.0",
+  version: "1.4.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -152,7 +155,7 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
         },
         {
           // The agent's own CLI removing or disabling the Omnodex plugin or MCP server
-          regex: "\\b(?:claude|codex|agy|antigravity)\\s+(?:plugin|plugins|mcp)\\s+(?:disable|uninstall|remove|rm)\\b[^\\n]*omnodex",
+          regex: "\\b(?:claude|codex|agy|antigravity|copilot|cursor-agent|opencode)\\s+(?:plugin|plugins|mcp)\\s+(?:disable|uninstall|remove|rm)\\b[^\\n]*omnodex",
           type: "omnodex-plugin-removal",
         },
         {
@@ -207,14 +210,14 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_HOOK_REMOVED: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_HOOK_REMOVED",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
     {
       type: "file_edit",
       // Agent configuration is JSON or TOML; the entry itself identifies it.
-      paths: [{ regex: "\\.(?:json|toml)$", label: "agent configuration" }],
+      paths: [{ regex: "\\.(?:json|toml|[cm]?[jt]s)$", label: "agent configuration" }],
       change: "removed",
       patterns: OMNODEX_ENTRIES,
     },
@@ -262,7 +265,7 @@ export const RULE_SELF_PROTECTION_HOOKS_DISABLED: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_HOOK_FILE_REWRITE: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_HOOK_FILE_REWRITE",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -272,6 +275,9 @@ export const RULE_SELF_PROTECTION_HOOK_FILE_REWRITE: RuleDefinition = {
         { regex: "(?:^|/)\\.codex/hooks\\.json$", label: "Codex hooks file" },
         { regex: "(?:^|/)\\.gemini/config/hooks\\.json$", label: "Antigravity hooks file" },
         { regex: "(?:^|/)\\.claude/settings(?:\\.local)?\\.json$", label: "Claude Code settings file" },
+        { regex: "(?:^|/)\\.copilot/hooks/omnodex\\.json$", label: "Copilot hooks file" },
+        { regex: "(?:^|/)\\.github/hooks/omnodex\\.json$", label: "Copilot repository hooks file" },
+        { regex: "(?:^|/)\\.cursor/hooks\\.json$", label: "Cursor hooks file" },
       ],
       change: "absent",
       patterns: [OMNODEX_ENTRIES[0]!],

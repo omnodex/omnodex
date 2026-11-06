@@ -76,7 +76,7 @@ export function collapseCorrelated(snapshot: ReadModelSnapshot): ReadModelSnapsh
 }
 
 const PROXY = "mcp-proxy";
-const SOURCE_ORDER = ["claude-code-hook", "codex-hook", "antigravity-hook", PROXY];
+const SOURCE_ORDER = ["claude-code-hook", "codex-hook", "antigravity-hook", "copilot-hook", "cursor-hook", "opencode-plugin", PROXY];
 
 function sortSources(sources: Iterable<string>): string[] {
   const rank = (s: string): number => {

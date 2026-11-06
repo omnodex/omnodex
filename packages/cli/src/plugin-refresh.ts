@@ -17,21 +17,20 @@
 import { promises as fs } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { LauncherPlatform } from "./launcher-template.js";
 import { PLUGIN_PINS, type PluginPin } from "./plugin-pins.js";
-import { SURFACE_PLUGIN, downloadsBaseUrl, installPlugin, pluginDir, resolveBundle, type PluginPlatform } from "./plugins.js";
+import { SURFACE_PLUGIN, downloadsBaseUrl, installPlugin, pluginDir, resolveBundle, hasPlugin, type PluginPlatform, type PluginTarget } from "./plugins.js";
 import { addInstallation, findInstallations, getInstalledVersion } from "./registry.js";
 
 export type RefreshResult = "updated" | "reinstalled" | "current" | "kept" | "failed";
 
 export interface RefreshOutcome {
-  target: LauncherPlatform;
+  target: PluginTarget;
   result: RefreshResult;
   /** One line for the report. */
   message: string;
 }
 
-const LABELS: Record<LauncherPlatform, string> = {
+const LABELS: Record<PluginTarget, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   antigravity: "Antigravity",
@@ -80,6 +79,7 @@ export async function refreshPlugins(opts: {
 
   for (const entry of await findInstallations({ component: "plugin" })) {
     const target = entry.target;
+    if (!hasPlugin(target)) continue;
     const label = LABELS[target];
     const { platform, name } = SURFACE_PLUGIN[target];
     const pin = pins[platform];

@@ -49,7 +49,7 @@ export const GUARDRAILS_KEY_ENV = "OMNODEX_GUARDRAILS_KEY";
 export const GUARDRAILS_PUBLIC_KEY_ENV = "OMNODEX_GUARDRAILS_PUBLIC_KEY";
 
 /** The agent hosts a decision can be written for. */
-export type EnforcementHost = "claude-code" | "codex" | "antigravity" | "mcp-proxy";
+export type EnforcementHost = "claude-code" | "codex" | "antigravity" | "copilot" | "cursor" | "opencode" | "mcp-proxy";
 
 export interface GuardrailsInput {
   host: EnforcementHost;

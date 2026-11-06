@@ -38,7 +38,13 @@ import { findOnPath } from "./surfaces.js";
 export type PluginPlatform = keyof typeof PLUGIN_PINS;
 
 /** Each surface's plugin: the downloads platform and the plugin's name. */
-export const SURFACE_PLUGIN: Record<LauncherPlatform, { platform: PluginPlatform; name: string; manifest: string }> = {
+/** The platforms that ship an Omnodex plugin. Copilot, Cursor and OpenCode are configured directly, with no plugin. */
+export type PluginTarget = "claude-code" | "codex" | "antigravity";
+
+export const hasPlugin = (platform: LauncherPlatform): platform is PluginTarget =>
+  platform === "claude-code" || platform === "codex" || platform === "antigravity";
+
+export const SURFACE_PLUGIN: Record<PluginTarget, { platform: PluginPlatform; name: string; manifest: string }> = {
   "claude-code": { platform: "cowork", name: "omnodex-cowork", manifest: ".claude-plugin/plugin.json" },
   codex: { platform: "codex", name: "omnodex-codex", manifest: ".codex-plugin/plugin.json" },
   antigravity: { platform: "antigravity", name: "omnodex-antigravity", manifest: ".antigravity-plugin/plugin.json" },
@@ -126,7 +132,7 @@ export async function extractZip(buf: Buffer, dest: string): Promise<void> {
 }
 
 /** The version in a bundle's own manifest. */
-export function bundleVersion(bytes: Buffer, target: LauncherPlatform): string | null {
+export function bundleVersion(bytes: Buffer, target: PluginTarget): string | null {
   const entry = readZip(bytes).find((e) => e.name === SURFACE_PLUGIN[target].manifest);
   if (!entry?.data) return null;
   try {
@@ -142,7 +148,7 @@ export function bundleVersion(bytes: Buffer, target: LauncherPlatform): string |
 // ---------------------------------------------------------------------------
 
 export interface BundleRequest {
-  target: LauncherPlatform;
+  target: PluginTarget;
   /** --plugin-version: a version, or "latest". Omitted: the pin. */
   version?: string;
   /** --from: a bundle file already downloaded. */
@@ -319,7 +325,7 @@ const claudeMarketplaceDir = (ctx: PluginContext) => path.join(ctx.omnodexHome, 
 const antigravityPluginDir = (ctx: PluginContext) => path.join(ctx.home, ".gemini", "config", "plugins", "omnodex-antigravity");
 
 /** Where a surface's plugin files live once installed. */
-export function pluginDir(target: LauncherPlatform, ctx: PluginContext): string {
+export function pluginDir(target: PluginTarget, ctx: PluginContext): string {
   switch (target) {
     case "claude-code":
       return path.join(claudeMarketplaceDir(ctx), "omnodex-cowork");
@@ -469,7 +475,7 @@ async function installAntigravity(bundle: ResolvedBundle, ctx: PluginContext): P
 
 /** Unpack a verified bundle and register it with the agent. */
 export async function installPlugin(
-  target: LauncherPlatform,
+  target: PluginTarget,
   bundle: ResolvedBundle,
   ctx: PluginContext,
 ): Promise<PluginInstallResult> {
@@ -484,7 +490,7 @@ export async function installPlugin(
 }
 
 /** Unregister and delete a surface's plugin. Returns what was done. */
-export async function uninstallPlugin(target: LauncherPlatform, ctx: PluginContext): Promise<string[]> {
+export async function uninstallPlugin(target: PluginTarget, ctx: PluginContext): Promise<string[]> {
   const done: string[] = [];
   const dir = pluginDir(target, ctx);
   if (target === "codex") {

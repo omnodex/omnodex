@@ -130,7 +130,8 @@ import {
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
 import { PLUGIN_PINS } from "./plugin-pins.js";
-import { SURFACE_PLUGIN, downloadsBaseUrl, installPlugin, pluginDir, resolveBundle, uninstallPlugin } from "./plugins.js";
+import { SURFACE_PLUGIN, downloadsBaseUrl, hasPlugin, installPlugin, pluginDir, resolveBundle, uninstallPlugin, type PluginTarget } from "./plugins.js";
+import { PLATFORMS, availablePlatforms, isPlatformAvailable, notYetSupported } from "./platforms.js";
 import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
 import { addInstallation, removeInstallation, listInstallations, findInstallations, findStaleInstallations, getInstalledVersion } from "./registry.js";
 import {
@@ -1107,8 +1108,20 @@ async function cmdConnect(args: string[]): Promise<void> {
   });
 }
 
-const VALID_TARGETS = ["claude-code", "codex", "antigravity"] as const;
+/** Every target name an install command accepts, including platforms whose provider has not shipped. */
+const VALID_TARGETS = PLATFORMS;
 type InstallTarget = typeof VALID_TARGETS[number];
+
+/** Targets that install, uninstall and report status today. */
+const ACTIVE_TARGETS = (): readonly InstallTarget[] => availablePlatforms();
+
+/** Prints the not-yet-supported message and sets a failing exit code when the target's provider has not shipped. */
+function refuseUnavailable(target: InstallTarget, command: "install" | "uninstall"): boolean {
+  if (isPlatformAvailable(target)) return false;
+  console.error(`[${command}] ${notYetSupported(target)}`);
+  process.exitCode = 1;
+  return true;
+}
 
 function isTargetName(arg: string): boolean {
   return VALID_TARGETS.includes(canonicalTarget(arg) as InstallTarget);
@@ -1209,6 +1222,7 @@ async function installTargets(rawArgs: string[]): Promise<void> {
   const parsed = resolveTarget(args);
   if (!parsed) return;
   const { target, rest } = parsed;
+  if (refuseUnavailable(target, "install")) return;
 
   switch (target) {
     case "claude-code":
@@ -1220,6 +1234,10 @@ async function installTargets(rawArgs: string[]): Promise<void> {
     case "antigravity":
       await installAntigravity(rest);
       return;
+    case "copilot":
+    case "cursor":
+    case "opencode":
+      return; // refused above until the provider ships
   }
 }
 
@@ -1270,6 +1288,10 @@ function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: st
       return new CodexInterceptor({ projectPath, shimPath: CODEX_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "antigravity":
       return new AntigravityInterceptor({ projectPath, shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
+    case "copilot":
+    case "cursor":
+    case "opencode":
+      throw new Error(notYetSupported(surface));
   }
 }
 
@@ -1394,6 +1416,10 @@ const TARGET_SHIMS: Record<InstallTarget, string> = {
   "claude-code": CLAUDE_HOOK_SHIM_PATH,
   codex: CODEX_HOOK_SHIM_PATH,
   antigravity: ANTIGRAVITY_HOOK_SHIM_PATH,
+  // The providers for these arrive with their own packages; the paths are placeholders until then.
+  copilot: "",
+  cursor: "",
+  opencode: "",
 };
 
 /**
@@ -1488,7 +1514,7 @@ function installOutcome(before: string | null, after: string | null): string {
  * left in place.
  */
 async function installPluginComponent(
-  target: InstallTarget,
+  target: PluginTarget,
   args: readonly string[],
   projectPath: string,
   withHooks: boolean,
@@ -1542,6 +1568,9 @@ const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   "claude-code": (args) => installClaudeCode(args),
   codex: (args) => installCodex(args),
   antigravity: (args) => installAntigravity(args),
+  copilot: async () => { throw new Error(notYetSupported("copilot")); },
+  cursor: async () => { throw new Error(notYetSupported("cursor")); },
+  opencode: async () => { throw new Error(notYetSupported("opencode")); },
 };
 
 /**
@@ -1591,7 +1620,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
     console.log(`  ${SURFACE_LABELS[p.surface].padEnd(width)}  (found: ${p.evidence})`);
     const shown = p.file.startsWith(projectPath + path.sep) ? path.relative(projectPath, p.file) : p.file;
     if (components.hooks) console.log(`  ${"".padEnd(width)}  hooks: ${shown}`);
-    if (components.plugin) {
+    if (components.plugin && hasPlugin(p.surface)) {
       const { name, platform } = SURFACE_PLUGIN[p.surface];
       const version = flagValue(args, "--plugin-version") ?? PLUGIN_PINS[platform].version;
       console.log(`  ${"".padEnd(width)}  plugin: ${name} ${version}`);
@@ -2031,7 +2060,8 @@ async function cmdUninstall(args: string[]): Promise<void> {
 
   const targetName = args.find((a) => isTargetName(a));
   const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
-  const targets: readonly InstallTarget[] = targetArg ? [targetArg] : VALID_TARGETS;
+  const targets: readonly InstallTarget[] = targetArg ? [targetArg] : ACTIVE_TARGETS();
+  if (targetArg && refuseUnavailable(targetArg, "uninstall")) return;
   const scope = await readHookScope(paths.home);
 
   interface Action {
@@ -2043,6 +2073,7 @@ async function cmdUninstall(args: string[]): Promise<void> {
 
   if (pluginFlag) {
     for (const target of targets) {
+      if (!hasPlugin(target)) continue;
       const [entry] = await findInstallations({ target, component: "plugin" });
       const dir = pluginDir(target, pluginCtx);
       if (!entry && !(await isDirectory(dir))) continue;
@@ -2243,6 +2274,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     anyInstalled = true;
   }
   for (const plugin of await findInstallations({ component: "plugin" })) {
+    if (!hasPlugin(plugin.target)) continue;
     const override = plugin.pluginOverride ? " (chosen version, not this CLI's pin)" : "";
     console.log(`  ${SURFACE_LABELS[plugin.target]} plugin: ${SURFACE_PLUGIN[plugin.target].name} ${plugin.pluginVersion ?? ""}${override}, for every project`);
     console.log(`    ${plugin.pluginPath ?? plugin.settingsFile}`);
@@ -2322,7 +2354,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
   if (!anyInstalled) {
     console.log(`  No Omnodex hooks installed in this project.`);
     console.log(`\n  Run \`omnodex install <target>\` to get started.`);
-    console.log(`  Targets: ${VALID_TARGETS.join(", ")}`);
+    console.log(`  Targets: ${ACTIVE_TARGETS().join(", ")}`);
   }
 }
 

@@ -14,6 +14,10 @@
     "./guardrails-hooks": {
       "import": "./dist/guardrails-hooks.js",
       "types": "./dist/guardrails-hooks.d.ts"
+    },
+    "./shim-contract": {
+      "import": "./dist/shim-contract.js",
+      "types": "./dist/shim-contract.d.ts"
     }
   },
   "scripts": {

@@ -29,6 +29,7 @@ import { promises as fs, realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { LauncherPlatform } from "./launcher-template.js";
+import { PLATFORMS } from "./platforms.js";
 import { recordMonitoringChange } from "./monitoring-markers.js";
 
 export const HOOK_SCOPE_FILE = "hook-scope.json";
@@ -44,7 +45,7 @@ export interface HookScope {
   excluded: Record<string, LauncherPlatform[]>;
 }
 
-const TARGETS: readonly string[] = ["claude-code", "codex", "antigravity"];
+const TARGETS: readonly string[] = PLATFORMS;
 
 export function hookScopePath(omnodexHome: string): string {
   return path.join(omnodexHome, HOOK_SCOPE_FILE);
@@ -178,5 +179,11 @@ export function userHooksFile(
       return path.join(env.CODEX_HOME || path.join(home, ".codex"), "hooks.json");
     case "antigravity":
       return path.join(home, ".gemini", "config", "hooks.json");
+    case "copilot":
+      return path.join(env.COPILOT_HOME || path.join(home, ".copilot"), "hooks", "omnodex.json");
+    case "cursor":
+      return path.join(home, ".cursor", "hooks.json");
+    case "opencode":
+      return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "opencode", "plugins", "omnodex.js");
   }
 }

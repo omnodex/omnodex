@@ -100,7 +100,7 @@ interface Entry {
 }
 
 /** Our hook command, on every platform, launcher or legacy shim. */
-const OUR_HOOK = /(?:claude|codex|antigravity)-hook-(?:launcher|shim)|omnodex-managed/;
+const OUR_HOOK = /(?:claude|codex|antigravity|copilot|cursor)-hook-(?:launcher|shim)|opencode-plugin-(?:launcher|shim)|omnodex-managed/;
 
 /**
  * Run the check: inspect every installation, compare with the last run, and
@@ -220,6 +220,12 @@ function hooksFile(entry: Entry): string {
       return path.join(project, ".claude", entry.settingsFile);
     case "codex":
       return path.join(project, ".codex", "hooks.json");
+    case "copilot":
+      return path.join(project, ".github", "hooks", "omnodex.json");
+    case "cursor":
+      return path.join(project, ".cursor", "hooks.json");
+    case "opencode":
+      return path.join(project, ".opencode", "plugins", "omnodex.js");
     default:
       return path.join(project, ".agents", "hooks.json");
   }
