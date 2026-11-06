@@ -26,6 +26,6 @@
     "@omnodex/event-log": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*",
-    "zod": "^3.25.0"
+    "zod": "^4.6.7"
   }
 }

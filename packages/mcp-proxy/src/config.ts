@@ -38,7 +38,7 @@ const StdioUpstreamSchema = z.object({
    * Secrets (API keys, tokens) should be passed this way rather than stored
    * as literal values in the config file.
    */
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   /** Working directory for the upstream process. Defaults to proxy cwd. */
   cwd: z.string().optional(),
   /**
@@ -170,7 +170,7 @@ export const ProxyConfigSchema = z.object({
    * register it before any upstream is configured.
    */
   upstream_servers: z.array(UpstreamServerSchema).default([]),
-  upstream_connection: UpstreamConnectionSchema.default({}),
+  upstream_connection: UpstreamConnectionSchema.prefault({}),
 });
 
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>;
