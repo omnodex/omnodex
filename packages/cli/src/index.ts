@@ -31,6 +31,7 @@ import { promises as fs } from "node:fs";
 import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
+import { runExport } from "./export-command.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
 import { runPolicy } from "./policy-command.js";
 import { annotateFindings, describeGuardrails, loadGuardrailsModule, machineEntries, readAccountPolicy, readUserEnforcement } from "@omnodex/analyzer/enforcement";
@@ -3191,6 +3192,24 @@ async function main(): Promise<void> {
     case "live":
       await cmdLive(rest);
       return;
+    case "export": {
+      const stop = new AbortController();
+      const onSignal = () => stop.abort();
+      process.once("SIGINT", onSignal);
+      process.once("SIGTERM", onSignal);
+      const resolved = await resolveRoots();
+      process.exitCode = await runExport(rest, {
+        roots: resolved.all,
+        signal: stop.signal,
+        io: {
+          write: (text) => { process.stdout.write(text); },
+          error: (line) => console.error(line),
+        },
+      });
+      process.off("SIGINT", onSignal);
+      process.off("SIGTERM", onSignal);
+      return;
+    }
     case undefined:
     case "help":
     case "--help":
@@ -3327,6 +3346,21 @@ commands:
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.
+  export --out <file|->
+                     write events and findings from the local log to a
+                     file as JSON lines, for a SIEM collector to read.
+                       --format jsonl|ocsf   Omnodex's own form (default)
+                                             or OCSF
+                       --since <time>        a date, or an age like 24h, 7d
+                       --until <time>        end of the window
+                       --follow              keep running and append new
+                                             events; rotates the file at
+                                             --max-size (default 50m),
+                                             keeping --keep files (5), and
+                                             resumes after a restart
+                       --include <groups>    add content that is left out by
+                                             default: prompts, parameters,
+                                             titles, errors, or all
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       build synthetic sessions through the real pipeline.

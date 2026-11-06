@@ -5,6 +5,7 @@
 // Public License v3.0. You may obtain a copy at https://omnodex.com/licensing
 // A commercial license is available for use without copyleft obligations.
 
+import { EXPORT_FLAGS, EXPORT_VALUES } from "./export-command.js";
 import { POLICY_ADD_FLAGS, POLICY_ADD_VALUES, POLICY_WATCH_FLAGS, POLICY_WATCH_VALUES } from "./policy-command.js";
 
 interface CommandOptions {
@@ -102,6 +103,12 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
       remove: { usage: "remove <id>", description: "Remove an entry by the id `policy list` shows." },
       pull: { usage: "pull", description: "Fetch the entries made for your whole account in the hosted dashboard." },
     },
+  },
+  export: {
+    usage: "export --out <file|-> [--format jsonl|ocsf] [--since <time>] [--until <time>] [--follow]",
+    description: "Write events and findings from the local event log to a file as JSON lines (jsonl) or OCSF, for a SIEM collector to read. Prompt text, tool parameters, session titles and error text are left out unless named in --include (prompts, parameters, titles, errors or all). --since takes a date or an age such as 24h or 7d. --follow keeps running, appends new events, rotates the file at --max-size (default 50m, keeping --keep files, default 5) and resumes from a watermark file after a restart.",
+    flags: [...EXPORT_FLAGS],
+    values: [...EXPORT_VALUES],
   },
   live: {
     usage: "live [resume | status]", description: "Show or clear the live push back-off gate.",

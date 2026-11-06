@@ -251,6 +251,11 @@ omnodex clear --all --confirm       delete the entire Omnodex home (events, conf
                                       --unattended permits scripts, records the clear,
                                       and raises a self-protection finding
 omnodex license [clear]             show license tier, or clear the cached license
+omnodex export --out <file|->       write events and findings to a file as JSON lines
+                                      (jsonl or OCSF) for a SIEM collector to read;
+                                      prompts, tool parameters and error text are left
+                                      out unless named in --include; --follow keeps
+                                      appending and rotates the file (docs/export.md)
 ```
 
 ---
