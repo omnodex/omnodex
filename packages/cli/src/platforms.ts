@@ -33,7 +33,7 @@ export const PLATFORM_AVAILABLE: Record<Platform, boolean> = {
   "claude-code": true,
   codex: true,
   antigravity: true,
-  copilot: false,
+  copilot: true,
   cursor: false,
   opencode: false,
 };

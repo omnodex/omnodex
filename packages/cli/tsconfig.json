@@ -31,6 +31,9 @@
       "path": "../codex-provider"
     },
     {
+      "path": "../copilot-provider"
+    },
+    {
       "path": "../antigravity-provider"
     },
     {

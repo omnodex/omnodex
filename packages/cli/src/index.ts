@@ -61,6 +61,14 @@ import {
   ANTIGRAVITY_HOOK_SHIM_PATH,
   AntigravityInterceptor,
 } from "@omnodex/antigravity-provider";
+import {
+  COPILOT_HOOK_SHIM_PATH,
+  CopilotInterceptor,
+  copilotMcpConfigPath,
+  hasCopilotMcp,
+  installCopilotMcp,
+  uninstallCopilotMcp,
+} from "@omnodex/copilot-provider";
 import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
@@ -1237,6 +1245,8 @@ async function installTargets(rawArgs: string[]): Promise<void> {
       await installAntigravity(rest);
       return;
     case "copilot":
+      await installCopilot(rest);
+      return;
     case "cursor":
     case "opencode":
       return; // refused above until the provider ships
@@ -1291,6 +1301,7 @@ function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: st
     case "antigravity":
       return new AntigravityInterceptor({ projectPath, shimPath: ANTIGRAVITY_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "copilot":
+      return new CopilotInterceptor({ projectPath, shimPath: COPILOT_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "cursor":
     case "opencode":
       throw new Error(notYetSupported(surface));
@@ -1388,6 +1399,10 @@ async function findProjectHookFiles(projectPath: string, omnodexHome: string): P
       uninstall: () => antigravity.uninstall(),
     });
   }
+  const copilot = new CopilotInterceptor({ projectPath, shimPath: COPILOT_HOOK_SHIM_PATH, omnodexHome });
+  if ((await readOrNull(copilot.hooksFilePath()))?.includes("copilot-hook-")) {
+    found.push({ target: "copilot", label: "Copilot", path: copilot.hooksFilePath(), uninstall: () => copilot.uninstall() });
+  }
   return found;
 }
 
@@ -1410,7 +1425,9 @@ function userLevelHooks(
       ? new ClaudeCodeInterceptor({ ...common, settingsPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
       : target === "codex"
         ? new CodexInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
-        : new AntigravityInterceptor({ ...common, hooksPath: file });
+        : target === "copilot"
+          ? new CopilotInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
+          : new AntigravityInterceptor({ ...common, hooksPath: file });
   return { file, install: () => interceptor.install(), uninstall: () => interceptor.uninstall() };
 }
 
@@ -1418,8 +1435,8 @@ const TARGET_SHIMS: Record<InstallTarget, string> = {
   "claude-code": CLAUDE_HOOK_SHIM_PATH,
   codex: CODEX_HOOK_SHIM_PATH,
   antigravity: ANTIGRAVITY_HOOK_SHIM_PATH,
+  copilot: COPILOT_HOOK_SHIM_PATH,
   // The providers for these arrive with their own packages; the paths are placeholders until then.
-  copilot: "",
   cursor: "",
   opencode: "",
 };
@@ -1570,7 +1587,7 @@ const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   "claude-code": (args) => installClaudeCode(args),
   codex: (args) => installCodex(args),
   antigravity: (args) => installAntigravity(args),
-  copilot: async () => { throw new Error(notYetSupported("copilot")); },
+  copilot: (args) => installCopilot(args),
   cursor: async () => { throw new Error(notYetSupported("cursor")); },
   opencode: async () => { throw new Error(notYetSupported("opencode")); },
 };
@@ -1865,6 +1882,78 @@ async function installCodexHooks(args: string[], projectPath: string): Promise<b
   return true;
 }
 
+async function installCopilot(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
+  if (!(await installCopilotHooks(args, projectPath))) return;
+  if (args.includes("--mcp")) {
+    // Copilot's user MCP config gets the proxy, so its MCP calls are recorded too.
+    const file = await installCopilotMcp({ omnodexHome: resolvePaths().home });
+    console.log(`[install] wrote the MCP proxy entry to`);
+    console.log(`          ${file}`);
+    console.log(`[install] the proxy reads its upstream servers from omnodex-proxy.json (run \`omnodex mcp-proxy install\` to create it)`);
+  }
+  await connectAfterInstall(resolvePaths().home, {
+    args,
+    platform: platformFromTarget("copilot"),
+    projectLabel: path.basename(projectPath),
+  });
+}
+
+/** Copilot hooks (CLI and VS Code); false when the install stopped (an error was reported). */
+async function installCopilotHooks(args: string[], projectPath: string): Promise<boolean> {
+  const paths = resolvePaths();
+  const debug = args.includes("--debug");
+  const useLegacy = args.includes("--legacy-shim");
+
+  const scope = await resolveHookScope("copilot", args, projectPath, paths.home);
+  if (scope === null) return false;
+  if (scope === "everywhere") {
+    await installEverywhere("copilot", projectPath, args);
+    return true;
+  }
+
+  const shimPath = useLegacy ? COPILOT_HOOK_SHIM_PATH : await writeLauncher("copilot");
+  const nodePath = useLegacy ? process.execPath : "node";
+  const portable = canUsePortableHookCommand(paths, { useLegacy, debug });
+  const interceptor = new CopilotInterceptor({
+    projectPath,
+    shimPath,
+    omnodexHome: paths.home,
+    debug,
+    nodePath,
+    homeRelativeShimPath: portable ? launcherHomeRelativePath("copilot") : undefined,
+  });
+  await interceptor.install();
+  console.log(`[install] installed Copilot hooks (CLI and VS Code) into`);
+  console.log(`          ${interceptor.hooksFilePath()}`);
+  if (useLegacy) {
+    console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] note: re-run \`omnodex install copilot\` after npm updates or Node version changes`);
+  } else {
+    console.log(`[install] launcher:     ${shimPath}`);
+    console.log(`[install] hooks survive npm updates, no need to re-run install after upgrading`);
+  }
+  if (!useLegacy) await checkLauncherShim("copilot", paths.home, COPILOT_HOOK_SHIM_PATH);
+  logHookCommandForm("copilot", portable, useLegacy);
+  await noteProjectScope("copilot", projectPath, paths.home);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] run \`omnodex uninstall copilot ${projectPath}\` to remove`);
+
+  await addInstallation({
+    target: "copilot",
+    component: "hooks",
+    scope: "project",
+    projectPath,
+    settingsFile: "omnodex.json",
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
+  return true;
+}
+
 async function installAntigravity(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const components = installComponents(args);
@@ -2058,7 +2147,8 @@ async function cmdUninstall(args: string[]): Promise<void> {
   const confirmed = args.includes("--confirm");
   const everywhereFlag = args.includes("--everywhere");
   const pluginFlag = args.includes("--plugin");
-  const hooksFlag = args.includes("--hooks") || everywhereFlag || !pluginFlag;
+  const mcpFlag = args.includes("--mcp");
+  const hooksFlag = args.includes("--hooks") || everywhereFlag || (!pluginFlag && !mcpFlag);
 
   const targetName = args.find((a) => isTargetName(a));
   const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
@@ -2095,8 +2185,19 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (mcpFlag && (!targetArg || targetArg === "copilot") && (await hasCopilotMcp())) {
+    const file = copilotMcpConfigPath();
+    actions.push({
+      lines: ["Copilot: remove the Omnodex MCP proxy entry", `  ${file}`],
+      run: async () => {
+        await uninstallCopilotMcp();
+        return `removed the Omnodex entry from ${file}`;
+      },
+    });
+  }
+
   if (!hooksFlag) {
-    // --plugin alone: nothing else to do.
+    // --plugin or --mcp alone: nothing else to do.
   } else if (everywhereFlag) {
     // Stop recording every project: remove the user-level hooks.
     for (const target of targets) {
@@ -2153,6 +2254,10 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (actions.length === 0) {
+    console.log(`[uninstall] nothing to remove`);
+    return;
+  }
   console.log(`[uninstall] this will:\n`);
   for (const action of actions) {
     for (const line of action.lines) console.log(`  ${line}`);
@@ -2349,6 +2454,24 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`    ${agHooksPath}`);
       stepsAside("antigravity");
       await reportMissingHookPaths(agHooksPath, "omnodex install antigravity --this-project");
+      anyInstalled = true;
+    }
+  } catch { /* not installed */ }
+
+  // Check Copilot
+  const copilotInterceptor = new CopilotInterceptor({
+    projectPath,
+    shimPath: COPILOT_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const copilotHooksPath = copilotInterceptor.hooksFilePath();
+    const fileContent = await fs.readFile(copilotHooksPath, "utf8");
+    if (fileContent.includes("copilot-hook-")) {
+      console.log(`  Copilot: installed`);
+      console.log(`    ${copilotHooksPath}`);
+      stepsAside("copilot");
+      await reportMissingHookPaths(copilotHooksPath, "omnodex install copilot --this-project");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -3278,7 +3401,7 @@ commands:
                                              until a newer one is pinned)
   install [target] [project]
                      install Omnodex hooks for an AI agent platform.
-                     Targets: claude-code, codex, antigravity (or agy)
+                     Targets: claude-code, codex, antigravity (or agy), copilot
                      Without a target, finds every supported agent on
                      this machine, shows what it will write, asks once,
                      and installs them all.
@@ -3319,6 +3442,9 @@ commands:
                        --mcp                 (antigravity) project MCP entry in
                                              .agents/mcp_config.json instead of
                                              the plugin; combine with --hooks
+                       --mcp                 (copilot) also add the proxy to
+                                             Copilot's user MCP config,
+                                             ~/.copilot/mcp-config.json
   uninstall [target] [project]
                      remove Omnodex hooks from the project. If the agent
                      records every project, leaves this project out
