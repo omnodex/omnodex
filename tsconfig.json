@@ -26,6 +26,9 @@
       "path": "./packages/cursor-provider"
     },
     {
+      "path": "./packages/opencode-provider"
+    },
+    {
       "path": "./packages/mcp-proxy"
     },
     {

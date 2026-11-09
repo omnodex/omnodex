@@ -37,6 +37,9 @@
       "path": "../cursor-provider"
     },
     {
+      "path": "../opencode-provider"
+    },
+    {
       "path": "../antigravity-provider"
     },
     {

@@ -41,6 +41,7 @@ node --test \
   packages/antigravity-provider/test/*.test.mjs \
   packages/copilot-provider/test/*.test.mjs \
   packages/cursor-provider/test/*.test.mjs \
+  packages/opencode-provider/test/*.test.mjs \
   packages/cli/test/*.test.mjs \
   packages/analyzer/test/**/*.test.mjs \
   packages/analyzer/test/*.test.mjs \
@@ -99,6 +100,7 @@ packages/
   antigravity-provider/    AntigravityInterceptor + antigravity-hook-shim (Google Antigravity)
   copilot-provider/        CopilotInterceptor + copilot-hook-shim (GitHub Copilot CLI and VS Code)
   cursor-provider/         CursorInterceptor + cursor-hook-shim (Cursor)
+  opencode-provider/       OpenCodeInterceptor + the plugin it installs + opencode-plugin-shim (OpenCode)
   mcp-proxy/               MCP proxy interceptor (agent <-> upstream MCP servers)
   analyzer/                Rule engine (RuleEngine, RuleRegistry) + 19 community rule definitions
   sync-encryptor/          End-to-end encrypted sync, AES-256-GCM (Argon2id KDF)
