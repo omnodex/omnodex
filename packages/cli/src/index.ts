@@ -1299,7 +1299,7 @@ async function reportMissingHookPaths(file: string, reinstall: string): Promise<
   if (!content) return;
   const missing = await findMissingHookPaths(content, { home: os.homedir() });
   if (missing.length === 0) return;
-  console.log(`    ⚠ names paths this machine does not have, so these hooks fail on every call:`);
+  console.log(`    warning: names paths this machine does not have, so these hooks fail on every call:`);
   for (const entry of missing) console.log(`        ${entry.path}`);
   console.log(`      it was probably written on another machine (a shared repo or synced folder);`);
   console.log(`      run \`${reinstall}\` here to rewrite it for this machine`);
@@ -1814,7 +1814,7 @@ async function installClaudeCodeHooks(args: string[], projectPath: string): Prom
     console.log(`[install] note: re-run \`omnodex install claude-code\` after npm updates or Node version changes`);
   } else {
     console.log(`[install] launcher:     ${shimPath}`);
-    console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+    console.log(`[install] hooks survive npm updates - no need to re-run install after upgrading`);
   }
   if (!useLegacy) await checkLauncherShim("claude-code", paths.home, CLAUDE_HOOK_SHIM_PATH);
   logHookCommandForm("claude-code", portable, useLegacy);
@@ -1887,7 +1887,7 @@ async function installCodexHooks(args: string[], projectPath: string): Promise<b
     console.log(`[install] note: re-run \`omnodex install codex\` after npm updates or Node version changes`);
   } else {
     console.log(`[install] launcher:     ${shimPath}`);
-    console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+    console.log(`[install] hooks survive npm updates - no need to re-run install after upgrading`);
   }
   if (!useLegacy) await checkLauncherShim("codex", paths.home, CODEX_HOOK_SHIM_PATH);
   logHookCommandForm("codex", portable, useLegacy);
@@ -2205,7 +2205,7 @@ async function installAntigravityHooksAndMcp(
       console.log(`[install] note: re-run \`omnodex install antigravity\` after npm updates or Node version changes`);
     } else {
       console.log(`[install] launcher:     ${shimPath}`);
-      console.log(`[install] hooks survive npm updates — no need to re-run install after upgrading`);
+      console.log(`[install] hooks survive npm updates - no need to re-run install after upgrading`);
     }
     console.log(`[install] OMNODEX_HOME: ${paths.home}`);
     if (!useLegacy) await checkLauncherShim("antigravity", paths.home, ANTIGRAVITY_HOOK_SHIM_PATH);
@@ -2540,7 +2540,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     for (const inst of allInstalls) {
       const launcherTag = inst.usesLauncher ? "launcher" : "legacy";
       const where = inst.scope === "user" ? "user-wide" : inst.projectPath;
-      console.log(`  ${inst.target} ${inst.component} (${inst.scope}) — ${where}`);
+      console.log(`  ${inst.target} ${inst.component} (${inst.scope}) - ${where}`);
       console.log(`    installed: ${inst.installedAt}  v${inst.installedVersion}  (${launcherTag})`);
       if (inst.component === "plugin") {
         const version = inst.pluginVersion ? ` v${inst.pluginVersion}` : "";
@@ -2562,7 +2562,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
     // Warn about stale (legacy) installations
     const stale = await findStaleInstallations();
     if (stale.length > 0) {
-      console.log(`\n  ⚠ ${stale.length} installation(s) use legacy absolute paths and will break on npm update.`);
+      console.log(`\n  warning: ${stale.length} installation(s) use legacy absolute paths and will break on npm update.`);
       console.log(`    Re-run \`omnodex install <target> <project>\` to upgrade them to stable launchers.`);
     }
     return;
@@ -2950,7 +2950,7 @@ export function describeMonitoringCheck(checks: readonly InstallationCheck[]): s
       lines.push(`  project no longer exists: ${c.project_path}; \`omnodex uninstall ${c.target} "${c.project_path}"\` forgets it`);
       continue;
     }
-    lines.push(`  ⚠ ${label(c.target)} ${MONITORING_PROBLEM_TEXT[c.state]} ${c.file}`);
+    lines.push(`  warning: ${label(c.target)} ${MONITORING_PROBLEM_TEXT[c.state]} ${c.file}`);
     lines.push(`    run \`omnodex install ${c.target}\`${c.scope === "project" ? " in that project" : ""} to restore monitoring`);
   }
   return lines;
@@ -3237,7 +3237,7 @@ async function cmdMcpProxyStatus(_args: string[]): Promise<void> {
   console.log(`[mcp-proxy] upstream servers (${config.upstream_servers.length}):`);
   for (const srv of config.upstream_servers) {
     const prefix = srv.name_override
-      ? `${srv.name} → ${srv.name_override}`
+      ? `${srv.name} -> ${srv.name_override}`
       : srv.name;
     if (srv.transport === "stdio") {
       const cmd = [srv.command, ...(srv.args ?? [])].join(" ");

@@ -79,7 +79,7 @@ test("status reports each platform, and a hook entry removed outside Omnodex rai
   await fs.writeFile(path.join(m.project, ".codex", "hooks.json"), "{}\n");
   const after = await run(["status", m.project], m.env, m.project);
   assert.match(after.out, /\[status\] monitoring: +Codex 1 problem/);
-  assert.match(after.out, /⚠ Codex hooks missing from .*hooks\.json/);
+  assert.match(after.out, /warning: Codex hooks missing from .*hooks\.json/);
   assert.match(after.out, /run `omnodex install codex` in that project/);
 
   const events = await controlEvents(m.omnodexHome);
@@ -101,7 +101,7 @@ test("removing hooks with omnodex uninstall leaves nothing unexplained", async (
   await run(["status", m.project], m.env, m.project);
   assert.equal((await run(["uninstall", "codex", m.project, "--unattended"], m.env)).code, 0);
   const r = await run(["status", m.project], m.env, m.project);
-  assert.doesNotMatch(r.out, /⚠/);
+  assert.doesNotMatch(r.out, /warning:/);
   const events = await controlEvents(m.omnodexHome);
   assert.ok(!events.some((e) => e.event_type === "monitoring.unexplained_change"));
 });
