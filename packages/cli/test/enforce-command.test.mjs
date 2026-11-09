@@ -170,6 +170,19 @@ test("status in guardrails mode names the module's state", async (t) => {
   assert.match(io.out[1], /guardrails module 1\.0\.0/);
 });
 
+test("status names the module's state in every mode, including when none is installed", async (t) => {
+  for (const mode of ["monitor", "shadow", "guardrails"]) {
+    const home = await tempHome(t);
+    if (mode !== "monitor") await setMode(home, mode);
+    for (const line of ["guardrails module 1.0.0 (valid until 2026-11-18)", "no guardrails module installed (Pro)"]) {
+      const io = fakeIo();
+      assert.equal(await runEnforce(["status"], { home, io, describeGuardrails: async () => line }), 0);
+      assert.equal(io.out.length, 2, mode);
+      assert.ok(io.out[1].includes(line), mode);
+    }
+  }
+});
+
 test("setting the mode a home already has applies the hooks again, as a repair", async (t) => {
   const home = await tempHome(t);
   await setMode(home, "guardrails");

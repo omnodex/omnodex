@@ -2930,7 +2930,7 @@ async function printCaptureHealth(omnodexHome: string): Promise<void> {
   await appendMarkers(omnodexHome, markers, pushEventsToCloud);
   for (const line of lines) console.log(line);
   const mode = await currentMode(omnodexHome).catch(() => "monitor");
-  const module = mode === "guardrails" ? ` (${describeGuardrails(await loadGuardrailsModule(omnodexHome))})` : "";
+  const module = ` (${describeGuardrails(await loadGuardrailsModule(omnodexHome))})`;
   console.log(`[status] enforcement:  ${mode}${module}`);
 }
 

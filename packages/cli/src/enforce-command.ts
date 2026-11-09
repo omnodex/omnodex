@@ -183,7 +183,7 @@ export async function runEnforce(args: string[], opts: EnforceOptions): Promise<
   if (sub === "status") {
     const mode = await currentMode(home);
     io.log(`${tag} ${home}: ${mode}: ${MODE_EFFECT[mode]}.`);
-    if (mode === "guardrails" && opts.describeGuardrails) io.log(`${tag} ${await opts.describeGuardrails()}.`);
+    if (opts.describeGuardrails) io.log(`${tag} ${await opts.describeGuardrails()}.`);
     return 0;
   }
 
