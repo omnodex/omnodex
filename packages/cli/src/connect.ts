@@ -193,6 +193,7 @@ const TARGET_PLATFORM_MAP: Record<string, string> = {
   antigravity: "antigravity-hook",
   copilot: "copilot-hook",
   cursor: "cursor-hook",
+  opencode: "opencode-plugin",
   cowork: "cowork-plugin",
 };
 

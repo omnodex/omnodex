@@ -28,7 +28,7 @@ import { interceptorLabel, interceptorTone, runtimeLabel } from "../dist/dashboa
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 const NEW_PLATFORMS = ["copilot", "cursor", "opencode"];
 // Providers that have not shipped yet.
-const PENDING = ["opencode"];
+const PENDING = [];
 
 async function machine(t) {
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-platforms-")));
@@ -71,9 +71,9 @@ function run(args, env) {
   });
 }
 
-test("the registry lists all six platforms; only the shipped five are available", () => {
+test("the registry lists all six platforms, all available", () => {
   assert.deepEqual([...PLATFORMS], ["claude-code", "codex", "antigravity", "copilot", "cursor", "opencode"]);
-  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity", "copilot", "cursor"]);
+  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity", "copilot", "cursor", "opencode"]);
   for (const p of NEW_PLATFORMS) {
     assert.equal(isPlatform(p), true);
     assert.equal(PLATFORM_AVAILABLE[p], !PENDING.includes(p));
@@ -89,7 +89,7 @@ test("loops over every platform skip the ones whose provider has not shipped", (
   assert.deepEqual(SURFACES, availablePlatforms());
 });
 
-test("detection ignores the new agents until their providers ship", async (t) => {
+test("detection finds every new agent that is installed", async (t) => {
   const m = await machine(t);
   const bin = path.join(m.root, "bin");
   await fs.mkdir(bin);
@@ -102,10 +102,9 @@ test("detection ignores the new agents until their providers ship", async (t) =>
   // PATHEXT is set so the lookup does not depend on the machine's own value.
   const env = { PATH: bin, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
   const found = detectSurfaces({ home: m.home, platform: host, env });
-  assert.deepEqual(found.map((d) => d.surface), ["cursor"]);
-  // Copilot has shipped too, so it is found as well.
+  assert.deepEqual(found.map((d) => d.surface).sort(), ["cursor", "opencode"]);
   await fs.writeFile(path.join(bin, exe("copilot")), "#!/bin/sh\n", { mode: 0o755 });
-  assert.deepEqual(detectSurfaces({ home: m.home, platform: host, env }).map((d) => d.surface).sort(), ["copilot", "cursor"]);
+  assert.deepEqual(detectSurfaces({ home: m.home, platform: host, env }).map((d) => d.surface).sort(), ["copilot", "cursor", "opencode"]);
 });
 
 test("each new platform has a user-level hooks file, and the agent's own folder variable moves it", () => {
@@ -185,21 +184,6 @@ test("the dashboard names the new sources", () => {
   for (const kind of ["copilot-hook", "cursor-hook", "opencode-plugin"]) assert.notEqual(interceptorTone(kind), "slate");
   assert.equal(runtimeLabel({ interceptor: "cursor-hook", platform: "cursor", mcp_client_name: null }), "Cursor");
   assert.equal(runtimeLabel({ interceptor: "mcp-proxy", platform: "opencode", mcp_client_name: null }), "OpenCode via MCP Proxy");
-});
-
-test("install and uninstall name the pending targets but report them as not available yet", async (t) => {
-  const m = await machine(t);
-  for (const target of PENDING) {
-    const install = await run(["install", target, m.project, "--no-connect", "--yes"], m.env);
-    assert.equal(install.code, 1, install.out);
-    assert.match(install.out, /not available yet/);
-  }
-  const uninstall = await run(["uninstall", "opencode", m.project, "--confirm"], m.env);
-  assert.equal(uninstall.code, 1, uninstall.out);
-  assert.match(uninstall.out, /not available yet/);
-  // Nothing was written for any of them.
-  assert.equal(existsSync(userHooksFile("copilot", m.home, m.env)), false);
-  assert.equal(existsSync(path.join(m.omnodexHome, "bin")), false);
 });
 
 test("an unknown target lists every valid one", async (t) => {

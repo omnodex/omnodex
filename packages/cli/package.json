@@ -29,6 +29,7 @@
     "@omnodex/hooks-provider": "*",
     "@omnodex/license-client": "*",
     "@omnodex/mcp-proxy": "*",
+    "@omnodex/opencode-provider": "*",
     "@omnodex/projection": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*"

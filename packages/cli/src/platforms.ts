@@ -35,7 +35,7 @@ export const PLATFORM_AVAILABLE: Record<Platform, boolean> = {
   antigravity: true,
   copilot: true,
   cursor: true,
-  opencode: false,
+  opencode: true,
 };
 
 export const isPlatform = (name: string): name is Platform => (PLATFORMS as readonly string[]).includes(name);

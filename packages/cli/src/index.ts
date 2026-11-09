@@ -77,6 +77,14 @@ import {
   installCursorMcp,
   uninstallCursorMcp,
 } from "@omnodex/cursor-provider";
+import {
+  OPENCODE_PLUGIN_SHIM_PATH,
+  OpenCodeInterceptor,
+  hasOpenCodeMcp,
+  installOpenCodeMcp,
+  opencodeMcpConfigPath,
+  uninstallOpenCodeMcp,
+} from "@omnodex/opencode-provider";
 import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
@@ -1259,7 +1267,8 @@ async function installTargets(rawArgs: string[]): Promise<void> {
       await installCursor(rest);
       return;
     case "opencode":
-      return; // refused above until the provider ships
+      await installOpenCode(rest);
+      return;
   }
 }
 
@@ -1315,7 +1324,7 @@ function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: st
     case "cursor":
       return new CursorInterceptor({ projectPath, shimPath: CURSOR_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "opencode":
-      throw new Error(notYetSupported(surface));
+      return new OpenCodeInterceptor({ projectPath, shimPath: OPENCODE_PLUGIN_SHIM_PATH, omnodexHome }).hooksFilePath();
   }
 }
 
@@ -1418,6 +1427,10 @@ async function findProjectHookFiles(projectPath: string, omnodexHome: string): P
   if ((await readOrNull(cursor.hooksFilePath()))?.includes("cursor-hook-")) {
     found.push({ target: "cursor", label: "Cursor", path: cursor.hooksFilePath(), uninstall: () => cursor.uninstall() });
   }
+  const opencode = new OpenCodeInterceptor({ projectPath, shimPath: OPENCODE_PLUGIN_SHIM_PATH, omnodexHome });
+  if ((await readOrNull(opencode.hooksFilePath()))?.includes("omnodex-managed")) {
+    found.push({ target: "opencode", label: "OpenCode", path: opencode.hooksFilePath(), uninstall: () => opencode.uninstall() });
+  }
   return found;
 }
 
@@ -1444,7 +1457,9 @@ function userLevelHooks(
           ? new CopilotInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
           : target === "cursor"
             ? new CursorInterceptor({ ...common, hooksPath: file })
-            : new AntigravityInterceptor({ ...common, hooksPath: file });
+            : target === "opencode"
+              ? new OpenCodeInterceptor({ ...common, hooksPath: file })
+              : new AntigravityInterceptor({ ...common, hooksPath: file });
   return { file, install: () => interceptor.install(), uninstall: () => interceptor.uninstall() };
 }
 
@@ -1454,8 +1469,7 @@ const TARGET_SHIMS: Record<InstallTarget, string> = {
   antigravity: ANTIGRAVITY_HOOK_SHIM_PATH,
   copilot: COPILOT_HOOK_SHIM_PATH,
   cursor: CURSOR_HOOK_SHIM_PATH,
-  // The provider for this arrives with its own package; the path is a placeholder until then.
-  opencode: "",
+  opencode: OPENCODE_PLUGIN_SHIM_PATH,
 };
 
 /**
@@ -1606,7 +1620,7 @@ const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   antigravity: (args) => installAntigravity(args),
   copilot: (args) => installCopilot(args),
   cursor: (args) => installCursor(args),
-  opencode: async () => { throw new Error(notYetSupported("opencode")); },
+  opencode: (args) => installOpenCode(args),
 };
 
 /**
@@ -2041,6 +2055,87 @@ async function installCursorHooks(args: string[], projectPath: string): Promise<
   return true;
 }
 
+async function installOpenCode(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
+  if (!(await installOpenCodeHooks(args, projectPath))) return;
+  if (args.includes("--mcp")) {
+    // OpenCode's user config gets the proxy, so its MCP calls are recorded too.
+    try {
+      const file = await installOpenCodeMcp({ omnodexHome: resolvePaths().home });
+      console.log(`[install] wrote the MCP proxy entry to`);
+      console.log(`          ${file}`);
+      console.log(`[install] the proxy reads its upstream servers from omnodex-proxy.json (run \`omnodex mcp-proxy install\` to create it)`);
+    } catch (err) {
+      console.error(`[install] could not add the MCP proxy entry: ${(err as Error).message}`);
+      process.exitCode = 1;
+    }
+  }
+  await connectAfterInstall(resolvePaths().home, {
+    args,
+    platform: platformFromTarget("opencode"),
+    projectLabel: path.basename(projectPath),
+  });
+}
+
+/** The OpenCode plugin; false when the install stopped (an error was reported). */
+async function installOpenCodeHooks(args: string[], projectPath: string): Promise<boolean> {
+  const paths = resolvePaths();
+  const debug = args.includes("--debug");
+  const useLegacy = args.includes("--legacy-shim");
+
+  const scope = await resolveHookScope("opencode", args, projectPath, paths.home);
+  if (scope === null) return false;
+  if (scope === "everywhere") {
+    await installEverywhere("opencode", projectPath, args);
+    return true;
+  }
+
+  const shimPath = useLegacy ? OPENCODE_PLUGIN_SHIM_PATH : await writeLauncher("opencode");
+  const nodePath = useLegacy ? process.execPath : "node";
+  const interceptor = new OpenCodeInterceptor({
+    projectPath,
+    shimPath,
+    omnodexHome: paths.home,
+    debug,
+    nodePath,
+  });
+  try {
+    await interceptor.install();
+  } catch (err) {
+    console.error(`[install] ${(err as Error).message}`);
+    process.exitCode = 1;
+    return false;
+  }
+  console.log(`[install] installed the OpenCode plugin into`);
+  console.log(`          ${interceptor.hooksFilePath()}`);
+  if (useLegacy) {
+    console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] note: re-run \`omnodex install opencode\` after npm updates or Node version changes`);
+  } else {
+    console.log(`[install] launcher:     ${shimPath}`);
+    console.log(`[install] the plugin survives npm updates, no need to re-run install after upgrading`);
+  }
+  if (!useLegacy) await checkLauncherShim("opencode", paths.home, OPENCODE_PLUGIN_SHIM_PATH);
+  await noteProjectScope("opencode", projectPath, paths.home);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] restart OpenCode if it is open: it loads plugins at startup`);
+  console.log(`[install] run \`omnodex uninstall opencode ${projectPath}\` to remove`);
+
+  await addInstallation({
+    target: "opencode",
+    component: "hooks",
+    scope: "project",
+    projectPath,
+    settingsFile: "omnodex.js",
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
+  return true;
+}
+
 async function installAntigravity(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const components = installComponents(args);
@@ -2272,6 +2367,16 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (mcpFlag && (!targetArg || targetArg === "opencode") && (await hasOpenCodeMcp())) {
+    const file = opencodeMcpConfigPath();
+    actions.push({
+      lines: ["OpenCode: remove the Omnodex MCP proxy entry", `  ${file}`],
+      run: async () => {
+        await uninstallOpenCodeMcp();
+        return `removed the Omnodex entry from ${file}`;
+      },
+    });
+  }
   if (mcpFlag && (!targetArg || targetArg === "cursor") && (await hasCursorMcp())) {
     const file = cursorMcpConfigPath();
     actions.push({
@@ -2587,6 +2692,24 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`    ${cursorHooksPath}`);
       stepsAside("cursor");
       await reportMissingHookPaths(cursorHooksPath, "omnodex install cursor --this-project");
+      anyInstalled = true;
+    }
+  } catch { /* not installed */ }
+
+  // Check OpenCode
+  const opencodeInterceptor = new OpenCodeInterceptor({
+    projectPath,
+    shimPath: OPENCODE_PLUGIN_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const opencodeFile = opencodeInterceptor.hooksFilePath();
+    const fileContent = await fs.readFile(opencodeFile, "utf8");
+    if (fileContent.includes("omnodex-managed")) {
+      console.log(`  OpenCode: installed`);
+      console.log(`    ${opencodeFile}`);
+      stepsAside("opencode");
+      await reportMissingHookPaths(opencodeFile, "omnodex install opencode --this-project");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -3516,7 +3639,7 @@ commands:
                                              until a newer one is pinned)
   install [target] [project]
                      install Omnodex hooks for an AI agent platform.
-                     Targets: claude-code, codex, antigravity (or agy), copilot, cursor
+                     Targets: claude-code, codex, antigravity (or agy), copilot, cursor, opencode
                      Without a target, finds every supported agent on
                      this machine, shows what it will write, asks once,
                      and installs them all.
@@ -3557,10 +3680,11 @@ commands:
                        --mcp                 (antigravity) project MCP entry in
                                              .agents/mcp_config.json instead of
                                              the plugin; combine with --hooks
-                       --mcp                 (copilot, cursor) also add the proxy to
-                                             the agent's user MCP config,
-                                             ~/.copilot/mcp-config.json or
-                                             ~/.cursor/mcp.json
+                       --mcp                 (copilot, cursor, opencode) also add the
+                                             proxy to the agent's user MCP config:
+                                             ~/.copilot/mcp-config.json,
+                                             ~/.cursor/mcp.json or
+                                             ~/.config/opencode/opencode.json
   uninstall [target] [project]
                      remove Omnodex hooks from the project. If the agent
                      records every project, leaves this project out

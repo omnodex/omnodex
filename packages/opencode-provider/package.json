@@ -1,0 +1,30 @@
+{
+  "name": "@omnodex/opencode-provider",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Omnodex interceptor for OpenCode through a plugin it loads.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "bin": {
+    "omnodex-opencode-plugin": "./dist/bin/opencode-plugin-shim.js"
+  },
+  "dependencies": {
+    "@omnodex/analyzer": "*",
+    "@omnodex/event-log": "*",
+    "@omnodex/hooks-provider": "*",
+    "@omnodex/shared": "*",
+    "@omnodex/sync-encryptor": "*"
+  }
+}
