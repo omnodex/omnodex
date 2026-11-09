@@ -27,13 +27,16 @@ test("spawnNpm runs npm, and Node raises no deprecation about it", () => {
   assert.match(r.stdout, /^0:\d+\.\d+\.\d+/);
 });
 
-test("spawnNpm refuses an argument that is not a plain word on Windows, where the command line is built as text", () => {
+test("spawnNpm refuses an argument that is not a plain word on Windows, where the command line is built as text", { skip: process.platform !== "win32" }, () => {
+  // Elsewhere npm takes the argument as given, so this would run a real
+  // `npm install` in the repository and relink node_modules while other test
+  // files are spawning the CLI from it.
   const script = `import(${JSON.stringify("file://" + updateJs.replace(/\\/g, "/"))}).then((m) => {
     try { m.spawnNpm(["install", "x & calc"], { encoding: "utf8" }); process.stdout.write("ran"); }
     catch (e) { process.stdout.write("refused"); }
   });`;
   const r = spawnSync(process.execPath, ["-e", script], { encoding: "utf8", env: { ...process.env, OMNODEX_NO_UPDATE_CHECK: "1" } });
-  if (process.platform === "win32") assert.equal(r.stdout, "refused");
+  assert.equal(r.stdout, "refused");
 });
 
 test("no source file spawns with a shell and an argument list", () => {
