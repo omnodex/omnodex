@@ -28,7 +28,7 @@ import { interceptorLabel, interceptorTone, runtimeLabel } from "../dist/dashboa
 const CLI = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "index.js");
 const NEW_PLATFORMS = ["copilot", "cursor", "opencode"];
 // Providers that have not shipped yet.
-const PENDING = ["cursor", "opencode"];
+const PENDING = ["opencode"];
 
 async function machine(t) {
   const root = realpathSync(await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-platforms-")));
@@ -71,9 +71,9 @@ function run(args, env) {
   });
 }
 
-test("the registry lists all six platforms; only the shipped four are available", () => {
+test("the registry lists all six platforms; only the shipped five are available", () => {
   assert.deepEqual([...PLATFORMS], ["claude-code", "codex", "antigravity", "copilot", "cursor", "opencode"]);
-  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity", "copilot"]);
+  assert.deepEqual(availablePlatforms(), ["claude-code", "codex", "antigravity", "copilot", "cursor"]);
   for (const p of NEW_PLATFORMS) {
     assert.equal(isPlatform(p), true);
     assert.equal(PLATFORM_AVAILABLE[p], !PENDING.includes(p));
@@ -81,7 +81,7 @@ test("the registry lists all six platforms; only the shipped four are available"
     assert.equal(SURFACE_LABELS[p], PLATFORM_LABELS[p]);
   }
   assert.equal(isPlatform("agy"), false);
-  assert.match(notYetSupported("cursor"), /Cursor support is not available yet/);
+  assert.match(notYetSupported("opencode"), /OpenCode support is not available yet/);
 });
 
 test("loops over every platform skip the ones whose provider has not shipped", () => {
@@ -102,10 +102,10 @@ test("detection ignores the new agents until their providers ship", async (t) =>
   // PATHEXT is set so the lookup does not depend on the machine's own value.
   const env = { PATH: bin, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
   const found = detectSurfaces({ home: m.home, platform: host, env });
-  assert.deepEqual(found, []);
-  // Copilot has shipped, so it is found.
+  assert.deepEqual(found.map((d) => d.surface), ["cursor"]);
+  // Copilot has shipped too, so it is found as well.
   await fs.writeFile(path.join(bin, exe("copilot")), "#!/bin/sh\n", { mode: 0o755 });
-  assert.deepEqual(detectSurfaces({ home: m.home, platform: host, env }).map((d) => d.surface), ["copilot"]);
+  assert.deepEqual(detectSurfaces({ home: m.home, platform: host, env }).map((d) => d.surface).sort(), ["copilot", "cursor"]);
 });
 
 test("each new platform has a user-level hooks file, and the agent's own folder variable moves it", () => {
@@ -198,7 +198,6 @@ test("install and uninstall name the pending targets but report them as not avai
   assert.equal(uninstall.code, 1, uninstall.out);
   assert.match(uninstall.out, /not available yet/);
   // Nothing was written for any of them.
-  assert.equal(existsSync(userHooksFile("cursor", m.home, m.env)), false);
   assert.equal(existsSync(userHooksFile("copilot", m.home, m.env)), false);
   assert.equal(existsSync(path.join(m.omnodexHome, "bin")), false);
 });

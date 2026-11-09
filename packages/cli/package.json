@@ -24,6 +24,7 @@
     "@omnodex/antigravity-provider": "*",
     "@omnodex/codex-provider": "*",
     "@omnodex/copilot-provider": "*",
+    "@omnodex/cursor-provider": "*",
     "@omnodex/event-log": "*",
     "@omnodex/hooks-provider": "*",
     "@omnodex/license-client": "*",

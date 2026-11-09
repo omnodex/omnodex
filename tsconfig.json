@@ -23,6 +23,9 @@
       "path": "./packages/copilot-provider"
     },
     {
+      "path": "./packages/cursor-provider"
+    },
+    {
       "path": "./packages/mcp-proxy"
     },
     {

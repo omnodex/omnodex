@@ -192,6 +192,7 @@ const TARGET_PLATFORM_MAP: Record<string, string> = {
   codex: "codex-hook",
   antigravity: "antigravity-hook",
   copilot: "copilot-hook",
+  cursor: "cursor-hook",
   cowork: "cowork-plugin",
 };
 
