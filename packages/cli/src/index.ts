@@ -171,6 +171,7 @@ import {
   userHooksFile,
 } from "./hook-scope.js";
 import { findMissingHookPaths } from "./hook-paths.js";
+import { addGitExclude, isTracked, removeGitExclude } from "./git-exclude.js";
 import { runUpdate, printUpdateNotification, scheduleBackgroundCheck, detectInstallMethod, getSourceInstallInfo } from "./update.js";
 import { runDeviceAuthFlow } from "./device-auth.js";
 import { bootstrapCloudConnection, describeBootstrap } from "./cloud-bootstrap.js";
@@ -1421,7 +1422,10 @@ async function findProjectHookFiles(projectPath: string, omnodexHome: string): P
   }
   const copilot = new CopilotInterceptor({ projectPath, shimPath: COPILOT_HOOK_SHIM_PATH, omnodexHome });
   if ((await readOrNull(copilot.hooksFilePath()))?.includes("copilot-hook-")) {
-    found.push({ target: "copilot", label: "Copilot", path: copilot.hooksFilePath(), uninstall: () => copilot.uninstall() });
+    found.push({ target: "copilot", label: "Copilot", path: copilot.hooksFilePath(), uninstall: async () => {
+      await copilot.uninstall();
+      await removeGitExclude(projectPath, COPILOT_PROJECT_HOOKS_REL).catch(() => false);
+    } });
   }
   const cursor = new CursorInterceptor({ projectPath, shimPath: CURSOR_HOOK_SHIM_PATH, omnodexHome });
   if ((await readOrNull(cursor.hooksFilePath()))?.includes("cursor-hook-")) {
@@ -1913,6 +1917,31 @@ async function installCodexHooks(args: string[], projectPath: string): Promise<b
   return true;
 }
 
+/** The project hook file, relative to the project. */
+const COPILOT_PROJECT_HOOKS_REL = path.join(".github", "hooks", "omnodex.json");
+
+/**
+ * Copilot refuses every tool call when a hook it runs cannot start, and it runs
+ * every file in a repository's .github/hooks for anyone who opens it. A
+ * committed Omnodex file would therefore stop Copilot for people who do not
+ * have Omnodex, so the file is kept out of git through the clone's own exclude
+ * file, and a copy that is already committed is reported.
+ */
+async function keepCopilotHooksOutOfGit(projectPath: string, hooksFile: string): Promise<void> {
+  if (path.resolve(hooksFile) !== path.resolve(projectPath, COPILOT_PROJECT_HOOKS_REL)) return;
+  try {
+    if (isTracked(projectPath, COPILOT_PROJECT_HOOKS_REL)) {
+      console.warn(`[install] warning: ${COPILOT_PROJECT_HOOKS_REL} is committed in this repository. Copilot refuses every tool call for anyone`);
+      console.warn(`[install]          who opens it without Omnodex installed. Remove it from git (git rm --cached) and keep it local.`);
+      return;
+    }
+    const exclude = await addGitExclude(projectPath, COPILOT_PROJECT_HOOKS_REL);
+    if (exclude) console.log(`[install] ${COPILOT_PROJECT_HOOKS_REL} is excluded from git (${exclude}), so it is not committed for people without Omnodex`);
+  } catch (err) {
+    console.warn(`[install] could not exclude ${COPILOT_PROJECT_HOOKS_REL} from git: ${(err as Error).message}`);
+  }
+}
+
 async function installCopilot(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   if (!(await installCopilotHooks(args, projectPath))) return;
@@ -1968,6 +1997,7 @@ async function installCopilotHooks(args: string[], projectPath: string): Promise
   if (!useLegacy) await checkLauncherShim("copilot", paths.home, COPILOT_HOOK_SHIM_PATH);
   logHookCommandForm("copilot", portable, useLegacy);
   await noteProjectScope("copilot", projectPath, paths.home);
+  await keepCopilotHooksOutOfGit(projectPath, interceptor.hooksFilePath());
   console.log(`[install] OMNODEX_HOME: ${paths.home}`);
   console.log(`[install] run \`omnodex uninstall copilot ${projectPath}\` to remove`);
 

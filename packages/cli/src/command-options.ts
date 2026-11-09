@@ -38,7 +38,7 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
   },
   uninstall: {
     usage: "uninstall [target] [project]", description: "Remove hooks or plugins. Removing monitoring requires a person at a terminal unless --unattended is given.",
-    flags: ["--confirm", "--unattended", "--everywhere", "--plugin", "--hooks"],
+    flags: ["--confirm", "--unattended", "--everywhere", "--plugin", "--hooks", "--mcp"],
   },
   status: { usage: "status [project]", description: "Show installations and monitoring health.", flags: ["--all"] },
   spike: {
