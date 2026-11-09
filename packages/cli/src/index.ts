@@ -62,6 +62,10 @@ import {
 import {
   COPILOT_HOOK_SHIM_PATH,
   CopilotInterceptor,
+  copilotMcpConfigPath,
+  hasCopilotMcp,
+  installCopilotMcp,
+  uninstallCopilotMcp,
 } from "@omnodex/copilot-provider";
 import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
@@ -1879,6 +1883,13 @@ async function installCodexHooks(args: string[], projectPath: string): Promise<b
 async function installCopilot(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   if (!(await installCopilotHooks(args, projectPath))) return;
+  if (args.includes("--mcp")) {
+    // Copilot's user MCP config gets the proxy, so its MCP calls are recorded too.
+    const file = await installCopilotMcp({ omnodexHome: resolvePaths().home });
+    console.log(`[install] wrote the MCP proxy entry to`);
+    console.log(`          ${file}`);
+    console.log(`[install] the proxy reads its upstream servers from omnodex-proxy.json (run \`omnodex mcp-proxy install\` to create it)`);
+  }
   await connectAfterInstall(resolvePaths().home, {
     args,
     platform: platformFromTarget("copilot"),
@@ -2134,7 +2145,8 @@ async function cmdUninstall(args: string[]): Promise<void> {
   const confirmed = args.includes("--confirm");
   const everywhereFlag = args.includes("--everywhere");
   const pluginFlag = args.includes("--plugin");
-  const hooksFlag = args.includes("--hooks") || everywhereFlag || !pluginFlag;
+  const mcpFlag = args.includes("--mcp");
+  const hooksFlag = args.includes("--hooks") || everywhereFlag || (!pluginFlag && !mcpFlag);
 
   const targetName = args.find((a) => isTargetName(a));
   const targetArg = targetName === undefined ? undefined : canonicalTarget(targetName) as InstallTarget;
@@ -2171,8 +2183,19 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (mcpFlag && (!targetArg || targetArg === "copilot") && (await hasCopilotMcp())) {
+    const file = copilotMcpConfigPath();
+    actions.push({
+      lines: ["Copilot: remove the Omnodex MCP proxy entry", `  ${file}`],
+      run: async () => {
+        await uninstallCopilotMcp();
+        return `removed the Omnodex entry from ${file}`;
+      },
+    });
+  }
+
   if (!hooksFlag) {
-    // --plugin alone: nothing else to do.
+    // --plugin or --mcp alone: nothing else to do.
   } else if (everywhereFlag) {
     // Stop recording every project: remove the user-level hooks.
     for (const target of targets) {
@@ -2229,6 +2252,10 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (actions.length === 0) {
+    console.log(`[uninstall] nothing to remove`);
+    return;
+  }
   console.log(`[uninstall] this will:\n`);
   for (const action of actions) {
     for (const line of action.lines) console.log(`  ${line}`);
@@ -3397,6 +3424,9 @@ commands:
                        --mcp                 (antigravity) project MCP entry in
                                              .agents/mcp_config.json instead of
                                              the plugin; combine with --hooks
+                       --mcp                 (copilot) also add the proxy to
+                                             Copilot's user MCP config,
+                                             ~/.copilot/mcp-config.json
   uninstall [target] [project]
                      remove Omnodex hooks from the project. If the agent
                      records every project, leaves this project out

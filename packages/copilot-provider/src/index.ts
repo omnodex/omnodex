@@ -9,3 +9,4 @@ export * from "./copilot-payload.js";
 export * from "./shim-path.js";
 export * from "./tool-ids.js";
 export * from "./decision.js";
+export * from "./mcp-config.js";
