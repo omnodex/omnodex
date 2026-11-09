@@ -93,13 +93,19 @@ test("detection ignores the new agents until their providers ship", async (t) =>
   const m = await machine(t);
   const bin = path.join(m.root, "bin");
   await fs.mkdir(bin);
-  for (const cmd of ["cursor-agent", "opencode"]) await fs.writeFile(path.join(bin, cmd), "#!/bin/sh\n", { mode: 0o755 });
+  // The host's own platform: a Windows PATH holds drive letters, which a
+  // POSIX split would cut at the colon, and Windows finds commands by extension.
+  const host = process.platform;
+  const exe = (cmd) => (host === "win32" ? `${cmd}.cmd` : cmd);
+  for (const cmd of ["cursor-agent", "opencode"]) await fs.writeFile(path.join(bin, exe(cmd)), "#!/bin/sh\n", { mode: 0o755 });
   await fs.mkdir(path.join(m.home, ".cursor"), { recursive: true });
-  const found = detectSurfaces({ home: m.home, platform: "linux", env: { PATH: bin } });
+  // PATHEXT is set so the lookup does not depend on the machine's own value.
+  const env = { PATH: bin, PATHEXT: ".COM;.EXE;.BAT;.CMD" };
+  const found = detectSurfaces({ home: m.home, platform: host, env });
   assert.deepEqual(found, []);
   // Copilot has shipped, so it is found.
-  await fs.writeFile(path.join(bin, "copilot"), "#!/bin/sh\n", { mode: 0o755 });
-  assert.deepEqual(detectSurfaces({ home: m.home, platform: "linux", env: { PATH: bin } }).map((d) => d.surface), ["copilot"]);
+  await fs.writeFile(path.join(bin, exe("copilot")), "#!/bin/sh\n", { mode: 0o755 });
+  assert.deepEqual(detectSurfaces({ home: m.home, platform: host, env }).map((d) => d.surface), ["copilot"]);
 });
 
 test("each new platform has a user-level hooks file, and the agent's own folder variable moves it", () => {
