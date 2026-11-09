@@ -23,7 +23,7 @@
  */
 
 import { promises as fs, statSync, readFileSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as https from "node:https";
@@ -32,6 +32,23 @@ import { getInstalledVersion } from "./registry.js";
 import { writeAllLaunchers } from "./launcher-template.js";
 import { refreshPlugins } from "./plugin-refresh.js";
 import { findInstallations } from "./registry.js";
+
+/**
+ * Run npm without a shell option, which Node deprecates when it is combined
+ * with an argument list. On Windows npm is a .cmd file that only a shell can
+ * start, so the command line is built here from fixed words and a validated
+ * version and handed to cmd.exe as one string; elsewhere npm runs directly.
+ */
+export function spawnNpm(args: readonly string[], options: SpawnSyncOptions = {}): SpawnSyncReturns<string | Buffer> {
+  if (process.platform !== "win32") return spawnSync("npm", [...args], options);
+  for (const a of args) {
+    if (!/^[A-Za-z0-9@._:/=-]+$/.test(a)) throw new Error(`refusing to pass an unexpected argument to npm: ${a}`);
+  }
+  return spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", ["npm", ...args].join(" ")], {
+    ...options,
+    windowsVerbatimArguments: true,
+  });
+}
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -213,9 +230,7 @@ async function runSourceUpdate(info: SourceInstallInfo): Promise<boolean> {
 
   // Step 2: npm install (in case dependencies changed)
   console.log("\n[update] running: npm install");
-  const installResult = spawnSync("npm", ["install"], {
-    cwd: repoRoot, stdio: "inherit", shell: true, timeout: 120000,
-  });
+  const installResult = spawnNpm(["install"], { cwd: repoRoot, stdio: "inherit", timeout: 120000 });
   if (installResult.status !== 0) {
     console.error("\n[update] npm install failed.");
     return false;
@@ -223,9 +238,7 @@ async function runSourceUpdate(info: SourceInstallInfo): Promise<boolean> {
 
   // Step 3: npm run build
   console.log("\n[update] running: npm run build");
-  const buildResult = spawnSync("npm", ["run", "build"], {
-    cwd: repoRoot, stdio: "inherit", shell: true, timeout: 120000,
-  });
+  const buildResult = spawnNpm(["run", "build"], { cwd: repoRoot, stdio: "inherit", timeout: 120000 });
   if (buildResult.status !== 0) {
     console.error("\n[update] build failed.");
     return false;
@@ -369,7 +382,7 @@ export async function printUpdateNotification(): Promise<boolean> {
 
     if (compareSemver(installed, cache.latestVersion) < 0) {
       console.error(
-        `\n  Omnodex update available: ${installed} → ${cache.latestVersion}`,
+        `\n  Omnodex update available: ${installed} -> ${cache.latestVersion}`,
       );
       console.error(`  Run \`omnodex update\` to upgrade.\n`);
       return true;
@@ -557,7 +570,7 @@ export async function runUpdate(opts: {
     } else {
       console.log("\n[update] done.");
     }
-    console.log("[update] no need to re-run \`omnodex install\` — launchers resolve the new shims automatically.");
+    console.log("[update] no need to re-run \`omnodex install\` - launchers resolve the new shims automatically.");
     return;
   }
 
@@ -582,7 +595,7 @@ export async function runUpdate(opts: {
     return;
   }
 
-  console.log(`[update] update available: ${installed} → ${latest}`);
+  console.log(`[update] update available: ${installed} -> ${latest}`);
   console.log(`[update] release notes: ${RELEASES_URL}`);
 
   if (opts.check) {
@@ -597,10 +610,7 @@ export async function runUpdate(opts: {
 
   // Attempt npm install
   console.log(`\n[update] running: npm install -g omnodex@${latest}`);
-  const result = spawnSync("npm", ["install", "-g", `omnodex@${latest}`], {
-    stdio: "inherit",
-    shell: true,
-  });
+  const result = spawnNpm(["install", "-g", `omnodex@${latest}`], { stdio: "inherit" });
 
   if (result.status !== 0) {
     // Check if it's a permissions error
@@ -637,7 +647,7 @@ export async function runUpdate(opts: {
   });
 
   console.log("\n[update] done. All hook installations will use the updated code.");
-  console.log("[update] no need to re-run \`omnodex install\` — launchers resolve the new shims automatically.");
+  console.log("[update] no need to re-run \`omnodex install\` - launchers resolve the new shims automatically.");
 }
 
 /**
