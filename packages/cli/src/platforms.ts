@@ -34,7 +34,7 @@ export const PLATFORM_AVAILABLE: Record<Platform, boolean> = {
   codex: true,
   antigravity: true,
   copilot: true,
-  cursor: false,
+  cursor: true,
   opencode: false,
 };
 

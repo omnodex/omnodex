@@ -31,7 +31,7 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
     flags: ["--check", "--refresh-launchers", "--refresh-plugins"],
   },
   install: {
-    usage: "install [target] [project]", description: "Install hooks and plugins. Targets: claude-code, codex, antigravity (or agy), copilot. Without a target, detect installed agents.",
+    usage: "install [target] [project]", description: "Install hooks and plugins. Targets: claude-code, codex, antigravity (or agy), copilot, cursor. Without a target, detect installed agents.",
     flags: ["--everywhere", "--this-project", "--yes", "-y", "--debug", "--no-connect", "--legacy-shim", "--project-settings", "--hooks", "--plugin", "--mcp"],
     values: ["--plugin-version", "--from", "--sha256"],
     joined: ["--plugin-version", "--from", "--sha256"],

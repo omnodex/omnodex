@@ -69,6 +69,14 @@ import {
   installCopilotMcp,
   uninstallCopilotMcp,
 } from "@omnodex/copilot-provider";
+import {
+  CURSOR_HOOK_SHIM_PATH,
+  CursorInterceptor,
+  cursorMcpConfigPath,
+  hasCursorMcp,
+  installCursorMcp,
+  uninstallCursorMcp,
+} from "@omnodex/cursor-provider";
 import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
@@ -1248,6 +1256,8 @@ async function installTargets(rawArgs: string[]): Promise<void> {
       await installCopilot(rest);
       return;
     case "cursor":
+      await installCursor(rest);
+      return;
     case "opencode":
       return; // refused above until the provider ships
   }
@@ -1303,6 +1313,7 @@ function surfaceHooksFile(surface: Surface, projectPath: string, omnodexHome: st
     case "copilot":
       return new CopilotInterceptor({ projectPath, shimPath: COPILOT_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "cursor":
+      return new CursorInterceptor({ projectPath, shimPath: CURSOR_HOOK_SHIM_PATH, omnodexHome }).hooksFilePath();
     case "opencode":
       throw new Error(notYetSupported(surface));
   }
@@ -1403,6 +1414,10 @@ async function findProjectHookFiles(projectPath: string, omnodexHome: string): P
   if ((await readOrNull(copilot.hooksFilePath()))?.includes("copilot-hook-")) {
     found.push({ target: "copilot", label: "Copilot", path: copilot.hooksFilePath(), uninstall: () => copilot.uninstall() });
   }
+  const cursor = new CursorInterceptor({ projectPath, shimPath: CURSOR_HOOK_SHIM_PATH, omnodexHome });
+  if ((await readOrNull(cursor.hooksFilePath()))?.includes("cursor-hook-")) {
+    found.push({ target: "cursor", label: "Cursor", path: cursor.hooksFilePath(), uninstall: () => cursor.uninstall() });
+  }
   return found;
 }
 
@@ -1427,7 +1442,9 @@ function userLevelHooks(
         ? new CodexInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
         : target === "copilot"
           ? new CopilotInterceptor({ ...common, hooksPath: file, homeRelativeShimPath: opts.homeRelativeShimPath })
-          : new AntigravityInterceptor({ ...common, hooksPath: file });
+          : target === "cursor"
+            ? new CursorInterceptor({ ...common, hooksPath: file })
+            : new AntigravityInterceptor({ ...common, hooksPath: file });
   return { file, install: () => interceptor.install(), uninstall: () => interceptor.uninstall() };
 }
 
@@ -1436,8 +1453,8 @@ const TARGET_SHIMS: Record<InstallTarget, string> = {
   codex: CODEX_HOOK_SHIM_PATH,
   antigravity: ANTIGRAVITY_HOOK_SHIM_PATH,
   copilot: COPILOT_HOOK_SHIM_PATH,
-  // The providers for these arrive with their own packages; the paths are placeholders until then.
-  cursor: "",
+  cursor: CURSOR_HOOK_SHIM_PATH,
+  // The provider for this arrives with its own package; the path is a placeholder until then.
   opencode: "",
 };
 
@@ -1588,7 +1605,7 @@ const SURFACE_INSTALLERS: Record<Surface, (args: string[]) => Promise<void>> = {
   codex: (args) => installCodex(args),
   antigravity: (args) => installAntigravity(args),
   copilot: (args) => installCopilot(args),
-  cursor: async () => { throw new Error(notYetSupported("cursor")); },
+  cursor: (args) => installCursor(args),
   opencode: async () => { throw new Error(notYetSupported("opencode")); },
 };
 
@@ -1954,6 +1971,76 @@ async function installCopilotHooks(args: string[], projectPath: string): Promise
   return true;
 }
 
+async function installCursor(args: string[]): Promise<void> {
+  const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
+  if (!(await installCursorHooks(args, projectPath))) return;
+  if (args.includes("--mcp")) {
+    // Cursor's user MCP config gets the proxy, so its MCP calls are recorded too.
+    const file = await installCursorMcp({ omnodexHome: resolvePaths().home });
+    console.log(`[install] wrote the MCP proxy entry to`);
+    console.log(`          ${file}`);
+    console.log(`[install] the proxy reads its upstream servers from omnodex-proxy.json (run \`omnodex mcp-proxy install\` to create it)`);
+  }
+  await connectAfterInstall(resolvePaths().home, {
+    args,
+    platform: platformFromTarget("cursor"),
+    projectLabel: path.basename(projectPath),
+  });
+}
+
+/** Cursor hooks; false when the install stopped (an error was reported). */
+async function installCursorHooks(args: string[], projectPath: string): Promise<boolean> {
+  const paths = resolvePaths();
+  const debug = args.includes("--debug");
+  const useLegacy = args.includes("--legacy-shim");
+
+  const scope = await resolveHookScope("cursor", args, projectPath, paths.home);
+  if (scope === null) return false;
+  if (scope === "everywhere") {
+    await installEverywhere("cursor", projectPath, args);
+    return true;
+  }
+
+  const shimPath = useLegacy ? CURSOR_HOOK_SHIM_PATH : await writeLauncher("cursor");
+  const nodePath = useLegacy ? process.execPath : "node";
+  const interceptor = new CursorInterceptor({
+    projectPath,
+    shimPath,
+    omnodexHome: paths.home,
+    debug,
+    nodePath,
+  });
+  await interceptor.install();
+  console.log(`[install] installed Cursor hooks into`);
+  console.log(`          ${interceptor.hooksFilePath()}`);
+  if (useLegacy) {
+    console.log(`[install] shim:         ${shimPath} (legacy absolute path)`);
+    console.log(`[install] node:         ${nodePath}`);
+    console.log(`[install] note: re-run \`omnodex install cursor\` after npm updates or Node version changes`);
+  } else {
+    console.log(`[install] launcher:     ${shimPath}`);
+    console.log(`[install] hooks survive npm updates, no need to re-run install after upgrading`);
+  }
+  if (!useLegacy) await checkLauncherShim("cursor", paths.home, CURSOR_HOOK_SHIM_PATH);
+  await noteProjectScope("cursor", projectPath, paths.home);
+  console.log(`[install] OMNODEX_HOME: ${paths.home}`);
+  console.log(`[install] restart Cursor if it is open: it reads hooks.json at startup`);
+  console.log(`[install] run \`omnodex uninstall cursor ${projectPath}\` to remove`);
+
+  await addInstallation({
+    target: "cursor",
+    component: "hooks",
+    scope: "project",
+    projectPath,
+    settingsFile: "hooks.json",
+    installedAt: new Date().toISOString(),
+    installedVersion: getInstalledVersion(),
+    usesLauncher: !useLegacy,
+    launcherPath: useLegacy ? undefined : shimPath,
+  });
+  return true;
+}
+
 async function installAntigravity(args: string[]): Promise<void> {
   const projectPath = path.resolve(args.find((a) => !a.startsWith("--")) ?? process.cwd());
   const components = installComponents(args);
@@ -2185,6 +2272,16 @@ async function cmdUninstall(args: string[]): Promise<void> {
     }
   }
 
+  if (mcpFlag && (!targetArg || targetArg === "cursor") && (await hasCursorMcp())) {
+    const file = cursorMcpConfigPath();
+    actions.push({
+      lines: ["Cursor: remove the Omnodex MCP proxy entry", `  ${file}`],
+      run: async () => {
+        await uninstallCursorMcp();
+        return `removed the Omnodex entry from ${file}`;
+      },
+    });
+  }
   if (mcpFlag && (!targetArg || targetArg === "copilot") && (await hasCopilotMcp())) {
     const file = copilotMcpConfigPath();
     actions.push({
@@ -2472,6 +2569,24 @@ async function cmdStatus(_args: string[]): Promise<void> {
       console.log(`    ${copilotHooksPath}`);
       stepsAside("copilot");
       await reportMissingHookPaths(copilotHooksPath, "omnodex install copilot --this-project");
+      anyInstalled = true;
+    }
+  } catch { /* not installed */ }
+
+  // Check Cursor
+  const cursorInterceptor = new CursorInterceptor({
+    projectPath,
+    shimPath: CURSOR_HOOK_SHIM_PATH,
+    omnodexHome: paths.home,
+  });
+  try {
+    const cursorHooksPath = cursorInterceptor.hooksFilePath();
+    const fileContent = await fs.readFile(cursorHooksPath, "utf8");
+    if (fileContent.includes("cursor-hook-")) {
+      console.log(`  Cursor: installed`);
+      console.log(`    ${cursorHooksPath}`);
+      stepsAside("cursor");
+      await reportMissingHookPaths(cursorHooksPath, "omnodex install cursor --this-project");
       anyInstalled = true;
     }
   } catch { /* not installed */ }
@@ -3401,7 +3516,7 @@ commands:
                                              until a newer one is pinned)
   install [target] [project]
                      install Omnodex hooks for an AI agent platform.
-                     Targets: claude-code, codex, antigravity (or agy), copilot
+                     Targets: claude-code, codex, antigravity (or agy), copilot, cursor
                      Without a target, finds every supported agent on
                      this machine, shows what it will write, asks once,
                      and installs them all.
@@ -3442,9 +3557,10 @@ commands:
                        --mcp                 (antigravity) project MCP entry in
                                              .agents/mcp_config.json instead of
                                              the plugin; combine with --hooks
-                       --mcp                 (copilot) also add the proxy to
-                                             Copilot's user MCP config,
-                                             ~/.copilot/mcp-config.json
+                       --mcp                 (copilot, cursor) also add the proxy to
+                                             the agent's user MCP config,
+                                             ~/.copilot/mcp-config.json or
+                                             ~/.cursor/mcp.json
   uninstall [target] [project]
                      remove Omnodex hooks from the project. If the agent
                      records every project, leaves this project out

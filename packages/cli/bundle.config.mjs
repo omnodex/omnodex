@@ -52,6 +52,7 @@ const BIN_ENTRIES = {
   "claude-hook-shim.js": "../hooks-provider/dist/bin/claude-hook-shim.js",
   "codex-hook-shim.js": "../codex-provider/dist/bin/codex-hook-shim.js",
   "copilot-hook-shim.js": "../copilot-provider/dist/bin/copilot-hook-shim.js",
+  "cursor-hook-shim.js": "../cursor-provider/dist/bin/cursor-hook-shim.js",
   "antigravity-hook-shim.js": "../antigravity-provider/dist/bin/antigravity-hook-shim.js",
 };
 
