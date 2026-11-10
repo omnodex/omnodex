@@ -69,6 +69,26 @@ test("a failed call is recorded as an error", async (t) => {
   assert.equal(done.status, "error");
 });
 
+test("1.0.108 payloads: a call id on each tool event, a nameless subagent start, a failing shell command", async (t) => {
+  const s = await scratch(t);
+  const id = "s-copilot-108";
+  const call = { ...base(id), tool_use_id: "call_Abc123", tool_name: "Bash", tool_input: { command: "cat missing.txt", mode: "sync", initial_wait: 10 } };
+  const run = async (payload) => {
+    const r = await runShim(SHIM, s, payload);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.stdout, "{}");
+  };
+  await run({ sessionId: id, timestamp: Date.now(), cwd: "/tmp/repo", agentName: "task", agent_id: "ag-1", agent_type: "task", parent_agent_id: id });
+  await run({ ...call, hook_event_name: "PreToolUse" });
+  await run({ ...call, hook_event_name: "PostToolUse", tool_result: { result_type: "success", text_result_for_llm: "cat: missing.txt: No such file or directory\n<shellId: 0 completed with exit code 1>" } });
+  const events = (await loggedEvents(s.home)).filter((e) => e.event_type !== "risk.detected");
+  assert.deepEqual(events.map((e) => e.event_type), ["subagent.started", "tool.invoked", "tool.completed"]);
+  assert.equal(events[1].tool_call_id, "call_Abc123");
+  assert.equal(events[2].tool_call_id, "call_Abc123");
+  assert.equal(events[2].status, "error");
+  assert.ok(events.every((e) => e.platform === "copilot"));
+});
+
 test("the contract holds on garbage: exit 0 and one valid JSON document, nothing recorded", async (t) => {
   const s = await scratch(t);
   for (const raw of ["", "not json", "[]", "null", '{"hook_event_name":"PreToolUse"}', '{"session_id":"x","hook_event_name":"Nope"}', "\u0000\u0001"]) {
