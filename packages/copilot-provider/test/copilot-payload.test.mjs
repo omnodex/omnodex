@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mapCopilotPayload, normalizeCopilotPayload, sessionEndStatus } from "../dist/copilot-payload.js";
+import { mapCopilotPayload, normalizeCopilotPayload, sessionEndStatus, shellExitCode } from "../dist/copilot-payload.js";
 import { copilotDecision } from "../dist/decision.js";
 
 let n = 0;
@@ -135,4 +135,79 @@ test("the decision is repeated at the top level for readers of the CLI form", ()
   assert.deepEqual(d.hookSpecificOutput, out.hookSpecificOutput);
   assert.equal(copilotDecision(null), undefined);
   assert.deepEqual(copilotDecision({ other: 1 }), { other: 1 });
+});
+
+// Payload shapes sent by Copilot CLI 1.0.108 (paths and ids redacted).
+const cli108 = {
+  sessionId: "6d9ef4f3-9d3a-4d51-bc22-b834a889100a",
+  timestamp: 1794320170381,
+  cwd: "/home/case/proj",
+  transcriptPath: "/home/case/.copilot/session-state/6d9ef4f3/events.jsonl",
+  agentName: "task",
+  agent_id: "2567cb6c-f2fa-47c3-b056-39b4508cdec7",
+  agent_type: "task",
+  parent_agent_id: "6d9ef4f3-9d3a-4d51-bc22-b834a889100a",
+};
+
+test("MUST_FIRE: a 1.0.108 subagent start, which carries no event name, is recorded", () => {
+  const p = normalizeCopilotPayload(cli108);
+  assert.equal(p.event, "SubagentStart");
+  const [started] = map(cli108);
+  assert.equal(started.event_type, "subagent.started");
+  assert.equal(started.agent_id, "2567cb6c-f2fa-47c3-b056-39b4508cdec7");
+  assert.equal(started.platform, "copilot");
+  assert.equal(started.session_id, "6d9ef4f3-9d3a-4d51-bc22-b834a889100a");
+  assert.equal(started.occurred_at, new Date(1794320170381).toISOString());
+  // Either naming, and a name alone is enough to identify the kind of agent.
+  assert.equal(normalizeCopilotPayload({ sessionId: "s", agentId: "a", agentName: "explore" }).event, "SubagentStart");
+  assert.equal(normalizeCopilotPayload({ session_id: "s", agent_id: "a", agent_type: "task" }).event, "SubagentStart");
+});
+
+test("MUST_NOT_FIRE: an unnamed payload is not a subagent start unless it has the subagent shape", () => {
+  // No session, or no agent id, or neither a name nor a type.
+  for (const bad of [
+    { ...cli108, sessionId: undefined },
+    { ...cli108, agent_id: undefined },
+    { ...cli108, agentName: undefined, agent_type: undefined },
+    // Fields of other events: a tool call, a prompt, a subagent stop, a session end.
+    { ...cli108, tool_name: "Bash" },
+    { ...cli108, toolName: "bash", toolArgs: "{}" },
+    { ...cli108, prompt: "hi" },
+    { ...cli108, last_assistant_message: "done" },
+    { ...cli108, reason: "complete" },
+  ]) assert.equal(normalizeCopilotPayload(bad), null, JSON.stringify(bad));
+  // A named event that is not recorded stays unrecorded, whatever else it carries.
+  assert.equal(normalizeCopilotPayload({ ...cli108, hook_event_name: "Notification" }), null);
+  // A named subagent stop keeps its own name.
+  assert.equal(normalizeCopilotPayload({ ...cli108, hook_event_name: "SubagentStop" }).event, "SubagentStop");
+});
+
+const shellCall = { ...base, hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "cat missing-file.txt", mode: "sync" } };
+const shellResult = (text) => ({ result_type: "success", text_result_for_llm: text });
+
+test("MUST_FIRE: a shell call that exits non-zero completes with status error", () => {
+  const done = map({ ...shellCall, tool_use_id: "call_1", tool_result: shellResult("cat: missing-file.txt: No such file or directory\n<shellId: 0 completed with exit code 1>") }, { callId: "call_1" });
+  const completed = done.find((e) => e.event_type === "tool.completed");
+  assert.equal(completed.status, "error");
+  assert.equal(completed.error_message, "Command exited with code 1");
+  assert.equal(completed.tool_call_id, "call_1");
+  assert.equal(completed.platform, "copilot");
+  // Negative codes (killed by a signal) and trailing whitespace count too.
+  assert.equal(shellExitCode("Bash", shellResult("x\n<shellId: 3 completed with exit code -1>\n")), -1);
+  assert.equal(shellExitCode("powershell", "out\n<shellId: 0 completed with exit code 127>"), 127);
+});
+
+test("MUST_NOT_FIRE: exit code 0, other tools and ordinary text stay successful", () => {
+  const ok = map({ ...shellCall, tool_result: shellResult("hi\n<shellId: 0 completed with exit code 0>") }, { callId: "c" });
+  assert.equal(ok.find((e) => e.event_type === "tool.completed").status, "success");
+  // Older Copilot versions put no exit code in the text.
+  const old = map({ ...shellCall, tool_result: "hi" }, { callId: "c" });
+  assert.equal(old.find((e) => e.event_type === "tool.completed").status, "success");
+  // A file whose text happens to end that way, read by a non-shell tool.
+  const read = map({ ...base, hook_event_name: "PostToolUse", tool_name: "Read", tool_input: { file_path: "/home/case/a.txt" }, tool_result: shellResult("<shellId: 0 completed with exit code 2>") }, { callId: "c" });
+  assert.equal(read.find((e) => e.event_type === "tool.completed").status, "success");
+  // The words in the middle of the output are not the closing line.
+  assert.equal(shellExitCode("Bash", shellResult("exit code 2> then more output")), undefined);
+  assert.equal(shellExitCode("Bash", undefined), undefined);
+  assert.equal(shellExitCode(undefined, shellResult("<shellId: 0 completed with exit code 1>")), undefined);
 });

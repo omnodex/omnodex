@@ -15,10 +15,11 @@
  * steps aside rather than record the same call twice as Claude Code.
  *
  * No variable or field names the caller, so this reads the payload: Claude
- * Code always sends `transcript_path` (and `permission_mode`), and sends
- * `tool_use_id` on every tool event; Copilot's VS Code compatible payload
- * sends none of them on session, prompt and tool events. A payload with any
- * of those fields is treated as Claude Code's.
+ * Code always sends `transcript_path` and `permission_mode`; Copilot's VS
+ * Code compatible payload sends neither on session, prompt and tool events.
+ * A payload with either field is treated as Claude Code's. `tool_use_id` does
+ * not tell the two apart: Claude Code sends it on every tool event, and newer
+ * Copilot CLI versions send their own call id there too.
  */
 
 import { promises as fs } from "node:fs";
@@ -33,10 +34,10 @@ export function looksLikeCopilotRun(input: unknown): boolean {
   if (raw.permission_mode !== undefined) return false;
   if (str(raw.transcript_path)) return false;
   const name = str(raw.hook_event_name);
-  if (name === "PreToolUse" || name === "PostToolUse" || name === "PostToolUseFailure") {
-    return str(raw.tool_use_id) === undefined;
-  }
-  return name === "SessionStart" || name === "SessionEnd" || name === "UserPromptSubmit";
+  return (
+    name === "PreToolUse" || name === "PostToolUse" || name === "PostToolUseFailure" ||
+    name === "SessionStart" || name === "SessionEnd" || name === "UserPromptSubmit"
+  );
 }
 
 /**

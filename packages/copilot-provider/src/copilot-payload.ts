@@ -17,8 +17,8 @@
  * for a hook registered under a camelCase name.
  *
  * Not recorded: `Stop` (the end of a turn, not of the session),
- * notifications and compaction. Copilot sends no model name and no call id;
- * see tool-ids.ts for the call id.
+ * notifications and compaction. Copilot sends no model name, and older
+ * versions send no call id; see tool-ids.ts for the call id.
  */
 
 import type { TraceEvent } from "@omnodex/shared";
@@ -110,12 +110,26 @@ function isoOf(value: unknown): string | undefined {
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
 }
 
+/**
+ * Copilot CLI sends a subagent's start without any event name, and the hook
+ * command is the same for every event, so nothing else names it. The shape is
+ * its own: the subagent's id and name or type, and none of the fields a tool,
+ * prompt, session or subagent-stop payload carries.
+ */
+function isUnnamedSubagentStart(raw: Record<string, unknown>): boolean {
+  if (!str(pick(raw, "agent_id", "agentId"))) return false;
+  if (!str(pick(raw, "agent_name", "agentName")) && !str(pick(raw, "agent_type", "agentType"))) return false;
+  const other = ["tool_name", "toolName", "tool_input", "toolInput", "toolArgs", "tool_result", "toolResult", "prompt", "reason", "source", "error", "last_assistant_message", "response"];
+  return !other.some((k) => raw[k] !== undefined);
+}
+
 /** The payload in one naming, or null when it is not a Copilot hook payload we record. */
 export function normalizeCopilotPayload(input: unknown): CopilotPayload | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const raw = input as Record<string, unknown>;
   const named = str(raw.hook_event_name) ?? str(raw.hookEventName) ?? str(raw.event) ?? str(raw.eventName);
-  const event = named && KNOWN_EVENTS.has(named) ? (named as CopilotHookEventName) : named ? CAMEL_EVENTS[named] : undefined;
+  let event = named && KNOWN_EVENTS.has(named) ? (named as CopilotHookEventName) : named ? CAMEL_EVENTS[named] : undefined;
+  if (!named && isUnnamedSubagentStart(raw)) event = "SubagentStart";
   const sessionId = str(pick(raw, "session_id", "sessionId"));
   if (!event || !sessionId) return null;
 
@@ -156,6 +170,32 @@ export interface CopilotMapperOptions {
   durationMs?: number;
 }
 
+const SHELL_TOOLS: ReadonlySet<string> = new Set(["bash", "powershell", "shell"]);
+/** The line Copilot appends to a shell result, e.g. `<shellId: 0 completed with exit code 1>`. */
+const EXIT_CODE_LINE = /exit code (-?\d+)>[ \t]*$/;
+
+function resultText(result: unknown): string | undefined {
+  if (typeof result === "string") return result;
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    return str(r.text_result_for_llm) ?? str(r.textResultForLlm) ?? str(r.text) ?? str(r.output);
+  }
+  return undefined;
+}
+
+/**
+ * The exit code of a finished shell call when it is not zero. Copilot reports
+ * every shell call that ran as a success and states the exit code only in the
+ * last line of the result text.
+ */
+export function shellExitCode(toolName: string | undefined, result: unknown): number | undefined {
+  if (!toolName || !SHELL_TOOLS.has(toolName.toLowerCase())) return undefined;
+  const text = resultText(result)?.trimEnd();
+  const match = text ? EXIT_CODE_LINE.exec(text) : null;
+  const code = match ? Number(match[1]) : NaN;
+  return Number.isInteger(code) && code !== 0 ? code : undefined;
+}
+
 /** How a Copilot session end reads as ours. */
 export function sessionEndStatus(reason: string | undefined): "completed" | "errored" | "interrupted" {
   if (reason === "error" || reason === "timeout") return "errored";
@@ -193,13 +233,22 @@ export function mapCopilotPayload(payload: CopilotPayload, options: CopilotMappe
       if (!payload.toolName) return [];
       claude = { ...base, hook_event_name: "PreToolUse", tool_name: payload.toolName, tool_input: payload.toolInput, tool_use_id: callId };
       break;
-    case "PostToolUse":
+    case "PostToolUse": {
       if (!payload.toolName) return [];
+      const exitCode = shellExitCode(payload.toolName, payload.toolResult);
+      if (exitCode !== undefined) {
+        claude = {
+          ...base, hook_event_name: "PostToolUseFailure", tool_name: payload.toolName, tool_input: payload.toolInput,
+          tool_use_id: callId, error: `Command exited with code ${exitCode}`, duration_ms: options.durationMs,
+        };
+        break;
+      }
       claude = {
         ...base, hook_event_name: "PostToolUse", tool_name: payload.toolName, tool_input: payload.toolInput,
         tool_response: payload.toolResult, tool_use_id: callId, duration_ms: options.durationMs,
       };
       break;
+    }
     case "PostToolUseFailure":
       if (!payload.toolName) return [];
       claude = {
