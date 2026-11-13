@@ -79,6 +79,8 @@ import {
 import { RULE_WATCHED_PATH } from "./community/watched-path.js";
 import { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 import { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
+import { RULE_THREAT_SHELL_EXPANSION_IN_TEXT } from "./community/shell-expansion.js";
+import { RULE_CREDENTIAL_SETTINGS_LOCAL_GIT } from "./community/claude-settings-file.js";
 import { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
 import {
   RULE_MCP_SERVER_UPDATED,
@@ -147,6 +149,8 @@ export {
 export { RULE_WATCHED_PATH } from "./community/watched-path.js";
 export { RULE_SUPPLY_CHAIN_IOC_DOMAIN } from "./community/supply-chain.js";
 export { RULE_THREAT_API_BASE_URL_OVERRIDE } from "./community/threat-commands.js";
+export { RULE_THREAT_SHELL_EXPANSION_IN_TEXT } from "./community/shell-expansion.js";
+export { RULE_CREDENTIAL_SETTINGS_LOCAL_GIT } from "./community/claude-settings-file.js";
 export { RULE_CWD_BOUNDARY_WRITE, RULE_CWD_BOUNDARY_TEMP_WRITE } from "./community/cwd-boundary.js";
 export {
   RULE_MCP_SERVER_UPDATED,
@@ -205,6 +209,9 @@ export const COMMUNITY_RULES: RuleDefinition[] = [
   RULE_WATCHED_PATH,
   // API base URL override
   RULE_THREAT_API_BASE_URL_OVERRIDE,
+  // Shell expansion in quoted text, and the local settings file in git
+  RULE_THREAT_SHELL_EXPANSION_IN_TEXT,
+  RULE_CREDENTIAL_SETTINGS_LOCAL_GIT,
   // Working-directory boundary
   RULE_CWD_BOUNDARY_WRITE,
   RULE_CWD_BOUNDARY_TEMP_WRITE,

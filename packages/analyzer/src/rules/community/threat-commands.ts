@@ -14,7 +14,11 @@
  *
  * RULE_THREAT_DESTRUCTIVE_COMMAND (HIGH)
  *   Fires on shell commands that destroy data or damage the system:
- *   rm -rf /, mkfs, dd writing to block devices, fdisk, wipefs.
+ *   rm -rf /, mkfs, dd writing to block devices, fdisk, wipefs, and
+ *   commands that delete live data stores: Docker and Podman volume
+ *   removal and prune, system prune with volumes, compose down with
+ *   volumes, dropdb, DROP DATABASE or SCHEMA through a database client,
+ *   and Redis FLUSHALL or FLUSHDB.
  *
  * RULE_THREAT_ENCODED_PAYLOAD (HIGH)
  *   Fires on obfuscated command execution: base64 decode piped to a
@@ -50,9 +54,20 @@
 
 import type { RuleDefinition } from "../../types.js";
 
+// Text that only talks about a command is not that command: the command sits
+// in a commit message, an issue body, or an echo. The container, Redis and
+// dropdb patterns skip a match that follows one of those in the same
+// command segment (up to a ;, & or |).
+const NOT_PROSE =
+  "(?<!\\b(?:git\\s+(?:commit|tag)|gh\\s+(?:pr|issue|release|gist)\\s+\\w+|glab\\s+\\w+\\s+\\w+|echo|printf)\\b[^\\n;&|]*)";
+
+// A SQL client program, and a statement piped or redirected into one.
+const SQL_CLIENT = "(?:psql|mysql|mariadb|sqlite3|sqlcmd|usql|pgcli|mycli)";
+const DROP_DB = "\\bDROP\\s+(?:DATABASE|SCHEMA)\\b";
+
 export const RULE_THREAT_DESTRUCTIVE_COMMAND: RuleDefinition = {
   rule_id: "RULE_THREAT_DESTRUCTIVE_COMMAND",
-  version: "1.0.0",
+  version: "1.1.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -84,6 +99,54 @@ export const RULE_THREAT_DESTRUCTIVE_COMMAND: RuleDefinition = {
         {
           regex: "\\b(?:chmod|chown)\\s+(-[a-zA-Z]*R[a-zA-Z]*|--recursive)\\b[^\\n]*\\/\\s*$",
           type: "recursive-permission-change-root",
+        },
+        // Container volumes hold databases and uploads. "volume rm" and
+        // "volume prune" delete them; "volume ls" and "inspect" do not.
+        {
+          regex: NOT_PROSE + "\\b(?:docker|podman|nerdctl)\\s+(?:[^\\n;&|]*?\\s)?volumes?\\s+(?:rm|remove|prune)\\b",
+          type: "container-volume-delete",
+        },
+        // "system prune" keeps volumes unless --volumes is given.
+        {
+          regex: NOT_PROSE + "\\b(?:docker|podman|nerdctl)\\s+(?:[^\\n;&|]*?\\s)?system\\s+prune\\b[^\\n;&|]*\\s--volumes\\b",
+          type: "container-system-prune-volumes",
+        },
+        // "down" removes volumes only with -v or --volumes (also in a
+        // cluster of short flags such as -tv).
+        {
+          regex: NOT_PROSE + "\\b(?:docker|podman)(?:-|\\s+)compose\\b[^\\n;&|]*\\sdown\\b[^\\n;&|]*\\s(?:--volumes\\b|-[a-zA-Z]*v[a-zA-Z]*(?=\\s|$))",
+          type: "compose-down-volumes",
+        },
+        {
+          regex: NOT_PROSE + "\\b(?:dropdb|mysqladmin\\s+(?:-\\S+\\s+)*drop)\\s",
+          type: "database-drop",
+        },
+        // DROP DATABASE or SCHEMA run through a client: on its command line,
+        // piped into it, or in its heredoc.
+        {
+          regex: "\\b" + SQL_CLIENT + "\\b[^\\n]*" + DROP_DB,
+          type: "database-drop",
+        },
+        {
+          regex: DROP_DB + "[^\\n]*\\|\\s*(?:sudo\\s+)?" + SQL_CLIENT + "\\b",
+          type: "database-drop",
+        },
+        {
+          regex: "\\b" + SQL_CLIENT + "\\b[^\\n]*<<-?\\s*[\"']?\\w+[\"']?[^\\n]*\\n(?:[^\\n]*\\n){0,30}?[^\\n]*" + DROP_DB,
+          type: "database-drop",
+        },
+        {
+          regex: "\\.dropDatabase\\s*\\(",
+          type: "database-drop",
+        },
+        // FLUSHALL empties every Redis database; FLUSHDB empties one.
+        {
+          regex: NOT_PROSE + "\\b(?:redis|valkey|keydb)-cli\\b[^\\n;&|]*\\bFLUSH(?:ALL|DB)\\b",
+          type: "redis-flush",
+        },
+        {
+          regex: "\\bFLUSH(?:ALL|DB)\\b[^\\n]*\\|\\s*(?:redis|valkey|keydb)-cli\\b",
+          type: "redis-flush",
         },
       ],
     },
