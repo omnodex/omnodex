@@ -41,6 +41,9 @@ function isSet(value: string | undefined): boolean {
  *   OMNODEX_SEALED=0      never capture (off switch)
  *   OMNODEX_SEALED=1      capture here, whatever the host (devcontainers, dev
  *                         servers and tests set this)
+ *   host marker           a file named ephemeral-host in the Omnodex home, written
+ *                         by `omnodex install --ephemeral` on a host that was set
+ *                         up to capture
  *   OMNODEX_SEALED_WHEN   name of an environment variable the host sets, for
  *                         surfaces whose marker is not built in; capture when
  *                         that variable is set and not 0 or false
@@ -48,14 +51,26 @@ function isSet(value: string | undefined): boolean {
  *
  * Anywhere else the answer is no.
  */
-export function shouldCapture(provider: SealedProvider, env: Env): boolean {
+export function shouldCapture(provider: SealedProvider, env: Env, hostMarker = false): boolean {
   const switchValue = env.OMNODEX_SEALED;
   if (switchValue !== undefined && /^(0|false|no|off)$/i.test(switchValue)) return false;
   if (switchValue !== undefined && TRUTHY.test(switchValue)) return true;
+  if (hostMarker) return true;
   const when = env.OMNODEX_SEALED_WHEN;
   if (when && /^[A-Za-z_][A-Za-z0-9_]*$/.test(when) && isSet(env[when])) return true;
   if (provider === "claude-code" && env.CLAUDE_CODE_REMOTE === "true") return true;
   return false;
+}
+
+/** Name of the file, in the Omnodex home, that marks a host as set up to capture. */
+export const HOST_MARKER_FILE = "ephemeral-host";
+
+/** The provider a hook shim file name stands for, such as `claude-hook-shim.js`. */
+export function providerFromShimName(file: string | undefined): SealedProvider | undefined {
+  const base = file ? (file.split(/[\\/]/).pop() ?? "") : "";
+  const m = /^(claude|codex|copilot|cursor|antigravity)-hook-shim\.js$/.exec(base);
+  if (!m) return undefined;
+  return m[1] === "claude" ? "claude-code" : (m[1] as SealedProvider);
 }
 
 /** The names under which settings can be given, as environment variables. */

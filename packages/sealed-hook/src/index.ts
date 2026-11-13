@@ -9,6 +9,7 @@
  * The bin wraps this with stdin, stdout and exit handling.
  */
 
+import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
@@ -20,7 +21,7 @@ import {
   type Poster,
 } from "@omnodex/hooks-provider";
 import { providerSetup } from "./adapters.js";
-import { isSealedProvider, loadSealedConfig, shouldCapture, type SealedProvider } from "./config.js";
+import { HOST_MARKER_FILE, isSealedProvider, loadSealedConfig, shouldCapture, type SealedProvider } from "./config.js";
 
 export * from "./config.js";
 export { providerSetup } from "./adapters.js";
@@ -53,7 +54,8 @@ export async function runSealedHook(options: RunOptions): Promise<string> {
   const setup = providerSetup(provider, options.eventName);
   const quiet = setup ? setup.stdout(options.eventName) : "{}";
   try {
-    if (!setup || !shouldCapture(provider, options.env)) return quiet;
+    const home = options.home ?? (usable(options.env.OMNODEX_HOME) ? options.env.OMNODEX_HOME : path.join(os.homedir(), ".omnodex"));
+    if (!setup || !shouldCapture(provider, options.env, fs.existsSync(path.join(home, HOST_MARKER_FILE)))) return quiet;
 
     let payload: unknown;
     try {
@@ -63,7 +65,6 @@ export async function runSealedHook(options: RunOptions): Promise<string> {
     }
     if (!payload || typeof payload !== "object") return quiet;
 
-    const home = options.home ?? (usable(options.env.OMNODEX_HOME) ? options.env.OMNODEX_HOME : path.join(os.homedir(), ".omnodex"));
     const dirs = [options.env.CLAUDE_PROJECT_DIR, (payload as { cwd?: unknown }).cwd, process.cwd()].filter(
       (d): d is string => typeof d === "string" && d.length > 0,
     );

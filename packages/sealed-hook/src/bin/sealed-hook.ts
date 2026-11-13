@@ -7,6 +7,7 @@
 // A commercial license is available for use without copyleft obligations.
 /**
  * omnodex-sealed-hook <provider> [event]
+ * <agent>-hook-shim.js [event]   (a copy named after the agent's own shim)
  *
  * Hook command for hosts that have no Omnodex install, secret or lasting
  * disk: cloud agent VMs, dev servers, devcontainers. Providers: claude-code,
@@ -22,7 +23,7 @@
  * never stop a teammate's agent.
  */
 
-import { runSealedHook } from "../index.js";
+import { isSealedProvider, providerFromShimName, runSealedHook } from "../index.js";
 
 const MAX_STDIN_BYTES = 5 * 1024 * 1024;
 
@@ -40,9 +41,15 @@ function readStdin(): Promise<string> {
 }
 
 async function main(): Promise<void> {
-  const provider = process.argv[2] ?? process.env.OMNODEX_SEALED_PROVIDER;
+  // `omnodex-sealed-hook <provider> [event]`, or a copy named like the agent's
+  // own shim (claude-hook-shim.js and so on), which takes the agent's own
+  // arguments: only Antigravity passes one, its event name.
+  const first = process.argv[2];
+  const named = isSealedProvider(first);
+  const provider = named ? first : (providerFromShimName(process.argv[1]) ?? process.env.OMNODEX_SEALED_PROVIDER);
+  const eventName = named ? process.argv[3] : first;
   const stdin = await readStdin();
-  const out = await runSealedHook({ provider, eventName: process.argv[3], stdin, env: process.env });
+  const out = await runSealedHook({ provider, eventName, stdin, env: process.env });
   if (out) process.stdout.write(out);
 }
 

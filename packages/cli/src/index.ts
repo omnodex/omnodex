@@ -156,6 +156,7 @@ import {
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
 import { PLUGIN_PINS } from "./plugin-pins.js";
+import { DEFAULT_EPHEMERAL_TARGETS, EPHEMERAL_SHIMS, installEphemeral, isEphemeralTarget, type EphemeralTarget } from "./ephemeral-install.js";
 import { SURFACE_PLUGIN, downloadsBaseUrl, hasPlugin, installPlugin, pluginDir, resolveBundle, uninstallPlugin, type PluginTarget } from "./plugins.js";
 import { PLATFORMS, availablePlatforms, isPlatformAvailable, notYetSupported } from "./platforms.js";
 import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
@@ -1216,6 +1217,10 @@ function installComponents(args: readonly string[]): InstallComponents {
 }
 
 async function cmdInstall(rawArgs: string[]): Promise<void> {
+  if (rawArgs.includes("--ephemeral")) {
+    await cmdInstallEphemeral(rawArgs.filter((a) => a !== "--ephemeral"));
+    return;
+  }
   // A first install offers shadow mode; reinstalls and upgrades keep the mode they have.
   const firstInstall = (await listInstallations()).length === 0;
   await installTargets(rawArgs);
@@ -1223,6 +1228,40 @@ async function cmdInstall(rawArgs: string[]): Promise<void> {
     await offerShadowMode({ home: resolvePaths().home, io: processIo(), yes: hasYes(rawArgs) }).catch((err: unknown) => {
       console.error(`[install] could not set the enforcement mode: ${(err as Error).message}`);
     });
+  }
+}
+
+/**
+ * `omnodex install --ephemeral [agent ...] [project]`: set up a disposable
+ * host from environment variables, with no prompt. Hooks go in every
+ * project on the host unless --this-project is given.
+ */
+async function cmdInstallEphemeral(args: string[]): Promise<void> {
+  const home = resolvePaths().home;
+  const targets: EphemeralTarget[] = [];
+  let project: string | undefined;
+  for (const arg of args.filter((a) => !a.startsWith("-"))) {
+    const canonical = canonicalTarget(arg);
+    if (isEphemeralTarget(canonical)) targets.push(canonical);
+    else if (project === undefined && (await isDirectory(arg))) project = path.resolve(arg);
+    else {
+      console.error(`[install] --ephemeral supports ${Object.keys(EPHEMERAL_SHIMS).join(", ")}; '${arg}' is not one of them or a folder`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+  const scope = args.includes("--this-project") ? "--this-project" : "--everywhere";
+  const result = await installEphemeral({
+    home,
+    env: process.env,
+    targets: targets.length > 0 ? targets : DEFAULT_EPHEMERAL_TARGETS,
+    sealedHook: path.join(path.dirname(CLAUDE_HOOK_SHIM_PATH), "omnodex-sealed-hook.js"),
+    installTarget: (target) => installTargets([target, ...(project ? [project] : []), "--hooks", "--yes", "--no-connect", scope]),
+    log: (message) => console.log(message),
+  });
+  if (!result.ok) {
+    console.error(`[install] ${result.reason}`);
+    process.exitCode = 1;
   }
 }
 

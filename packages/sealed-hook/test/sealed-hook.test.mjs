@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { loadSealedConfig, runSealedHook, shouldCapture } from "../dist/index.js";
+import { HOST_MARKER_FILE, loadSealedConfig, providerFromShimName, runSealedHook, shouldCapture } from "../dist/index.js";
 import { bytesToBase64, generateStreamKeyPair, openEvent } from "../../sync-encryptor/dist/hpke-event.js";
 
 const TOKEN = "oxi_" + "D".repeat(43);
@@ -219,4 +219,30 @@ test("a failed send keeps events for the next flush and never throws", async () 
   await t.run("claude-code", CLAUDE_STOP);
   assert.equal(t.calls.length, 1);
   assert.ok((await t.open()).some((e) => e.event_type === "tool.invoked"));
+});
+
+// --- host marker and shim names ----------------------------------------------
+
+test("a host marker in the home enables capture, and the off switch still wins", async () => {
+  assert.equal(shouldCapture("codex", {}, true), true);
+  assert.equal(shouldCapture("codex", { OMNODEX_SEALED: "0" }, true), false);
+  const t = await setup();
+  const env = { ...t.env };
+  delete env.OMNODEX_SEALED;
+  await t.run("claude-code", CLAUDE_PRE, { env });
+  await t.run("claude-code", CLAUDE_STOP, { env });
+  assert.equal(t.calls.length, 0);
+  fs.writeFileSync(path.join(t.home, HOST_MARKER_FILE), "1\n");
+  await t.run("claude-code", CLAUDE_PRE, { env });
+  await t.run("claude-code", CLAUDE_STOP, { env });
+  assert.equal(t.calls.length, 1);
+});
+
+test("providerFromShimName reads the agent from a shim file name", () => {
+  assert.equal(providerFromShimName("/h/.omnodex/sealed/claude-hook-shim.js"), "claude-code");
+  assert.equal(providerFromShimName("C:\\h\\sealed\\codex-hook-shim.js"), "codex");
+  assert.equal(providerFromShimName("/x/antigravity-hook-shim.js"), "antigravity");
+  assert.equal(providerFromShimName("/x/omnodex-sealed-hook.js"), undefined);
+  assert.equal(providerFromShimName("/x/opencode-plugin-shim.js"), undefined);
+  assert.equal(providerFromShimName(undefined), undefined);
 });
