@@ -54,6 +54,7 @@ import { mapClaudeCodePayload } from "../claude-code-payload.js";
 import { copilotCaptureInstalled, looksLikeCopilotRun } from "../copilot-run.js";
 import { TITLE_HOOKS, titleFromTranscript } from "../session-title.js";
 import { MODEL_HOOKS, modelFromTranscript } from "../session-model.js";
+import { settingsSecretFinding } from "../settings-secret-check.js";
 import {
   AUTO_SYNC_CHILD_ENV,
   backgroundPassDue,
@@ -250,7 +251,24 @@ async function main(): Promise<number> {
     } else {
       stamped = await stampCaptured(findings, events, { home, onError: onEnforcementError });
     }
-    const keptFindings = await applyCapturePause([...stamped, ...extra], home);
+    // At session start, report a credential Claude Code saved to the
+    // project's settings.local.json: it writes that file outside any call.
+    const settingsFindings: TraceEvent[] = [];
+    if (payload.hook_event_name === "SessionStart" && payload.cwd) {
+      const started = events.find((e) => e.event_type === "session.started");
+      const found = await withinMs(
+        settingsSecretFinding({
+          project: payload.cwd,
+          sessionId: payload.session_id,
+          relatedEventId: started?.event_id ?? payload.session_id,
+          home,
+          newEventId,
+        }),
+        SETTINGS_CHECK_TIMEOUT_MS,
+      );
+      if (found) settingsFindings.push(found);
+    }
+    const keptFindings = await applyCapturePause([...stamped, ...extra, ...settingsFindings], home);
     for (const finding of keptFindings) {
       await log.append(finding);
     }
@@ -291,6 +309,26 @@ async function main(): Promise<number> {
     );
     // Never block Claude.
     return 0;
+  }
+}
+
+/** Longest the session start settings check may hold the hook. */
+const SETTINGS_CHECK_TIMEOUT_MS = 2000;
+
+/** The promise's value, or null when it takes longer than the time given. */
+async function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), ms);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
