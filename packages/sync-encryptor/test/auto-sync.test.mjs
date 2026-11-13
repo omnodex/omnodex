@@ -327,6 +327,18 @@ describe("runAutoSync", () => {
     assert.deepEqual(order.slice(0, 2), ["license", "policy:true"]);
   });
 
+  it("sends finding notifications after detection, and a failing step does not stop the pass", async () => {
+    await writeCredentials(home);
+    const order = [];
+    await runAutoSync(home, {
+      refreshLicense: async () => order.push("license"),
+      pullPolicy: async () => order.push("policy"),
+      notifyFindings: async (h) => { order.push(`notify:${h === home}`); throw new Error("down"); },
+      seal: async () => { order.push("seal"); },
+    });
+    assert.deepEqual(order, ["license", "policy", "notify:true", "seal"]);
+  });
+
   it("seals under the lock after the license and policy steps, and a failing seal does not stop the pass", async () => {
     await writeCredentials(home);
     const order = [];

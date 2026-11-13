@@ -154,6 +154,10 @@ export {
   ACCOUNT_POLICY_FILE,
   ACCOUNT_POLICY_PULL_ENV,
 } from "./account-policy.js";
+export { sendFindingNotifications, FINDING_NOTIFY_STATE_FILE, FINDING_NOTIFY_ENV } from "./finding-notify.js";
+export type { NotifyOutcome, NotifyResult, FindingNotifyOptions } from "./finding-notify.js";
+export { parseNotificationRules, findingRef, deliveriesFor, inQuietHours, DEFAULT_RULE, ACCOUNT_EMAIL, IN_APP } from "./notification-rules.js";
+export type { NotificationRule, NotificationMatch } from "./notification-rules.js";
 export type { SealedPolicy, PulledPolicy, PolicyPullOutcome, PolicyPullResult, PolicyPullOptions } from "./account-policy.js";
 export {
   refreshGuardrailsModule,
