@@ -127,6 +127,7 @@ interface LogEvent {
   related_event_id?: string;
   tool_call_id?: string;
   enforcement?: { muted?: boolean };
+  evidence?: unknown;
 }
 
 function parseLines(text: string): LogEvent[] {
@@ -221,7 +222,7 @@ export async function sendFindingNotifications(home: string, opts: FindingNotify
           }
           touches = touchesFactory(calls.get(f.related_event_id!));
         }
-        const deliveries = deliveriesFor(rules, { severity: f.severity!, rule_id: f.rule_id!, category: f.category ?? "" }, touches, minutes);
+        const deliveries = deliveriesFor(rules, { severity: f.severity!, rule_id: f.rule_id!, category: f.category ?? "", investigation: f.evidence !== undefined && f.evidence !== null }, touches, minutes);
         const ref = findingRef({ session_id: f.session_id ?? file.replace(/\.jsonl$/, ""), related_event_id: f.related_event_id!, rule_id: f.rule_id! });
         const asks: { mode: "now" | "digest"; ids: string[] }[] = [];
         if (deliveries.now.length) asks.push({ mode: "now", ids: deliveries.now });

@@ -199,6 +199,34 @@ describe("notification rules", () => {
     assert.deepEqual(DEFAULT_RULE.match.severities, ["HIGH", "CRITICAL"]);
   });
 
+  it("matches a list of categories and investigations separately", () => {
+    const rule = (match, channels) => ({ id: "r", name: "n", enabled: true, match, exclude: [], channels, mode: "digest" });
+    const rules = [
+      rule({ severities: ["HIGH", "CRITICAL"], categories: ["supply_chain", "persistence"] }, ["in_app"]),
+      rule({ investigation: true, severities: ["MEDIUM", "HIGH", "CRITICAL"] }, ["chan-1"]),
+    ];
+    const f = (over) => ({ severity: "HIGH", rule_id: "R", category: "supply_chain", investigation: false, ...over });
+    assert.deepEqual(deliveriesFor(rules, f({}), () => false, 0).digest, ["in_app"]);
+    assert.deepEqual(deliveriesFor(rules, f({ category: "cwd_boundary" }), () => false, 0).digest, []);
+    assert.deepEqual(deliveriesFor(rules, f({ category: "cwd_boundary", investigation: true }), () => false, 0).digest, ["chan-1"]);
+    assert.deepEqual(deliveriesFor(rules, f({ investigation: true }), () => false, 0).digest.sort(), ["chan-1", "in_app"]);
+    const [parsed] = parseNotificationRules([{ id: "x", match: { categories: ["a", "a", " "], investigation: true }, channels: ["in_app"] }]);
+    assert.deepEqual(parsed.match, { categories: ["a"], investigation: true });
+  });
+
+  it("sends a finding that carries evidence to an investigation rule", async () => {
+    await credentials("pro");
+    await rules([{ id: "inv", name: "Investigations", match: { investigation: true, severities: ["HIGH", "CRITICAL"] }, channels: ["chan-1"], mode: "now" }]);
+    await seed();
+    await appendFile(path.join(logRoot, SESSION),
+      line(finding({ related_event_id: "plain", severity: "HIGH" })) +
+      line(finding({ related_event_id: "chain", severity: "HIGH", evidence: { steps: [] } })));
+    const f = fakeFetch();
+    await sendFindingNotifications(home, { logRoot, fetchFn: f.fn });
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].body.finding_ref, findingRef({ session_id: "s1", related_event_id: "chain", rule_id: "RULE_ONE" }));
+  });
+
   it("does not send an email or the dashboard list as an immediate notice", () => {
     const rule = { id: "r", name: "n", enabled: true, match: { severities: ["HIGH"] }, exclude: [], channels: ["account_email", "in_app", "chan"], mode: "now" };
     const d = deliveriesFor([rule], { severity: "HIGH", rule_id: "R", category: "c" }, () => false, 0);

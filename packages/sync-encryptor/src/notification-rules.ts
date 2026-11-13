@@ -33,6 +33,10 @@ export interface NotificationMatch {
   severities?: NotifySeverity[];
   rule_id?: string;
   category?: string;
+  /** Any of these categories. */
+  categories?: string[];
+  /** True: only findings that are part of an investigation, a chain of calls with evidence. */
+  investigation?: boolean;
   /** A file or folder the call touched, ~ allowed. */
   path?: string;
   /** A host (and its subdomains) the call reached. */
@@ -68,6 +72,11 @@ function parseMatch(raw: unknown): NotificationMatch {
     const v = text(r[k]);
     if (v) out[k] = v;
   }
+  const categories = Array.isArray(r.categories)
+    ? [...new Set((r.categories as unknown[]).map((c) => text(c, 80)).filter((c): c is string => c !== undefined))].slice(0, 30)
+    : [];
+  if (categories.length) out.categories = categories;
+  if (r.investigation === true) out.investigation = true;
   return out;
 }
 
@@ -128,6 +137,8 @@ export interface NotifiableFinding {
   severity: string;
   rule_id: string;
   category: string;
+  /** Part of an investigation: the finding carries evidence of a chain of calls. */
+  investigation?: boolean;
 }
 
 /** Whether a local time (minutes since midnight) is inside a quiet window. */
@@ -155,6 +166,8 @@ export function matchHolds(
   if (m.severities && !m.severities.includes(f.severity as NotifySeverity)) return false;
   if (m.rule_id !== undefined && m.rule_id !== f.rule_id) return false;
   if (m.category !== undefined && m.category !== f.category) return false;
+  if (m.categories && !m.categories.includes(f.category)) return false;
+  if (m.investigation && !f.investigation) return false;
   if (m.path !== undefined && !touches("path", m.path)) return false;
   if (m.destination !== undefined && !touches("destination", m.destination)) return false;
   return true;
