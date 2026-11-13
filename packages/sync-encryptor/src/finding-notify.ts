@@ -193,7 +193,6 @@ export async function sendFindingNotifications(home: string, opts: FindingNotify
     const wantsCall = rules.some((r) => r.enabled && (needsCall(r.match) || r.exclude.some(needsCall)));
     const touchesFactory: TouchesFactory | null = wantsCall ? (opts.touches ?? (await analyzerTouches())) : null;
     const none: Touches = () => false;
-    const fetchFn = opts.fetchFn ?? fetch;
 
     const next: State = { v: 1, sessions: { ...held.sessions } };
     let requests = 0;
@@ -233,7 +232,7 @@ export async function sendFindingNotifications(home: string, opts: FindingNotify
           requests++;
           let res: Response;
           try {
-            res = await fetchFn(`${apiUrl}/api/v1/notify/finding`, {
+            res = await (opts.fetchFn ?? fetch)(`${apiUrl}/api/v1/notify/finding`, {
               method: "POST",
               headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json" },
               body: JSON.stringify({
