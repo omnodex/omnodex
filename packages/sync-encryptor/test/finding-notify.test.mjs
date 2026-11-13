@@ -166,6 +166,8 @@ describe("finding notifications from the machine", () => {
     await credentials();
     await seed();
     await appendFile(path.join(logRoot, SESSION), line(finding()));
+    const missing = fakeFetch(404);
+    assert.equal((await sendFindingNotifications(home, { logRoot, fetchFn: missing.fn })).outcome, "stopped");
     const down = fakeFetch(503);
     const first = await sendFindingNotifications(home, { logRoot, fetchFn: down.fn });
     assert.equal(first.outcome, "stopped");

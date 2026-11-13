@@ -249,8 +249,9 @@ export async function sendFindingNotifications(home: string, opts: FindingNotify
             sessionDone = false; stopped = true; break;
           }
           if (res.ok) { sent++; continue; }
-          // The gateway said no. A limit or an outage is retried next pass; a refusal of this request is not.
-          if (res.status === 429 || res.status >= 500) { sessionDone = false; stopped = true; break; }
+          // The gateway said no. A limit, an outage or a gateway that does not have the route yet (404) is
+          // retried next pass; a refusal of this request is not.
+          if (res.status === 404 || res.status === 429 || res.status >= 500) { sessionDone = false; stopped = true; break; }
           if (res.status === 403 || res.status === 401) { stopped = true; break; }
         }
         if (stopped) break;
