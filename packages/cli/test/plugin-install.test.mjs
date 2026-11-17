@@ -207,6 +207,49 @@ test("install codex --plugin unpacks the plugin, keeps the personal marketplace,
   assert.match(status.out, /Codex plugin: omnodex-codex 9\.9\.9 \(chosen version, not this CLI's pin\), for every project/);
 });
 
+test("with CODEX_HOME outside the home directory, the marketplace entry points at a copy inside it, which uninstall removes", async (t) => {
+  // Codex rejects a plugin source outside the marketplace root (the home
+  // directory for the personal marketplace), reporting the plugin as not found.
+  const m = await machine(t, { codex: { "9.9.9": bundle("codex", "9.9.9") } });
+  const codexHome = path.join(m.root, "windows-profile", ".codex");
+  const env = { ...m.env, CODEX_HOME: codexHome };
+  await fs.mkdir(path.join(m.home, ".agents", "plugins"), { recursive: true });
+  await fs.writeFile(path.join(m.home, ".agents", "plugins", "marketplace.json"), JSON.stringify({
+    name: "local-testing",
+    plugins: [{ name: "other", source: { source: "local", path: "./other" } }],
+  }));
+
+  for (let i = 0; i < 2; i++) {
+    const r = await run(["install", "codex", m.project, "--plugin", "--plugin-version", "9.9.9", "--no-connect"], env);
+    assert.equal(r.code, 0, r.out);
+  }
+  const market = await readJson(path.join(m.home, ".agents", "plugins", "marketplace.json"));
+  assert.deepEqual(market.plugins.map((p) => p.name), ["other", "omnodex-codex"], "no duplicate entry");
+  const source = market.plugins[1].source.path;
+  assert.match(source, /^\.\/(?!\.\.)/, "a relative path that does not climb out");
+  const resolved = path.resolve(m.home, source);
+  assert.ok(path.relative(m.home, resolved) && !path.relative(m.home, resolved).startsWith(".."), "inside the home directory");
+  assert.ok(existsSync(path.join(resolved, ".codex-plugin", "plugin.json")), "the entry's source holds the plugin");
+  assert.ok(existsSync(path.join(codexHome, "plugins", "omnodex-codex", ".codex-plugin", "plugin.json")), "the plugin is also in CODEX_HOME");
+  assert.deepEqual((await m.hostCalls()).at(-1), ["codex", "plugin", "add", "omnodex-codex@local-testing"]);
+
+  const r = await run(["uninstall", "codex", "--plugin", "--confirm", "--unattended"], env);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(!existsSync(resolved), "the staged copy is removed");
+  assert.ok(!existsSync(path.join(codexHome, "plugins", "omnodex-codex")));
+  const after = await readJson(path.join(m.home, ".agents", "plugins", "marketplace.json"));
+  assert.deepEqual(after.plugins.map((p) => p.name), ["other"]);
+});
+
+test("with the default CODEX_HOME inside the home directory, no second copy is staged", async (t) => {
+  const m = await machine(t, { codex: { "9.9.9": bundle("codex", "9.9.9") } });
+  const r = await run(["install", "codex", m.project, "--plugin", "--plugin-version", "9.9.9", "--no-connect"], m.env);
+  assert.equal(r.code, 0, r.out);
+  assert.ok(!existsSync(path.join(m.home, ".agents", "plugins", "omnodex-codex")));
+  const market = await readJson(path.join(m.home, ".agents", "plugins", "marketplace.json"));
+  assert.equal(market.plugins[0].source.path, "./.codex/plugins/omnodex-codex");
+});
+
 test("a failed download leaves the hooks installed, exits non-zero, and says how to retry", async (t) => {
   const m = await machine(t, { codex: {} });
   const r = await run(["install", "codex", m.project, "--this-project", "--plugin-version", "1.2.3", "--no-connect"], m.env);
