@@ -14,6 +14,9 @@
       "path": "./packages/hooks-provider"
     },
     {
+      "path": "./packages/sealed-hook"
+    },
+    {
       "path": "./packages/cli"
     },
     {

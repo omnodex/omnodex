@@ -55,6 +55,7 @@ const BIN_ENTRIES = {
   "cursor-hook-shim.js": "../cursor-provider/dist/bin/cursor-hook-shim.js",
   "opencode-plugin-shim.js": "../opencode-provider/dist/bin/opencode-plugin-shim.js",
   "antigravity-hook-shim.js": "../antigravity-provider/dist/bin/antigravity-hook-shim.js",
+  "omnodex-sealed-hook.js": "../sealed-hook/dist/bin/sealed-hook.js",
 };
 
 async function bundle(entry, outfile) {
