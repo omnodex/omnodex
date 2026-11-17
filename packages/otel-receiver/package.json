@@ -1,0 +1,26 @@
+{
+  "name": "@omnodex/otel-receiver",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Maps OpenTelemetry GenAI and Claude API spans to Omnodex trace events, and receives them over OTLP/HTTP.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "dependencies": {
+    "@omnodex/shared": "*"
+  },
+  "devDependencies": {
+    "@omnodex/projection": "*"
+  }
+}

@@ -108,7 +108,7 @@ const DOCUMENTATION_KEYS = [
  * `argon2id({ password: passphrase })` or `password = null`.
  */
 const CODE_REFERENCES = new Set([
-  "passphrase", "password", "passwd", "secret", "token", "value", "input",
+  "passphrase", "password", "passwd", "pass", "pwd", "secret", "token", "value", "input",
   "undefined", "null", "none", "true", "false", "required", "string",
 ]);
 
