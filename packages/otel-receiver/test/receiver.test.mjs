@@ -12,7 +12,7 @@ import {
 
 /** Poll until `check` returns a truthy value, or fail after a few seconds. */
 async function until(check, what) {
-  for (let i = 0; i < 200; i++) {
+  for (let i = 0; i < 800; i++) {
     const v = await check();
     if (v) return v;
     await new Promise((r) => setTimeout(r, 25));
@@ -240,10 +240,12 @@ test("credentials in tool arguments are judged in the clear and masked in the lo
   const key = "AKIAQ3EGRX7WN2Y5K6PT";
   const span = toolSpan({ tool: "bash", args: { command: `aws s3 ls --access-key ${key}` }, start: 0, end: 5 });
   await request(url, { headers: JSON_HEADERS, body: jsonExport([span]) });
+  // The finding is appended after the events, once the rules have run, so wait for it.
   const events = await until(async () => {
     const all = await readAllEvents(home);
-    return byType(all, "tool.completed").length ? all : null;
-  }, "the mapped events");
+    return byType(all, "risk.detected").length ? all : null;
+  }, "the finding");
+  assert.equal(byType(events, "tool.completed").length, 1);
   const written = JSON.stringify(events);
   assert.ok(!written.includes(key), "the credential never reaches the log");
   const findings = byType(events, "risk.detected");
@@ -295,8 +297,12 @@ test("a redelivered export does not change what the log's session looks like", a
   const body = jsonExport(bashSpans());
   await request(url, { headers: JSON_HEADERS, body });
   await request(url, { headers: JSON_HEADERS, body });
-  await until(() => receiver.stats().spans_mapped === 2, "both deliveries");
-  const events = await readAllEvents(home);
+  // Counted before delivery, so wait for both copies to be in the log itself.
+  const events = await until(async () => {
+    const all = await readAllEvents(home);
+    return byType(all, "tool.invoked").length === 2 ? all : null;
+  }, "both copies in the log");
+  assert.equal(receiver.stats().spans_mapped, 2);
   const ids = byType(events, "tool.invoked").map((e) => e.event_id);
   assert.equal(new Set(ids).size, 1, "both copies carry the same event id");
 });
