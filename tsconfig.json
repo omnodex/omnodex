@@ -26,6 +26,9 @@
       "path": "./packages/copilot-provider"
     },
     {
+      "path": "./packages/otel-receiver"
+    },
+    {
       "path": "./packages/cursor-provider"
     },
     {
