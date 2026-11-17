@@ -31,6 +31,7 @@
     "@omnodex/license-client": "*",
     "@omnodex/mcp-proxy": "*",
     "@omnodex/opencode-provider": "*",
+    "@omnodex/otel-receiver": "*",
     "@omnodex/projection": "*",
     "@omnodex/shared": "*",
     "@omnodex/sync-encryptor": "*"

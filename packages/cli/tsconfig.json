@@ -53,6 +53,9 @@
     },
     {
       "path": "../sync-encryptor"
+    },
+    {
+      "path": "../otel-receiver"
     }
   ]
 }

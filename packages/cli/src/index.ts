@@ -32,6 +32,7 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { runExport } from "./export-command.js";
+import { runOtel } from "./otel-command.js";
 import { runSeal, runVerify } from "./evidence/commands.js";
 import { sealPending } from "./evidence/seal.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
@@ -3659,6 +3660,19 @@ async function main(): Promise<void> {
     case "live":
       await cmdLive(rest);
       return;
+    case "otel": {
+      const stop = new AbortController();
+      const onSignal = (): void => stop.abort();
+      const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
+      for (const signal of signals) process.once(signal, onSignal);
+      process.exitCode = await runOtel(rest, {
+        home: resolvePaths().home,
+        signal: stop.signal,
+        io: { log: (l) => console.log(l), error: (l) => console.error(l) },
+      });
+      for (const signal of signals) process.off(signal, onSignal);
+      return;
+    }
     case "seal": {
       const resolved = await resolveRoots();
       process.exitCode = await runSeal(rest, {
@@ -3828,6 +3842,14 @@ commands:
                      fetches the entries made for your
                      whole account in the hosted dashboard (the background
                      pass also does, about every 15 minutes).
+  otel serve [--listen <host:port>] [--allow-remote]
+                     receive OpenTelemetry traces from agents without hooks,
+                     such as Claude Managed Agents, and write them to the
+                     local event log. Listens on 127.0.0.1:4318 by default;
+                     anywhere else needs --allow-remote and a token.
+  otel token [--rotate]
+                     print the receiver's bearer token, creating it on first
+                     use. Senders send it as 'Authorization: Bearer <token>'.
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.
