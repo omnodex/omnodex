@@ -78,11 +78,30 @@ export const CREDENTIAL_PATTERNS: CredentialPattern[] = [
   { regex: "token\\\\?[\"']?\\s*[:=]\\s*\\\\?[\"']?([A-Za-z0-9_-]{16,})",        type: "token",       group: 1, check: "secret" },
   // password, which may be letters alone:
   { regex: "password\\\\?[\"']?\\s*[:=]\\s*\\\\?[\"']?([^\\s\"'`,;}\\\\]{4,})", type: "password", group: 1, check: "placeholder" },
+
+  // Passwords given on a command line or inside a connection string.
+  // A password in the user:password part of a database or broker URL. The
+  // password may not hold a quote, slash, bracket or "@", so a host and port
+  // ("redis://cache:6379") or a template ("<user>:<pass>@") is not one.
+  { regex: `(?:postgres(?:ql)?|mysql|mariadb|mongodb|rediss?|amqps?|mssql|sqlserver|cockroachdb|clickhouse|neo4j|bolt)(?:\\+[a-z0-9]+)*://[^\\s:@/"'\`\\\\]*:([^\\s@/"'\`\\\\<>{}\\[\\]]{4,})@(?=[^\\s"'\`\\\\])`, type: "connection-string", group: 1, check: "placeholder" },
+  // A password flag followed by its value: --password hunter2abc,
+  // --passphrase=hunter2abc. The "=" form is also an assignment above.
+  { regex: "--(?:password|passwd|passphrase)(?:=|\\s+)\\\\?[\"']?(?!-)([^\\s\"'`\\\\;&|<>(){}]{4,})", type: "password", group: 1, check: "placeholder" },
+  // mysql -pSECRET and its relatives: the value follows -p with no space (a
+  // space means "prompt", and the next word is the database). A port reads
+  // as -P3306, so a value of digits alone is left out.
+  { regex: "\\b(?:mysql|mysqldump|mysqladmin|mysqlimport|mysqlcheck|mysqlshow|mariadb(?:-[a-z]+)?|mycli)\\b(?:[^|;&\\n\\\\]|\\\\(?![nrt]))*?\\s-p\\\\?[\"']?(?!-|\\d+(?:[\\s\"'\\\\;&|]|$))([^\\s\"'`\\\\;&|<>(){}]{4,})", type: "password", group: 1, check: "placeholder" },
+  // sshpass -p SECRET, with or without a space, after any other sshpass
+  // options (-f, -d and -P take a value of their own).
+  { regex: "\\bsshpass\\s+(?:-[a-oq-z]\\S*\\s+|-[fdp]\\s+\\S+\\s+)*-p\\s*\\\\?[\"']?(?!-|\\d+(?:[\\s\"'\\\\;&|]|$))([^\\s\"'`\\\\;&|<>(){}]{4,})", type: "password", group: 1, check: "placeholder" },
+  // Environment variables that hold a password but are not named for one.
+  // (PGPASSWORD and the other *_PASSWORD names match the assignment above.)
+  { regex: "\\b(?:MYSQL_PWD|SSHPASS|REDISCLI_AUTH)=\\\\?[\"']?(?!-)([^\\s\"'`\\\\;&|<>(){}]{4,})", type: "password", group: 1, check: "placeholder" },
 ];
 
 export const RULE_CREDENTIAL_IN_PARAMS: RuleDefinition = {
   rule_id: "RULE_CREDENTIAL_IN_PARAMS",
-  version: "1.1.0",
+  version: "1.2.0",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
