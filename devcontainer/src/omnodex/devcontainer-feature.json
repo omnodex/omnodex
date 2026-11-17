@@ -1,0 +1,21 @@
+{
+  "id": "omnodex",
+  "version": "1.0.0",
+  "name": "Omnodex sealed capture",
+  "description": "Installs Omnodex and sets up Claude Code, Codex and other agent hooks to capture sealed events to write-only ingest, so a disposable container loses nothing. Needs OMNODEX_INGEST_PUBLIC_KEY and OMNODEX_INGEST_SOURCE_ID in the container environment (Codespaces secrets work); nothing secret is stored.",
+  "documentationURL": "https://omnodex.com/docs",
+  "options": {
+    "agents": {
+      "type": "string",
+      "default": "claude-code,codex",
+      "description": "Comma-separated agents to capture: claude-code, codex, copilot, cursor, antigravity."
+    },
+    "version": {
+      "type": "string",
+      "default": "latest",
+      "description": "Version of the omnodex npm package to install."
+    }
+  },
+  "installsAfter": ["ghcr.io/devcontainers/features/node"],
+  "postCreateCommand": "/usr/local/share/omnodex-feature/post-create.sh"
+}
