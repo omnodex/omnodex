@@ -528,6 +528,8 @@ export class OtelMapper {
       tool_name: toolName,
       mcp_server: server,
       parameters,
+      // The exporter says when its content size cap cut the content short.
+      ...(a["anthropic.content.truncated"] === true ? { parameters_truncated: true } : {}),
     });
     const responseBytes = byteLength(result);
     events.push({

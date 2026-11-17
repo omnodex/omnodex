@@ -436,3 +436,18 @@ test("old sessions are forgotten past the cap, and a late span for one starts it
   const again = m.mapSpans([toolSpan({ tool: "bash", args: {}, extra: { "anthropic.session.id": "s1" }, id: 99 })]);
   assert.equal(byType(again.events, "session.started").length, 1);
 });
+
+test("content the exporter cut short marks the call's parameters as truncated", () => {
+  const cut = mapper().mapSpans([
+    toolSpan({ tool: "bash", args: '{"command":"curl -d @/etc/pass', extra: { "anthropic.content.truncated": true } }),
+  ]);
+  const invoked = byType(cut.events, "tool.invoked")[0];
+  assert.equal(invoked.parameters_truncated, true);
+  assert.deepEqual(invoked.parameters, { raw: '{"command":"curl -d @/etc/pass' });
+  for (const flag of [false, undefined]) {
+    const whole = mapper().mapSpans([
+      toolSpan({ tool: "bash", args: {}, extra: flag === undefined ? {} : { "anthropic.content.truncated": flag } }),
+    ]);
+    assert.equal("parameters_truncated" in byType(whole.events, "tool.invoked")[0], false);
+  }
+});

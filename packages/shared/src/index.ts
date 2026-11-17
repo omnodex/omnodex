@@ -374,6 +374,13 @@ export interface ToolInvokedEvent extends BaseEvent {
   /** Parameters as a JSON-serializable object. May be redacted upstream. */
   parameters: Record<string, unknown>;
   /**
+   * Set (true) when the source cut the arguments short, so `parameters` may
+   * be incomplete: a telemetry exporter's content size cap, for one. A rule
+   * that needed the full value reports reduced confidence rather than a
+   * clean pass. Absent when the arguments are whole.
+   */
+  parameters_truncated?: boolean;
+  /**
    * Working directory of the agent session at the time of this tool call.
    * Populated from the hook payload (all major agents include cwd).
    * Used by cwd_boundary rules to detect file access outside the project.
