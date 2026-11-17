@@ -1678,8 +1678,9 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   const paths = resolvePaths();
 
   const detected = detectSurfaces({ home: os.homedir(), platform: process.platform, env: process.env });
-  const note = wslNote(detectWsl(defaultWslProbe(process.env), projectPath));
-  const printNote = () => {
+  const wslInfo = detectWsl(defaultWslProbe(process.env), projectPath);
+  const printNote = (noteScope: HookScopeChoice) => {
+    const note = wslNote(wslInfo, noteScope);
     if (note.length === 0) return;
     console.log("");
     for (const line of note) console.log(line ? `[install] ${line}` : "");
@@ -1688,7 +1689,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   if (detected.length === 0) {
     console.error(`[install] no supported agent surfaces found on this host (looked for ${Object.values(SURFACE_LABELS).join(", ")}).`);
     console.error(`[install] install one first, or name a target: omnodex install <target>`);
-    printNote();
+    printNote(args.includes("--this-project") || args.includes("--legacy-shim") ? "this-project" : "everywhere");
     process.exitCode = 1;
     return;
   }
@@ -1719,7 +1720,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
       console.log(`  ${"".padEnd(width)}  plugin: ${name} ${version}`);
     }
   }
-  printNote();
+  printNote(scope);
   console.log("");
 
   if (!hasYes(args)) {

@@ -321,6 +321,8 @@ export interface PluginInstallResult {
 
 export const codexHome = (ctx: PluginContext) => ctx.env.CODEX_HOME || path.join(ctx.home, ".codex");
 const codexMarketplaceFile = (ctx: PluginContext) => path.join(ctx.home, ".agents", "plugins", "marketplace.json");
+/** Where the Codex plugin is staged for the personal marketplace when CODEX_HOME is outside the home directory. */
+const stagedCodexPluginDir = (ctx: PluginContext) => path.join(ctx.home, ".agents", "plugins", "omnodex-codex");
 const claudeMarketplaceDir = (ctx: PluginContext) => path.join(ctx.omnodexHome, "plugins", "claude-marketplace");
 const antigravityPluginDir = (ctx: PluginContext) => path.join(ctx.home, ".gemini", "config", "plugins", "omnodex-antigravity");
 
@@ -376,10 +378,21 @@ async function installCodex(bundle: ResolvedBundle, ctx: PluginContext): Promise
   const file = codexMarketplaceFile(ctx);
   const existing = (await readJsonFile(file)) ?? {};
   const name = typeof existing.name === "string" && existing.name ? existing.name : LOCAL_MARKETPLACE;
+  // Codex only accepts a plugin source inside the marketplace's root, which for
+  // the personal marketplace is the home directory; a path outside it (an
+  // absolute one, or one climbing out with "..") leaves the plugin "not found
+  // in marketplace". With CODEX_HOME elsewhere, as when WSL shares the Windows
+  // Codex home, keep a copy of the plugin inside the home directory and point
+  // the entry at that. `codex plugin add` copies it into Codex's own cache.
+  const staged = stagedCodexPluginDir(ctx);
   const relative = path.relative(ctx.home, dir);
-  const sourcePath = relative && !relative.startsWith("..") && !path.isAbsolute(relative)
-    ? `./${relative.split(path.sep).join("/")}`
-    : dir;
+  const inHome = relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+  if (inHome) {
+    if (staged !== dir) await fs.rm(staged, { recursive: true, force: true });
+  } else {
+    await unpackInto(staged, bundle.bytes);
+  }
+  const sourcePath = `./${path.relative(ctx.home, inHome ? dir : staged).split(path.sep).join("/")}`;
   const entry = {
     name: "omnodex-codex",
     source: { source: "local", path: sourcePath },
@@ -504,6 +517,11 @@ export async function uninstallPlugin(target: PluginTarget, ctx: PluginContext):
       if (plugins.length === 0 && name === LOCAL_MARKETPLACE) await fs.rm(file, { force: true });
       else await writeJsonFile(file, { ...existing, plugins });
       done.push(`removed omnodex-codex from ${file}`);
+    }
+    const staged = stagedCodexPluginDir(ctx);
+    if (staged !== dir && (await fs.stat(staged).then(() => true, () => false))) {
+      await fs.rm(staged, { recursive: true, force: true });
+      done.push(`deleted ${staged}`);
     }
   } else if (target === "claude-code") {
     const selector = `omnodex-cowork@${LOCAL_MARKETPLACE}`;

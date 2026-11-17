@@ -107,15 +107,32 @@ test("under WSL, Windows-side surfaces produce a PowerShell note and a Windows p
   const onWindowsDrive = detectWsl(probe, path.join(mountRoot, "c", "Users", "case", "repo"));
   assert.deepEqual(onWindowsDrive.windowsSurfaces, ["claude-code", "codex"]);
   assert.equal(onWindowsDrive.windowsProjectPath, "C:\\Users\\case\\repo");
+  // Every-project hooks (the default): both hosts can be covered, nothing is replaced.
   const note = wslNote(onWindowsDrive).join("\n");
   assert.match(note, /Native Windows also has Claude Code, Codex/);
+  assert.match(note, /both can record side by side/);
   assert.match(note, /cd "C:\\Users\\case\\repo"; npm i -g omnodex; omnodex install/);
-  assert.match(note, /use each project folder from one host only/);
+  assert.match(note, /Each host needs its own every-project install/);
+  assert.match(note, /keep running beside the user-level ones, and events are recorded twice/);
+  assert.match(note, /launcher command both hosts share/);
+  assert.doesNotMatch(note, /covers WSL only|separate host\b/);
+  assert.doesNotMatch(note, /replace the other's/);
+  assert.doesNotMatch(note, /one host only/);
+
+  // Project-level hooks in a project on a Windows drive: the replace warning applies.
+  const projectNote = wslNote(onWindowsDrive, "this-project").join("\n");
+  assert.match(projectNote, /Each host needs its own every-project install/);
+  assert.match(projectNote, /project-level hooks\. Hooks written by one\s+host replace the other's, so use each project folder from one host only/);
+  assert.doesNotMatch(projectNote, /launcher command both hosts share/);
 
   const inLinuxHome = detectWsl(probe, "/home/case/repo");
   assert.equal(inLinuxHome.windowsProjectPath, null);
-  assert.match(wslNote(inLinuxHome).join("\n"), /from the Windows project folder/);
-  assert.doesNotMatch(wslNote(inLinuxHome).join("\n"), /one host only/);
+  for (const scope of ["everywhere", "this-project"]) {
+    const text = wslNote(inLinuxHome, scope).join("\n");
+    assert.match(text, /from the Windows project folder/);
+    assert.match(text, /Each host needs its own every-project install/);
+    assert.doesNotMatch(text, /one host only/, `a project in the Linux home has no Windows copy to replace (${scope})`);
+  }
 });
 
 test("no WSL note outside WSL or when Windows has no surfaces", posixOnly, async (t) => {
@@ -190,6 +207,26 @@ test("without a terminal and without --yes, it shows the plan and installs nothi
   assert.doesNotMatch(result.out, /Antigravity/);
   assert.ok(!existsSync(path.join(m.project, ".claude", "settings.local.json")));
   assert.ok(!existsSync(path.join(m.project, ".codex", "hooks.json")));
+});
+
+test("under WSL the host note follows the scope: the replace warning only for project-level hooks on a Windows drive", { skip: process.platform !== "linux" && "WSL is Linux" }, async (t) => {
+  const m = await machine(t);
+  const mountRoot = path.join(m.root, "mnt");
+  const project = path.join(mountRoot, "c", "Users", "case", "repo");
+  await fs.mkdir(path.join(mountRoot, "c", "Users", "case", ".codex"), { recursive: true });
+  await fs.mkdir(project, { recursive: true });
+  const env = { ...m.env, WSL_DISTRO_NAME: "Ubuntu", OMNODEX_WSL_MOUNT_ROOT: mountRoot };
+
+  const everywhere = await run(["install", "--hooks", project, "--everywhere"], env);
+  assert.match(everywhere.out, /both can record side by side/);
+  assert.match(everywhere.out, /cd "C:\\Users\\case\\repo"; npm i -g omnodex; omnodex install/);
+  assert.match(everywhere.out, /Each host needs its own every-project install/);
+  assert.doesNotMatch(everywhere.out, /replace the other's|one host only/);
+
+  const projectLevel = await run(["install", "--hooks", project, "--this-project"], env);
+  assert.match(projectLevel.out, /Each host needs its own every-project install/);
+  assert.match(projectLevel.out, /these are project-level hooks/);
+  assert.match(projectLevel.out, /replace the other's, so use each project folder from one host only/);
 });
 
 test("with --yes it records every project on every detected surface, and a rerun changes nothing", async (t) => {
