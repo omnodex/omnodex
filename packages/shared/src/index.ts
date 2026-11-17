@@ -172,6 +172,7 @@ export type InterceptorKind =
   | "cursor-hook"
   | "opencode-plugin"
   | "cowork-desktop"
+  | "otel-receiver"
   | "mcp-proxy"
   | "mock"
   | "analyzer";
@@ -190,7 +191,8 @@ export type PlatformKind =
   | "antigravity"
   | "copilot"
   | "cursor"
-  | "opencode";
+  | "opencode"
+  | "managed-agents";
 
 /** Fields present on every trace event, regardless of type. */
 export interface BaseEvent {
@@ -259,6 +261,30 @@ export interface SessionStartedEvent extends BaseEvent {
    * may supply it later).
    */
   model?: string;
+  /**
+   * Who the session belongs to, for sessions the OpenTelemetry receiver
+   * sees: the spans name an organization, workspace, agent and end user
+   * that no hook payload carries. Recorded once, here; the read model joins
+   * it to the session's other events.
+   */
+  origin?: SessionOrigin;
+}
+
+/**
+ * Identity a telemetry source reports for a session. Every field but
+ * `service` is present only when the spans carried it.
+ */
+export interface SessionOrigin {
+  /** The emitting service: "claude-platform", or the span's own `service.name`. */
+  service: string;
+  org_id?: string;
+  workspace_id?: string;
+  /** The agent definition the session runs, as the platform identifies it. */
+  agent_id?: string;
+  agent_name?: string;
+  environment_id?: string;
+  /** The end user the calling application attributed the session to. */
+  end_user?: string;
 }
 
 export interface McpServerTransport {
