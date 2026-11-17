@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "composite": true
+  },
+  "include": [
+    "src/**/*"
+  ],
+  "references": [
+    { "path": "../shared" },
+    { "path": "../event-log" },
+    { "path": "../sync-encryptor" },
+    { "path": "../analyzer" },
+    { "path": "../hooks-provider" },
+    { "path": "../copilot-provider" },
+    { "path": "../cursor-provider" },
+    { "path": "../codex-provider" },
+    { "path": "../antigravity-provider" }
+  ]
+}

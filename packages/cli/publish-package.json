@@ -5,7 +5,8 @@
   "license": "AGPL-3.0-only",
   "bin": {
     "omnodex": "bin/omnodex",
-    "omnodex-mcp-proxy": "bin/omnodex-mcp-proxy.js"
+    "omnodex-mcp-proxy": "bin/omnodex-mcp-proxy.js",
+    "omnodex-sealed-hook": "bin/omnodex-sealed-hook.js"
   },
   "repository": {
     "type": "git",

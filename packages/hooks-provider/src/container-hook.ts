@@ -28,7 +28,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import type { TraceEvent } from "@omnodex/shared";
+import type { PlatformKind, TraceEvent } from "@omnodex/shared";
 import { maskCaptured } from "@omnodex/analyzer/capture";
 import {
   base64ToBytes,
@@ -98,7 +98,11 @@ const MAPPED_EVENTS = new Set<ClaudeCodeHookEventName>([
 /** Parsed and validated ingest.json. */
 export interface IngestConfig {
   apiBase: string;
-  ingestToken: string;
+  /**
+   * Write-only ingest token. Absent when a proxy in front of the host attaches
+   * the Authorization header itself, so the token never enters the machine.
+   */
+  ingestToken?: string;
   sourceId: string;
   publicKey: Uint8Array;
   keyId: string;
@@ -121,11 +125,21 @@ function isLoopback(host: string): boolean {
  * public key, so a broken bundle captures nothing rather than sealing to
  * the wrong key.
  */
-export async function parseIngestConfig(raw: unknown): Promise<IngestConfig | null> {
+export async function parseIngestConfig(
+  raw: unknown,
+  options: { tokenOptional?: boolean } = {},
+): Promise<IngestConfig | null> {
   if (!raw || typeof raw !== "object") return null;
   const c = raw as Record<string, unknown>;
   if (c.version !== 1) return null;
-  if (typeof c.ingest_token !== "string" || !TOKEN_RE.test(c.ingest_token)) return null;
+  let ingestToken: string | undefined;
+  if (c.ingest_token === undefined && options.tokenOptional) {
+    ingestToken = undefined;
+  } else if (typeof c.ingest_token === "string" && TOKEN_RE.test(c.ingest_token)) {
+    ingestToken = c.ingest_token;
+  } else {
+    return null;
+  }
   if (typeof c.source_id !== "string" || !SOURCE_ID_RE.test(c.source_id)) return null;
   if (typeof c.key_id !== "string" || !KEY_ID_RE.test(c.key_id)) return null;
   if (typeof c.public_key !== "string") return null;
@@ -154,7 +168,7 @@ export async function parseIngestConfig(raw: unknown): Promise<IngestConfig | nu
 
   return {
     apiBase,
-    ingestToken: c.ingest_token,
+    ...(ingestToken ? { ingestToken } : {}),
     sourceId: c.source_id,
     publicKey,
     keyId: c.key_id,
@@ -200,13 +214,18 @@ function jsonBytes(value: unknown): number {
 }
 
 /**
- * Prepares one mapped event for sealing: marks the platform, redacts
+ * Prepares one mapped event for sealing: marks the platform (`null` keeps the
+ * platform the mapper set), redacts
  * parameter values when configured, and keeps the plaintext under the
  * per-event cap by dropping parameter values first and truncating a long
  * error message. Returns null for an event that still does not fit.
  */
-export function prepareEvent(event: TraceEvent, redactParameters: boolean): TraceEvent | null {
-  const out = { ...event, platform: "cowork" } as TraceEvent & {
+export function prepareEvent(
+  event: TraceEvent,
+  redactParameters: boolean,
+  platform: PlatformKind | null = "cowork",
+): TraceEvent | null {
+  const out = { ...event, ...(platform ? { platform } : {}) } as TraceEvent & {
     parameters?: Record<string, unknown>;
     error_message?: string;
   };
@@ -373,14 +392,18 @@ function keepPending(home: string, lines: string[], now: number): number {
 /** HTTP status, or a transport error when no response arrived. */
 export type PostResult = { status: number } | { error: string };
 
-export type Poster = (url: string, token: string, body: string) => Promise<PostResult>;
+/** `token` is undefined when a proxy supplies the Authorization header. */
+export type Poster = (url: string, token: string | undefined, body: string) => Promise<PostResult>;
 
 /** POST with Node's fetch, which reaches the internet through the container's proxy. */
 export const postWithFetch: Poster = async (url, token, body) => {
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        "Content-Type": "application/json",
+      },
       body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -410,7 +433,11 @@ export function makeCurlPoster(workDir: string): Poster {
       };
       try {
         fs.mkdirSync(workDir, { recursive: true });
-        fs.writeFileSync(headerFile, `Authorization: Bearer ${token}\nContent-Type: application/json\n`, { mode: 0o600 });
+        fs.writeFileSync(
+          headerFile,
+          `${token ? `Authorization: Bearer ${token}\n` : ""}Content-Type: application/json\n`,
+          { mode: 0o600 },
+        );
       } catch {
         resolve({ error: "curl header file" });
         return;
@@ -588,11 +615,42 @@ function trackDuration(home: string, payload: ClaudeCodeHookPayload, now: number
   }
 }
 
+/** What an adapter makes of one hook call. */
+export interface AdaptedPayload {
+  /** Mapped events, before sealing. */
+  events: TraceEvent[];
+  /** The call ends a turn or a session, so the spool is sent now. */
+  flush: boolean;
+}
+
+/**
+ * Turns one provider's hook payload into TraceEvents. Returning null means
+ * the payload is not one this adapter records. The default adapter handles
+ * Claude Code payloads, which is what the Cowork container runs.
+ */
+export type PayloadAdapter = (payload: unknown, home: string, now: number) => Promise<AdaptedPayload | null>;
+
 export interface HandleOptions {
   home: string;
   post: Poster;
   now?: () => number;
+  /** Defaults to the Claude Code adapter. */
+  adapter?: PayloadAdapter;
+  /** Platform label put on every event; `null` keeps the mapper's own. Defaults to "cowork". */
+  platform?: PlatformKind | null;
 }
+
+/** The Claude Code adapter used inside a Cowork container. */
+export const claudeCodeAdapter: PayloadAdapter = async (payload, home, now) => {
+  const name = (payload as { hook_event_name?: unknown }).hook_event_name;
+  if (typeof name !== "string") return null;
+  const flush = FLUSH_EVENTS.has(name);
+  if (!MAPPED_EVENTS.has(name as ClaudeCodeHookEventName)) return { events: [], flush };
+  const p = payload as ClaudeCodeHookPayload;
+  if (typeof p.session_id !== "string") return null;
+  trackDuration(home, p, now);
+  return { events: await maskCaptured(mapClaudeCodePayload(p, { newEventId }), home), flush };
+};
 
 /**
  * Handles one hook call: maps, seals and spools its events, then flushes
@@ -605,30 +663,24 @@ export async function handleHookPayload(
 ): Promise<FlushResult | null> {
   const now = options.now ?? Date.now;
   try {
-    const name = payload.hook_event_name;
-    if (typeof name !== "string") return null;
+    const adapted = await (options.adapter ?? claudeCodeAdapter)(payload, options.home, now());
+    if (!adapted) return null;
 
-    if (MAPPED_EVENTS.has(name as ClaudeCodeHookEventName)) {
-      const p = payload as ClaudeCodeHookPayload;
-      if (typeof p.session_id !== "string") return null;
-      trackDuration(options.home, p, now());
-      const sealed: HpkeEventWire[] = [];
-      const mapped = await maskCaptured(mapClaudeCodePayload(p, { newEventId }), options.home);
-      for (const event of mapped) {
-        const prepared = prepareEvent(event, config.redactParameters);
-        if (!prepared) continue;
-        sealed.push(
-          await sealEvent(config.publicKey, {
-            eventId: prepared.event_id,
-            ts: Date.parse(prepared.occurred_at) || now(),
-            plaintext: new TextEncoder().encode(JSON.stringify(prepared)),
-          }),
-        );
-      }
-      appendToSpool(options.home, sealed);
+    const sealed: HpkeEventWire[] = [];
+    for (const event of adapted.events) {
+      const prepared = prepareEvent(event, config.redactParameters, options.platform === undefined ? "cowork" : options.platform);
+      if (!prepared) continue;
+      sealed.push(
+        await sealEvent(config.publicKey, {
+          eventId: prepared.event_id,
+          ts: Date.parse(prepared.occurred_at) || now(),
+          plaintext: new TextEncoder().encode(JSON.stringify(prepared)),
+        }),
+      );
     }
+    appendToSpool(options.home, sealed);
 
-    if (FLUSH_EVENTS.has(name) || spoolBytes(options.home) >= SPOOL_FLUSH_BYTES) {
+    if (adapted.flush || spoolBytes(options.home) >= SPOOL_FLUSH_BYTES) {
       return await flushSpool(options.home, config, options.post, now());
     }
     return null;
