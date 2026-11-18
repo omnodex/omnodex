@@ -26,6 +26,7 @@ export function interceptorTone(interceptor: string | null | undefined): SourceT
     case "cursor-hook": return "cyan";
     case "opencode-plugin": return "mint";
     case "cowork-desktop": return "blue";
+    case "otel-receiver": return "orange";
     default: return "slate";
   }
 }
@@ -40,6 +41,7 @@ export function interceptorLabel(interceptor: string | null | undefined): string
     case "cursor-hook": return "Cursor";
     case "opencode-plugin": return "OpenCode";
     case "cowork-desktop": return "Cowork";
+    case "otel-receiver": return "OTel receiver";
     default: return interceptor || "unknown";
   }
 }
@@ -53,6 +55,7 @@ const PLATFORM_LABELS: Readonly<Record<string, string>> = {
   copilot: "Copilot",
   cursor: "Cursor",
   opencode: "OpenCode",
+  "managed-agents": "Managed Agents",
 };
 
 type LabelledSession = Pick<SessionRow, "interceptor" | "platform" | "mcp_client_name">;

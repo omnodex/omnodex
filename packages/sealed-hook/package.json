@@ -1,0 +1,38 @@
+{
+  "name": "@omnodex/sealed-hook",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Sealed capture for hosts that have no Omnodex install, secret or lasting disk: any provider's hook payload, sealed to the stream public key and sent to write-only ingest.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "bundle": "npm run build && node bundle.config.mjs",
+    "clean": "node ../../scripts/rm.mjs dist tsconfig.tsbuildinfo bundle",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "bin": {
+    "omnodex-sealed-hook": "./dist/bin/sealed-hook.js"
+  },
+  "dependencies": {
+    "@omnodex/analyzer": "*",
+    "@omnodex/antigravity-provider": "*",
+    "@omnodex/codex-provider": "*",
+    "@omnodex/copilot-provider": "*",
+    "@omnodex/cursor-provider": "*",
+    "@omnodex/event-log": "*",
+    "@omnodex/hooks-provider": "*",
+    "@omnodex/shared": "*",
+    "@omnodex/sync-encryptor": "*"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0"
+  }
+}

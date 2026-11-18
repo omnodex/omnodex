@@ -32,6 +32,7 @@ import { EventLog, applyCapturePause, newEventId } from "@omnodex/event-log";
 import { appendMarkers, captureStatusLines, processIo, runCaptureControl } from "./capture-controls.js";
 import { recordMonitoringChange, setMarkerPush, setMonitoringActor } from "./monitoring-markers.js";
 import { runExport } from "./export-command.js";
+import { runOtel } from "./otel-command.js";
 import { runSeal, runVerify } from "./evidence/commands.js";
 import { sealPending } from "./evidence/seal.js";
 import { currentMode, offerShadowMode, runEnforce, type GuardrailsReadiness } from "./enforce-command.js";
@@ -156,6 +157,7 @@ import {
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
 import { PLUGIN_PINS } from "./plugin-pins.js";
+import { DEFAULT_EPHEMERAL_TARGETS, EPHEMERAL_SHIMS, installEphemeral, isEphemeralTarget, type EphemeralTarget } from "./ephemeral-install.js";
 import { SURFACE_PLUGIN, downloadsBaseUrl, hasPlugin, installPlugin, pluginDir, resolveBundle, uninstallPlugin, type PluginTarget } from "./plugins.js";
 import { PLATFORMS, availablePlatforms, isPlatformAvailable, notYetSupported } from "./platforms.js";
 import { SURFACE_LABELS, defaultWslProbe, detectSurfaces, detectWsl, wslNote, type Surface } from "./surfaces.js";
@@ -1216,6 +1218,10 @@ function installComponents(args: readonly string[]): InstallComponents {
 }
 
 async function cmdInstall(rawArgs: string[]): Promise<void> {
+  if (rawArgs.includes("--ephemeral")) {
+    await cmdInstallEphemeral(rawArgs.filter((a) => a !== "--ephemeral"));
+    return;
+  }
   // A first install offers shadow mode; reinstalls and upgrades keep the mode they have.
   const firstInstall = (await listInstallations()).length === 0;
   await installTargets(rawArgs);
@@ -1223,6 +1229,40 @@ async function cmdInstall(rawArgs: string[]): Promise<void> {
     await offerShadowMode({ home: resolvePaths().home, io: processIo(), yes: hasYes(rawArgs) }).catch((err: unknown) => {
       console.error(`[install] could not set the enforcement mode: ${(err as Error).message}`);
     });
+  }
+}
+
+/**
+ * `omnodex install --ephemeral [agent ...] [project]`: set up a disposable
+ * host from environment variables, with no prompt. Hooks go in every
+ * project on the host unless --this-project is given.
+ */
+async function cmdInstallEphemeral(args: string[]): Promise<void> {
+  const home = resolvePaths().home;
+  const targets: EphemeralTarget[] = [];
+  let project: string | undefined;
+  for (const arg of args.filter((a) => !a.startsWith("-"))) {
+    const canonical = canonicalTarget(arg);
+    if (isEphemeralTarget(canonical)) targets.push(canonical);
+    else if (project === undefined && (await isDirectory(arg))) project = path.resolve(arg);
+    else {
+      console.error(`[install] --ephemeral supports ${Object.keys(EPHEMERAL_SHIMS).join(", ")}; '${arg}' is not one of them or a folder`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+  const scope = args.includes("--this-project") ? "--this-project" : "--everywhere";
+  const result = await installEphemeral({
+    home,
+    env: process.env,
+    targets: targets.length > 0 ? targets : DEFAULT_EPHEMERAL_TARGETS,
+    sealedHook: path.join(path.dirname(CLAUDE_HOOK_SHIM_PATH), "omnodex-sealed-hook.js"),
+    installTarget: (target) => installTargets([target, ...(project ? [project] : []), "--hooks", "--yes", "--no-connect", scope]),
+    log: (message) => console.log(message),
+  });
+  if (!result.ok) {
+    console.error(`[install] ${result.reason}`);
+    process.exitCode = 1;
   }
 }
 
@@ -1639,8 +1679,9 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   const paths = resolvePaths();
 
   const detected = detectSurfaces({ home: os.homedir(), platform: process.platform, env: process.env });
-  const note = wslNote(detectWsl(defaultWslProbe(process.env), projectPath));
-  const printNote = () => {
+  const wslInfo = detectWsl(defaultWslProbe(process.env), projectPath);
+  const printNote = (noteScope: HookScopeChoice) => {
+    const note = wslNote(wslInfo, noteScope);
     if (note.length === 0) return;
     console.log("");
     for (const line of note) console.log(line ? `[install] ${line}` : "");
@@ -1649,7 +1690,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
   if (detected.length === 0) {
     console.error(`[install] no supported agent surfaces found on this host (looked for ${Object.values(SURFACE_LABELS).join(", ")}).`);
     console.error(`[install] install one first, or name a target: omnodex install <target>`);
-    printNote();
+    printNote(args.includes("--this-project") || args.includes("--legacy-shim") ? "this-project" : "everywhere");
     process.exitCode = 1;
     return;
   }
@@ -1680,7 +1721,7 @@ async function installAllSurfaces(args: string[]): Promise<void> {
       console.log(`  ${"".padEnd(width)}  plugin: ${name} ${version}`);
     }
   }
-  printNote();
+  printNote(scope);
   console.log("");
 
   if (!hasYes(args)) {
@@ -3620,6 +3661,19 @@ async function main(): Promise<void> {
     case "live":
       await cmdLive(rest);
       return;
+    case "otel": {
+      const stop = new AbortController();
+      const onSignal = (): void => stop.abort();
+      const signals = ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const;
+      for (const signal of signals) process.once(signal, onSignal);
+      process.exitCode = await runOtel(rest, {
+        home: resolvePaths().home,
+        signal: stop.signal,
+        io: { log: (l) => console.log(l), error: (l) => console.error(l) },
+      });
+      for (const signal of signals) process.off(signal, onSignal);
+      return;
+    }
     case "seal": {
       const resolved = await resolveRoots();
       process.exitCode = await runSeal(rest, {
@@ -3789,6 +3843,14 @@ commands:
                      fetches the entries made for your
                      whole account in the hosted dashboard (the background
                      pass also does, about every 15 minutes).
+  otel serve [--listen <host:port>] [--allow-remote]
+                     receive OpenTelemetry traces from agents without hooks,
+                     such as Claude Managed Agents, and write them to the
+                     local event log. Listens on 127.0.0.1:4318 by default;
+                     anywhere else needs --allow-remote and a token.
+  otel token [--rotate]
+                     print the receiver's bearer token, creating it on first
+                     use. Senders send it as 'Authorization: Bearer <token>'.
   live [resume]      show whether live pushes to the hosted dashboard are
                      paused (no dashboard was watching), or with resume,
                      push the next event at once.

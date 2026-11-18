@@ -10,8 +10,8 @@
  * Detects which supported agent surfaces are present on this host, so
  * `omnodex install` with no target can set up all of them. Also notices
  * when it runs under WSL while the Windows side has surfaces of its own:
- * WSL and native Windows are separate hosts, and an install here never
- * covers the Windows side.
+ * WSL and native Windows are separate hosts with separate installs, and an
+ * install here never covers the Windows side; both can be covered.
  *
  * Everything takes its environment as arguments so tests can describe a
  * machine without touching the real one.
@@ -208,23 +208,34 @@ export function detectWsl(probe: WslProbe, projectPath: string): WslInfo | null 
 /**
  * The note printed under WSL when the Windows side has surfaces too.
  * Returns no lines when there is nothing to say.
+ *
+ * Both hosts can be covered: each runs its own install, and the every-project
+ * hooks use one launcher command that both share. Only hooks written into a
+ * project replace each other, so that warning is shown for a project-level
+ * install of a project on a Windows drive and nowhere else.
  */
-export function wslNote(info: WslInfo | null): string[] {
+export function wslNote(info: WslInfo | null, scope: "everywhere" | "this-project" = "everywhere"): string[] {
   if (!info || info.windowsSurfaces.length === 0) return [];
   const names = info.windowsSurfaces.map((s) => SURFACE_LABELS[s]).join(", ");
   const lines = [
-    `Native Windows also has ${names}. This install covers WSL only; Windows is a separate host`,
-    `with its own Omnodex install. To cover it, run this in PowerShell on Windows:`,
+    `Native Windows also has ${names}. WSL and Windows each run their own Omnodex install,`,
+    `and both can record side by side. This install covers WSL; to cover Windows too,`,
+    `run this in PowerShell on Windows:`,
     "",
     info.windowsProjectPath
       ? `  cd "${info.windowsProjectPath}"; npm i -g omnodex; omnodex install`
       : `  npm i -g omnodex; omnodex install    (from the Windows project folder)`,
+    "",
+    `Each host needs its own every-project install. Without one, the other host's project-level`,
+    `hooks keep running beside the user-level ones, and events are recorded twice.`,
   ];
-  if (info.windowsProjectPath) {
+  if (scope === "everywhere") {
+    lines.push(`Every-project hooks use a launcher command both hosts share, so they do not replace each other.`);
+  } else if (info.windowsProjectPath) {
     lines.push(
       "",
-      "This project is on a Windows drive. Hooks written by one host replace the other's, so",
-      "use each project folder from one host only.",
+      "This project is on a Windows drive and these are project-level hooks. Hooks written by one",
+      "host replace the other's, so use each project folder from one host only.",
     );
   }
   return lines;
