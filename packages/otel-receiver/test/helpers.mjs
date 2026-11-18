@@ -6,6 +6,14 @@ import { EventLog } from "@omnodex/event-log";
 import { createLocalSink, Spool, startReceiver } from "../dist/index.js";
 import { T0 } from "./fixtures.mjs";
 
+// node:test runs t.after hooks in the order they were registered, not last in
+// first out. Anything that writes into a scratch home registers its closer here
+// so the home is removed only after the receiver and its sink have closed.
+const closers = new WeakMap();
+export function closeBeforeRemoval(t, close) {
+  closers.get(t)?.push(close);
+}
+
 /** A scratch home. Also points HOME and the Omnodex variables at it, so nothing here can touch the real one. */
 export async function scratchHome(t) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "omnodex-otel-case-"));
@@ -13,7 +21,10 @@ export async function scratchHome(t) {
   await fs.mkdir(home, { recursive: true });
   const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, OMNODEX_HOME: process.env.OMNODEX_HOME, OMNODEX_SINGLE_ROOT: process.env.OMNODEX_SINGLE_ROOT };
   Object.assign(process.env, { HOME: root, USERPROFILE: root, OMNODEX_HOME: home, OMNODEX_SINGLE_ROOT: "1" });
+  const mine = [];
+  closers.set(t, mine);
   t.after(async () => {
+    for (const close of mine.reverse()) await close();
     for (const [k, v] of Object.entries(saved)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
@@ -36,6 +47,7 @@ export async function startLocal(t, options = {}) {
       await receiver.close();
     }
   };
+  closeBeforeRemoval(t, close);
   t.after(close);
   return { home, receiver, spool, close, url: `http://127.0.0.1:${receiver.port}` };
 }

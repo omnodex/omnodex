@@ -7,7 +7,7 @@ import { createOtelMapper, createLocalSink, parseListen, Spool, startReceiver } 
 import { GOLDEN_TRACE_HEX } from "./golden.mjs";
 import { byType, resetIds, toolCallMessage, toolSpan, turnSpan, userMessage } from "./fixtures.mjs";
 import {
-  JSON_HEADERS, PB_HEADERS, jsonExport, protobufExport, readAllEvents, request, scratchHome, startLocal,
+  JSON_HEADERS, PB_HEADERS, closeBeforeRemoval, jsonExport, protobufExport, readAllEvents, request, scratchHome, startLocal,
 } from "./helpers.mjs";
 
 /** Poll until `check` returns a truthy value, or fail after a few seconds. */
@@ -186,7 +186,7 @@ test("a loopback receiver refuses requests addressed to another name", async (t)
 test("it will not listen beyond loopback without --allow-remote and a token", async (t) => {
   const home = await scratchHome(t);
   const sink = await createLocalSink({ home });
-  t.after(() => sink.close());
+  closeBeforeRemoval(t, () => sink.close());
   const spool = new Spool(path.join(home, "otel-spool"));
   await assert.rejects(startReceiver({ host: "0.0.0.0", port: 0, spool, sink }), /non-loopback/);
   await assert.rejects(startReceiver({ host: "0.0.0.0", port: 0, spool, sink, allowRemote: true }), /requires a token/);
