@@ -115,6 +115,18 @@
         "body:days[].findings": { "class": "metadata", "why": "Findings Pro rules raised" }
       }
     },
+    "POST /api/v1/notify/finding": {
+      "sender": "Finding notification, from the background pass when an account notification rule matches a finding",
+      "auth": "bearer",
+      "fields": {
+        "body:rule_id": { "class": "metadata", "why": "The rule that raised the finding, so the message can name it. A rule ID, never anything the finding matched" },
+        "body:severity": { "class": "metadata", "why": "The finding's effective severity, which the service uses to apply the Hosted and Pro levels" },
+        "body:occurred_at": { "class": "metadata", "why": "When the finding happened" },
+        "body:finding_ref": { "class": "metadata", "why": "A one-way reference (24 hex digits of a hash of the session, call and rule) so the dashboard can open the finding from the person's own decrypted data. The service cannot reverse it" },
+        "body:mode": { "class": "protocol", "why": "Whether to post now or hold for the digest" },
+        "body:destination_ids[]": { "class": "metadata", "why": "Where to deliver: the account email, the dashboard list or one of the account's own channel IDs" }
+      }
+    },
     "POST /api/v1/sync/monitoring/heartbeat": {
       "sender": "Monitoring heartbeat (whether monitoring is still in place)",
       "auth": "bearer",
@@ -215,6 +227,7 @@
     "packages/mcp-proxy/src/connect-tool.ts",
     "packages/sync-encryptor/src/account-policy.ts",
     "packages/sync-encryptor/src/advanced-usage.ts",
+    "packages/sync-encryptor/src/finding-notify.ts",
     "packages/sync-encryptor/src/guardrails-refresh.ts",
     "packages/sync-encryptor/src/machine-id.ts",
     "packages/sync-encryptor/src/monitoring-heartbeat.ts",

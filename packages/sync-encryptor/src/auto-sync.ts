@@ -218,6 +218,8 @@ export interface RunAutoSyncOptions {
   refreshRules?: (home: string) => Promise<unknown>;
   /** Guardrails module refresh. Defaults to refreshGuardrailsModule; tests replace it. */
   refreshGuardrails?: (home: string) => Promise<unknown>;
+  /** Finding notifications, after detection. Defaults to sendFindingNotifications; tests replace it. */
+  notifyFindings?: (home: string) => Promise<unknown>;
   /** Account policy pull, after the license. Defaults to pullAccountPolicy; tests replace it. */
   pullPolicy?: (home: string) => Promise<unknown>;
   /** Stale license re-validation, run first. Defaults to refreshStaleLicense. */
@@ -350,6 +352,9 @@ export async function runAutoSync(
       await (opts.refreshGuardrails ?? refreshGuardrailsModule)(home).catch(() => undefined);
       await runDetection(home, opts.detect, opts.pushFn ?? pushEventsToCloud);
     }
+    // Tells the owner about findings the account's notification rules want
+    // sent, with no captured content; loaded lazily like the sync below.
+    await (opts.notifyFindings ?? notifyFindings)(home).catch(() => undefined);
     await opts.seal?.(home).catch(() => undefined);
     // Whether every installation still matches the agent's config; runs
     // whether or not detection is on, and needs no credentials.
@@ -395,6 +400,12 @@ export async function runAutoSync(
   } finally {
     await releaseLock(home);
   }
+}
+
+/** Finding notifications, loaded only in the background child. */
+async function notifyFindings(home: string): Promise<unknown> {
+  const { sendFindingNotifications } = await import("./finding-notify.js");
+  return sendFindingNotifications(home);
 }
 
 /** The config check, loaded only in the background child. */

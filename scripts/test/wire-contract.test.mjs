@@ -35,6 +35,7 @@ import {
   pushEventsToCloud,
   refreshGuardrailsModule,
   refreshRuleBundle,
+  sendFindingNotifications,
   sendMonitoringHeartbeat,
   submitRuleSignals,
 } from "../../packages/sync-encryptor/dist/index.js";
@@ -351,6 +352,21 @@ async function exercise(t, calls) {
   // The account policy, with a version already held.
   await fs.writeFile(path.join(home, "account-policy.json"), JSON.stringify({ version: 3, pulled_at: AT, entries: [] }));
   assert.equal((await pullAccountPolicy(home)).outcome, "current");
+
+  // A finding notification: the first pass records where the log ends, a new finding then sends a notice.
+  assert.equal((await sendFindingNotifications(home)).outcome, "seeded");
+  const findingLog = new EventLog({ root: path.join(home, "event-log") });
+  await findingLog.init();
+  await findingLog.append(event(3, {
+    event_type: "risk.detected",
+    severity: "HIGH",
+    category: "sensitive_path_read",
+    description: `Read ${CONTENT} under /home/case/.ssh`,
+    related_event_id: "call-case-1",
+    rule_id: "RULE_CASE",
+  }));
+  await findingLog.close();
+  assert.equal((await sendFindingNotifications(home)).sent, 1, "the finding notification did not send");
 
   // Connecting from the CLI.
   await createClaim({ apiUrl: API, apiToken: "omx_test_case", passphrase: SECRET, platform: "claude-code" });

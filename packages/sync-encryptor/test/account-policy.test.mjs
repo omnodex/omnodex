@@ -91,6 +91,17 @@ describe("pullAccountPolicy", () => {
     assert.equal((await readPulledPolicy(home)).version, 3);
   });
 
+  it("keeps the notification rules a copy carries, and null when it has none", async () => {
+    await writeCredentials();
+    const rule = { id: "n1", name: "ssh", enabled: true, match: { severities: ["CRITICAL"] }, exclude: [], channels: ["in_app"], mode: "digest" };
+    const withRules = await sealPolicy(ENTRIES, key, [rule, { id: "bad", match: {}, channels: [] }]);
+    await pullAccountPolicy(home, { fetchFn: fakeFetch([{ status: 200, body: { customer_id: CUSTOMER_ID, version: 1, ...withRules } }]).fn });
+    assert.deepEqual((await readPulledPolicy(home)).notifications, [rule]);
+    const without = await sealPolicy(ENTRIES, key);
+    await pullAccountPolicy(home, { fetchFn: fakeFetch([{ status: 200, body: { customer_id: CUSTOMER_ID, version: 2, ...without } }]).fn });
+    assert.equal((await readPulledPolicy(home)).notifications, null);
+  });
+
   it("drops the copy when the account no longer has one", async () => {
     await writeCredentials();
     await writeFile(path.join(home, ACCOUNT_POLICY_FILE), JSON.stringify({ version: 1, pulled_at: "", entries: ENTRIES }));

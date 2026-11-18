@@ -15,7 +15,8 @@
  *                        one already pulled, or 404 when there is none
  *
  * The background pass pulls it (and `omnodex policy pull` does at once),
- * opens it here and writes the entries to OMNODEX_HOME/account-policy.json,
+ * opens it here and writes the entries (and the finding notification rules,
+ * when the copy has any) to OMNODEX_HOME/account-policy.json,
  * which the capture paths read beside this machine's own entries. A
  * machine's entries win over the account's at equal specificity.
  *
@@ -33,6 +34,7 @@ import { join } from "node:path";
 import { webcrypto } from "node:crypto";
 import { parsePolicy, type PolicyEntry } from "@omnodex/shared";
 import { decrypt, deriveStreamSubkeyBytes, encrypt, type AesGcmKey } from "./crypto.js";
+import { parseNotificationRules, type NotificationRule } from "./notification-rules.js";
 
 /** Where a home keeps the account policy it last pulled. Must match the analyzer's reader. */
 export const ACCOUNT_POLICY_FILE = "account-policy.json";
@@ -53,6 +55,8 @@ export interface PulledPolicy {
   version: number;
   pulled_at: string;
   entries: PolicyEntry[];
+  /** Finding notification rules; null when the copy has none (the default rule applies). */
+  notifications?: NotificationRule[] | null;
 }
 
 export type PolicyPullOutcome = "disabled" | "no-credentials" | "none" | "current" | "updated" | "failed";
@@ -79,19 +83,34 @@ const toB64 = (u: Uint8Array): string => Buffer.from(u).toString("base64");
 const fromB64 = (s: string): Uint8Array => new Uint8Array(Buffer.from(s, "base64"));
 
 /** Seal policy entries for one stream, as the dashboard does. */
-export async function sealPolicy(entries: readonly PolicyEntry[], key: AesGcmKey): Promise<SealedPolicy> {
-  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 1, entries }));
+export async function sealPolicy(
+  entries: readonly PolicyEntry[],
+  key: AesGcmKey,
+  notifications?: readonly NotificationRule[],
+): Promise<SealedPolicy> {
+  const plaintext = new TextEncoder().encode(JSON.stringify({ v: 1, entries, ...(notifications ? { notifications } : {}) }));
   const { ciphertext, iv } = await encrypt(key, plaintext);
   return { iv: toB64(iv), ct: toB64(ciphertext) };
 }
 
 /** Open a sealed copy. Throws when the key is wrong or the copy was tampered with. */
 export async function openPolicy(sealed: SealedPolicy, key: AesGcmKey): Promise<PolicyEntry[]> {
+  return (await openPolicyDoc(sealed, key)).entries;
+}
+
+/** Open a sealed copy: its entries and its notification rules (null when it has none). */
+export async function openPolicyDoc(
+  sealed: SealedPolicy,
+  key: AesGcmKey,
+): Promise<{ entries: PolicyEntry[]; notifications: NotificationRule[] | null }> {
   const plaintext = await decrypt(key, fromB64(sealed.iv), fromB64(sealed.ct));
-  const doc = JSON.parse(new TextDecoder().decode(plaintext)) as { v?: unknown; entries?: unknown };
+  const doc = JSON.parse(new TextDecoder().decode(plaintext)) as { v?: unknown; entries?: unknown; notifications?: unknown };
   if (doc.v !== 1) throw new Error("unknown policy format");
-  // Entries this client cannot read are dropped one by one, as in the config file.
-  return parsePolicy(doc.entries);
+  return {
+    // Entries this client cannot read are dropped one by one, as in the config file.
+    entries: parsePolicy(doc.entries),
+    notifications: Array.isArray(doc.notifications) ? parseNotificationRules(doc.notifications) : null,
+  };
 }
 
 async function readJson(file: string): Promise<Record<string, unknown> | null> {
@@ -107,7 +126,12 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
 export async function readPulledPolicy(home: string): Promise<PulledPolicy | null> {
   const raw = await readJson(join(home, ACCOUNT_POLICY_FILE));
   if (!raw || typeof raw.version !== "number") return null;
-  return { version: raw.version, pulled_at: String(raw.pulled_at ?? ""), entries: parsePolicy(raw.entries) };
+  return {
+    version: raw.version,
+    pulled_at: String(raw.pulled_at ?? ""),
+    entries: parsePolicy(raw.entries),
+    notifications: Array.isArray(raw.notifications) ? parseNotificationRules(raw.notifications) : null,
+  };
 }
 
 async function writePulled(home: string, pulled: PulledPolicy): Promise<void> {
@@ -161,8 +185,8 @@ export async function pullAccountPolicy(home: string, opts: PolicyPullOptions = 
     if (typeof body.version !== "number" || typeof body.iv !== "string" || typeof body.ct !== "string") {
       return { outcome: "failed" };
     }
-    const entries = await openPolicy({ iv: body.iv, ct: body.ct }, await derivePolicyKey(passphrase, customerId));
-    await writePulled(home, { version: body.version, pulled_at: now, entries });
+    const { entries, notifications } = await openPolicyDoc({ iv: body.iv, ct: body.ct }, await derivePolicyKey(passphrase, customerId));
+    await writePulled(home, { version: body.version, pulled_at: now, entries, notifications });
     return { outcome: "updated", version: body.version, entries: entries.length };
   } catch {
     return { outcome: "failed" };

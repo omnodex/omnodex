@@ -20,6 +20,9 @@
     },
     {
       "path": "../event-log"
+    },
+    {
+      "path": "../analyzer"
     }
   ]
 }
