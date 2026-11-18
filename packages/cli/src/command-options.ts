@@ -6,6 +6,7 @@
 // A commercial license is available for use without copyleft obligations.
 
 import { EXPORT_FLAGS, EXPORT_VALUES } from "./export-command.js";
+import { OTEL_SERVE_FLAGS, OTEL_SERVE_VALUES, OTEL_TOKEN_FLAGS } from "./otel-command.js";
 import { POLICY_ADD_FLAGS, POLICY_ADD_VALUES, POLICY_WATCH_FLAGS, POLICY_WATCH_VALUES } from "./policy-command.js";
 
 interface CommandOptions {
@@ -117,6 +118,22 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
   verify: {
     usage: "verify <bundle> [--key <public key or key id>] [--json]", description: "Check an evidence bundle: signatures, hashes, order and gaps, and list capture pauses and monitoring changes in it. Exits 2 when a problem is found. --key (repeatable) names the keys you trust; without it the bundle is only checked against its own keys.",
     flags: ["--json"], values: ["--key"],
+  },
+  otel: {
+    usage: "otel <serve | token>", description: "Receive OpenTelemetry traces from agents that have no hooks, such as Claude Managed Agents, and write them to the local event log.",
+    subcommands: {
+      serve: {
+        usage: "serve [--listen <host:port>] [--allow-remote]",
+        description: "Run the OTLP/HTTP receiver (default 127.0.0.1:4318). Point the agent's OTEL_EXPORTER_OTLP_ENDPOINT, or a Console telemetry destination, at it. Listening beyond this machine needs --allow-remote and a token.",
+        flags: [...OTEL_SERVE_FLAGS],
+        values: [...OTEL_SERVE_VALUES],
+      },
+      token: {
+        usage: "token [--rotate]",
+        description: "Print the receiver's bearer token, creating it on first use. Senders put it in their authorization header as 'Bearer <token>'. --rotate replaces it.",
+        flags: [...OTEL_TOKEN_FLAGS],
+      },
+    },
   },
   live: {
     usage: "live [resume | status]", description: "Show or clear the live push back-off gate.",

@@ -11,6 +11,15 @@
   "references": [
     {
       "path": "../shared"
+    },
+    {
+      "path": "../event-log"
+    },
+    {
+      "path": "../sync-encryptor"
+    },
+    {
+      "path": "../analyzer"
     }
   ]
 }

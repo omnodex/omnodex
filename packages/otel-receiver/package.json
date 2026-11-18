@@ -18,7 +18,10 @@
     "test": "node --test test/**/*.test.mjs"
   },
   "dependencies": {
-    "@omnodex/shared": "*"
+    "@omnodex/analyzer": "*",
+    "@omnodex/event-log": "*",
+    "@omnodex/shared": "*",
+    "@omnodex/sync-encryptor": "*"
   },
   "devDependencies": {
     "@omnodex/projection": "*"
