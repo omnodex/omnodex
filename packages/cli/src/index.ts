@@ -86,7 +86,16 @@ import {
   opencodeMcpConfigPath,
   uninstallOpenCodeMcp,
 } from "@omnodex/opencode-provider";
-import { MCPProxy, createToolListSnapshots, loadProxyConfig, parseHttpListen } from "@omnodex/mcp-proxy";
+import {
+  FileTokenStore,
+  MCPProxy,
+  beginSignIn,
+  createToolListSnapshots,
+  defaultTokenFile,
+  loadProxyConfig,
+  parseHttpListen,
+} from "@omnodex/mcp-proxy";
+import { openBrowser, runAuth } from "./auth-command.js";
 import { DashboardServer, resolveDashboardAssetsDir, shutdownDashboard } from "./dashboard-server.js";
 import { advancedEntitled, advancedFindingsText, shownFindings } from "./advanced-findings.js";
 import { startStreamingLoop, type StreamingRoot } from "./streaming.js";
@@ -3616,6 +3625,15 @@ async function main(): Promise<void> {
     case "mcp-proxy":
       await cmdMcpProxy(rest);
       return;
+    case "auth":
+      process.exitCode = await runAuth(rest, {
+        io: processIo(),
+        store: new FileTokenStore(defaultTokenFile(resolvePaths().home)),
+        loadConfig: () => loadProxyConfig(),
+        beginSignIn,
+        openBrowser,
+      });
+      return;
     case "license":
       await cmdLicense(rest);
       return;
@@ -3882,6 +3900,9 @@ commands:
                      it. --key <public key or id> names a key you trust
                      (repeatable); --json prints the report. Exits 2 when a
                      problem is found.
+  auth <sub>         sign in to remote MCP servers that use OAuth, listed in
+                     omnodex-proxy.json: login <upstream> [--no-browser],
+                     status, logout <upstream>. Tokens are never printed.
   mcp-proxy <sub>   manage the MCP proxy interceptor.
                      Run 'omnodex mcp-proxy help' for subcommand details.
   spike [name]       build synthetic sessions through the real pipeline.

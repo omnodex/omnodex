@@ -328,7 +328,8 @@ packages/
   antigravity-provider/    AntigravityInterceptor + antigravity-hook-shim
   mcp-proxy/               MCP proxy interceptor (sits between agent and upstream
                            MCP servers). Built-in tools: omnodex_status,
-                           omnodex_connect, omnodex_connection_status
+                           omnodex_connect, omnodex_connection_status,
+                           omnodex_auth
   sync-encryptor/          End-to-end encrypted sync, AES-256-GCM (Argon2id KDF),
                            streaming key derivation (HKDF), StreamingTransport
   license-client/          License validation client (cloud API, cache, offline fallback)

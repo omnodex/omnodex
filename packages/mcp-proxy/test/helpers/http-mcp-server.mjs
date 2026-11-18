@@ -8,6 +8,9 @@
 //   dropSessions()   forget every session, so the next request gets 404
 //   close()
 //
+// options.extraRoutes(req, res) may answer a request before the auth check
+// by returning true.
+//
 // A request without the right bearer token gets 401 with a body that echoes
 // the Authorization header it received, so tests can check the proxy scrubs
 // credentials from error text.
@@ -69,6 +72,8 @@ export async function startHttpMcpServer(options = {}) {
 
   const httpServer = http.createServer(async (req, res) => {
     requests.push({ method: req.method, headers: { ...req.headers } });
+    // Lets a test serve other routes on the same origin (OAuth endpoints).
+    if (options.extraRoutes && (await options.extraRoutes(req, res))) return;
     if (token !== null && req.headers.authorization !== `Bearer ${token}`) {
       res.writeHead(401, { "content-type": "text/plain" });
       res.end(`unauthorized; received authorization=${req.headers.authorization ?? "(none)"}`);
