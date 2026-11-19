@@ -59,7 +59,7 @@ test('rewriting a new platform\'s hooks file without the Omnodex entry is report
 
 test('the rules that changed are versioned', () => {
   const version = (id) => COMMUNITY_RULES.find(r => r.rule_id === id).version;
-  assert.equal(version('RULE_SELF_PROTECTION_BASH'), '1.4.0');
+  assert.equal(version('RULE_SELF_PROTECTION_BASH'), '1.4.1');
   assert.equal(version('RULE_SELF_PROTECTION_HOOK_REMOVED'), '1.1.0');
   assert.equal(version('RULE_SELF_PROTECTION_HOOK_FILE_REWRITE'), '1.1.0');
   assert.ok(typeof evaluatePathMatch === 'function');

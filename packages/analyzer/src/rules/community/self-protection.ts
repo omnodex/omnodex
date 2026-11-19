@@ -81,6 +81,10 @@ const HOOK_FILE =
   "|\\.cursor[/\\\\]hooks\\.json" +
   "|opencode[/\\\\]plugins[/\\\\]omnodex\\.[cm]?[jt]s";
 
+// git rm --cached only changes the index. Limit the exception to this git
+// command and its options before --, so a later rm still protects the file.
+const WORKTREE_RM = "\\b(?!(?<=\\bgit[ \\t]+(?:[^\\n;&|]*[ \\t])?)rm\\b(?:(?![ \\t]--(?=\\s|$))[^\\n;&|])*[ \\t]--cached(?=$|[\\s;&|]))rm\\b";
+
 export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_CONFIG_WRITE",
   version: "1.0.0",
@@ -113,7 +117,7 @@ export const RULE_SELF_PROTECTION_CONFIG_WRITE: RuleDefinition = {
 
 export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
   rule_id: "RULE_SELF_PROTECTION_BASH",
-  version: "1.4.0",
+  version: "1.4.1",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -140,7 +144,7 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
         },
         {
           // Deleting omnodex files or directories
-          regex: "\\brm\\b[^\\n]*(?:\\.omnodex|omnodex[_-]events)",
+          regex: WORKTREE_RM + "[^\\n;&|]*(?:\\.omnodex|omnodex[_-]events)",
           type: "omnodex-file-deletion",
         },
         {
@@ -167,12 +171,12 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
         },
         {
           // Deleting an installed Omnodex plugin
-          regex: "\\brm\\b[^\\n]*plugins[/\\\\]omnodex-(?:cowork|codex|antigravity)",
+          regex: WORKTREE_RM + "[^\\n;&|]*plugins[/\\\\]omnodex-(?:cowork|codex|antigravity)",
           type: "omnodex-plugin-deletion",
         },
         {
           // Deleting, truncating or resetting an agent's hook file
-          regex: "\\b(?:rm|unlink|truncate|shred)\\b[^\\n]*(?:" + HOOK_FILE + ")" +
+          regex: "(?:" + WORKTREE_RM + "|\\b(?:unlink|truncate|shred)\\b)[^\\n;&|]*(?:" + HOOK_FILE + ")" +
             "|\\bgit\\s+(?:checkout|restore)\\b[^\\n]*(?:" + HOOK_FILE + ")",
           type: "hook-file-reset",
         },
@@ -181,6 +185,11 @@ export const RULE_SELF_PROTECTION_BASH: RuleDefinition = {
           regex: "(?:^|[^<>&\\d])>{1,2}\\s*[\"']?\\S*(?:" + HOOK_FILE + ")" +
             "|\\b(?:cp|mv)\\b[^\\n;&|]*\\s[\"']?\\S*(?:" + HOOK_FILE + ")[\"']?\\s*(?:$|[;&|\\n])",
           type: "hook-file-overwrite",
+        },
+        {
+          // Moving the hook file away also removes monitoring at that path.
+          regex: "\\bmv\\s+(?:-[^\\s;&|]+\\s+)*[\"']?\\S*(?:" + HOOK_FILE + ")[\"']?\\s+",
+          type: "hook-file-move",
         },
         {
           // A Python or Node one-liner writing an agent's hook file
