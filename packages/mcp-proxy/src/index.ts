@@ -103,3 +103,12 @@ export {
   toolFingerprints,
 } from "./server-observation.js";
 export type { ServerObservation, ToolListSnapshots } from "./server-observation.js";
+export { FileTokenStore, MemoryTokenStore, defaultTokenFile, TOKEN_FILE_NAME } from "./auth/token-store.js";
+export type { TokenStore, UpstreamCredentials, StoredTokens } from "./auth/token-store.js";
+export { beginSignIn } from "./auth/sign-in.js";
+export type { SignInOptions, SignInSession } from "./auth/sign-in.js";
+export { UpstreamOAuthProvider, DEFAULT_CLIENT_METADATA_URL, DEFAULT_CALLBACK_PORT } from "./auth/oauth-provider.js";
+export { AUTH_TOOL, handleAuth } from "./auth-tool.js";
+export type { SignInResult } from "./upstream-client.js";
+export { oauthSettings } from "./config.js";
+export type { OAuthSettings } from "./config.js";

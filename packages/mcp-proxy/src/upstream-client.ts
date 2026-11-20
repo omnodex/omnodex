@@ -47,6 +47,7 @@ import {
   type UpstreamServer,
   ProxyConfigSchema,
   TOOL_NAME_SEPARATOR,
+  oauthSettings,
   redactSecrets,
   resolveHttpHeaders,
   resolveUpstreamEnv,
@@ -54,6 +55,10 @@ import {
 } from "./config.js";
 import { prefixedToolName, prefixToolDefinition, resolvePrefixedName } from "./core/tool-routing.js";
 import type { ToolListCache } from "./tool-cache.js";
+import { createUpstreamAuth, type UpstreamAuth } from "./auth/background.js";
+import { AuthorizationRequiredError } from "./auth/oauth-provider.js";
+import { FileTokenStore, type TokenStore } from "./auth/token-store.js";
+import type { SignInSession } from "./auth/sign-in.js";
 import {
   npxInstalledVersion,
   observeServer,
@@ -259,6 +264,10 @@ interface UpstreamEntry {
   retriesExhausted: boolean;
   /** Credential values in use for this upstream, scrubbed from errors. */
   secrets: string[];
+  /** OAuth credentials for this upstream, when it signs in that way. */
+  auth: UpstreamAuth | undefined;
+  /** A sign-in started by signIn() and not yet finished. */
+  signIn: SignInSession | undefined;
   /** What the upstream looked like the last time it listed its tools. */
   observation: ServerObservation | undefined;
 }
@@ -294,13 +303,21 @@ export interface UpstreamClientPoolOptions {
   snapshots?: ToolListSnapshots;
   /** Reads the installed package version of an upstream. Defaults to the npx cache. */
   installedVersion?: (server: UpstreamServer) => string | undefined;
+  /** Where OAuth tokens for remote upstreams are kept. Defaults to ~/.omnodex/upstream-tokens.json. */
+  tokenStore?: TokenStore;
 }
+
+/** The result of asking an upstream for a sign-in link. */
+export type SignInResult =
+  | { status: "sign_in_url"; upstream: string; url: string }
+  | { status: "already_connected" | "not_oauth" | "unknown_upstream" | "error"; upstream: string; message: string };
 
 export class UpstreamClientPool {
   private readonly toolCache: ToolListCache | undefined;
   private readonly toolNameLimit: number | undefined;
   private readonly snapshots: ToolListSnapshots | undefined;
   private readonly installedVersion: (server: UpstreamServer) => string | undefined;
+  private readonly tokenStore: TokenStore;
   private readonly entries: UpstreamEntry[] = [];
   /** prefixedName -> connection that owns it */
   private toolIndex = new Map<string, UpstreamConnection>();
@@ -322,6 +339,7 @@ export class UpstreamClientPool {
     this.toolNameLimit = options?.toolNameLimit;
     this.snapshots = options?.snapshots;
     this.installedVersion = options?.installedVersion ?? ((server) => npxInstalledVersion(server));
+    this.tokenStore = options?.tokenStore ?? new FileTokenStore();
   }
 
   /**
@@ -357,6 +375,8 @@ export class UpstreamClientPool {
         retryTimer: undefined,
         retriesExhausted: false,
         secrets: [],
+        auth: server.transport === "http" ? createUpstreamAuth(server, this.tokenStore) : undefined,
+        signIn: undefined,
         observation: undefined,
       });
     }
@@ -563,8 +583,14 @@ export class UpstreamClientPool {
     };
 
     try {
+      // Tokens near expiry are refreshed first, so the call does not fail on a 401.
+      if (entry.auth && !(await entry.auth.ensureFresh())) {
+        this.markNeedsAuth(entry, conn, "OAuth sign-in has expired");
+        throw new McpUpstreamUnavailableError(toStatus(entry));
+      }
       return await conn.callTool(originalName, args, requestOptions);
     } catch (err) {
+      if (err instanceof McpUpstreamUnavailableError) throw err;
       if (isAuthError(err)) {
         this.markNeedsAuth(entry, conn, this.cleanError(entry, err));
         throw new McpUpstreamUnavailableError(toStatus(entry));
@@ -593,6 +619,7 @@ export class UpstreamClientPool {
     const connections: UpstreamConnection[] = [];
     for (const entry of this.entries) {
       clearTimeout(entry.retryTimer);
+      entry.signIn?.cancel();
       if (entry.connection) connections.push(entry.connection);
       entry.connection = undefined;
     }
@@ -628,7 +655,7 @@ export class UpstreamClientPool {
     const options: RequestOptions = { timeout: this.settings.connect_timeout_ms };
 
     try {
-      await client.connect(this.createTransport(entry), options);
+      await client.connect(await this.createTransport(entry), options);
       const connection = new UpstreamConnection(entry.server, client, this.toolNameLimit);
       client.onclose = () => this.handleDisconnect(entry, connection);
       client.setNotificationHandler(ToolListChangedNotificationSchema, () =>
@@ -723,7 +750,7 @@ export class UpstreamClientPool {
     this.toolCache?.save(entry.server, listed);
   }
 
-  private createTransport(entry: UpstreamEntry): Transport {
+  private async createTransport(entry: UpstreamEntry): Promise<Transport> {
     const server = entry.server;
     if (server.transport === "stdio") {
       return new StdioClientTransport({
@@ -739,9 +766,75 @@ export class UpstreamClientPool {
     // Resolved on every attempt, so a retry picks up a changed variable.
     const { headers, secrets } = resolveHttpHeaders(server);
     entry.secrets = secrets;
+    // Stored sign-in credentials are used (and refreshed on a 401) only when
+    // there are some: a first sign-in never starts from the background.
+    let authProvider: UpstreamAuth["provider"] | undefined;
+    if (entry.auth && (await entry.auth.provider.hasCredentials())) {
+      if (!(await entry.auth.ensureFresh())) throw new AuthorizationRequiredError();
+      authProvider = entry.auth.provider;
+      const tokens = await authProvider.tokens();
+      for (const secret of [tokens?.access_token, tokens?.refresh_token]) {
+        if (secret) entry.secrets = [...entry.secrets, secret];
+      }
+    }
     return new StreamableHTTPClientTransport(new URL(server.url), {
       requestInit: { headers },
+      ...(authProvider ? { authProvider } : {}),
     });
+  }
+
+  /**
+   * Starts a sign-in for an upstream that needs one and returns the URL for
+   * the user to open. It never waits for the user: when they finish, the
+   * tokens are stored and the upstream reconnects on its own. A second call
+   * while a sign-in is pending returns the same URL.
+   */
+  async signIn(name: string): Promise<SignInResult> {
+    const entry = this.entries.find((e) => e.server.name === name);
+    if (!entry) return { status: "unknown_upstream", upstream: name, message: `No upstream named "${name}" is configured.` };
+    const server = entry.server;
+    if (server.transport !== "http" || !oauthSettings(server)) {
+      return { status: "not_oauth", upstream: name, message: `Upstream "${name}" does not use OAuth sign-in.` };
+    }
+    if (entry.state === "connected") {
+      return { status: "already_connected", upstream: name, message: `Upstream "${name}" is already connected.` };
+    }
+    const settings = oauthSettings(server) ?? {};
+    try {
+      if (!entry.signIn) {
+        const { beginSignIn } = await import("./auth/sign-in.js");
+        const session = await beginSignIn({
+          upstreamName: server.name,
+          serverUrl: server.url,
+          store: this.tokenStore,
+          ...(settings.scope ? { scope: settings.scope } : {}),
+          ...(settings.client_id ? { clientId: settings.client_id } : {}),
+          ...(settings.client_metadata_url ? { clientMetadataUrl: settings.client_metadata_url } : {}),
+          ...(settings.callback_port ? { callbackPort: settings.callback_port } : {}),
+        });
+        entry.signIn = session;
+        session.completed.then(
+          () => {
+            entry.signIn = undefined;
+            if (this.closed) return;
+            clearTimeout(entry.retryTimer);
+            entry.failedAttempts = 0;
+            entry.retriesExhausted = false;
+            void this.attempt(entry);
+          },
+          (err: unknown) => {
+            if (entry.signIn === session) entry.signIn = undefined;
+            process.stderr.write(
+              `[omnodex-mcp-proxy] sign-in for upstream "${server.name}" did not finish: ` +
+                `${this.cleanError(entry, err)}\n`
+            );
+          }
+        );
+      }
+      return { status: "sign_in_url", upstream: name, url: entry.signIn.authorizationUrl };
+    } catch (err) {
+      return { status: "error", upstream: name, message: `Could not start sign-in: ${this.cleanError(entry, err)}` };
+    }
   }
 
   /** Error text safe for stderr, status and the event log. */
@@ -877,9 +970,20 @@ async function raceTimeout(promise: Promise<unknown>, timeoutMs: number): Promis
   }
 }
 
+const AUTH_ERROR_CODES = new Set([
+  "invalid_grant",
+  "invalid_client",
+  "invalid_token",
+  "unauthorized_client",
+  "access_denied",
+]);
+
 function isAuthError(err: unknown): boolean {
   if (err instanceof StreamableHTTPError) return err.code === 401 || err.code === 403;
-  return err instanceof Error && err.name === "UnauthorizedError";
+  if (err instanceof Error && err.name === "UnauthorizedError") return true;
+  // A refresh the authorization server rejected: the stored sign-in is no longer good.
+  const code = (err as { errorCode?: unknown } | null)?.errorCode;
+  return typeof code === "string" && AUTH_ERROR_CODES.has(code);
 }
 
 function isSessionNotFound(entry: UpstreamEntry, err: unknown): boolean {
@@ -915,8 +1019,9 @@ export function describeUnavailable(status: UpstreamStatus): string {
     const error = status.last_error ? ` Last error: ${status.last_error}.` : "";
     return (
       `${base} needs authorization: it rejected the proxy's credentials.${error} ` +
-      `Check the variables named by bearer_token_env_var or env_http_headers, ` +
-      `then restart the MCP host or call omnodex_status with retry_failed: true.`
+      `Sign in with omnodex_auth (or run "omnodex auth login ${status.name}"), ` +
+      `or check the variables named by bearer_token_env_var or env_http_headers, ` +
+      `then call omnodex_status with retry_failed: true.`
     );
   }
   const error = status.last_error ? ` Last error: ${status.last_error}.` : "";

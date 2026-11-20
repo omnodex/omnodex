@@ -166,7 +166,7 @@ test("the proxy answers the host while its upstreams are failing or still starti
     const list = await rpc.request("tools/list", {});
     assert.deepEqual(
       list.result.tools.map((t) => t.name),
-      ["omnodex_status", "omnodex_connect", "omnodex_connection_status", "omnodex_resume"]
+      ["omnodex_status", "omnodex_connect", "omnodex_connection_status", "omnodex_resume", "omnodex_auth"]
     );
     // The built-ins answer while "broken" fails and "slow" keeps starting.
     let states = [];

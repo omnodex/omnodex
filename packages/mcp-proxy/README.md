@@ -231,6 +231,7 @@ Full schema for `omnodex-proxy.json`:
 | `upstream_servers[].tool_timeout_sec` | number | `60` | Limit for one tool call on this upstream |
 | `upstream_servers[].url` | string | required for http | Streamable HTTP endpoint (`http` or `https`) |
 | `upstream_servers[].bearer_token_env_var` | string | (none) | Env var holding a bearer token, sent as `Authorization: Bearer <token>`. Overrides any `Authorization` header from the two fields below. The upstream fails to connect if the variable is unset |
+| `upstream_servers[].oauth` | boolean \| object | on | OAuth sign-in for HTTP upstreams with no `bearer_token_env_var` or `Authorization` header. `false` turns it off; an object may set `scope`, `client_id` (a client registered with the server), `client_metadata_url` and `callback_port`. See [Signing in to remote upstreams](#signing-in-to-remote-upstreams) |
 | `upstream_servers[].http_headers` | object | (none) | Static request headers. Not for secrets |
 | `upstream_servers[].env_http_headers` | object | (none) | Headers read from env vars, as `{ "Header-Name": "ENV_VAR" }`. A header whose variable is unset is not sent |
 | `upstream_connection.discovery_window_ms` | number | `15000` | Normal discovery ceiling from proxy start. Cached tools are listed immediately and failed first attempts do not wait for retries |
@@ -250,6 +251,36 @@ the two. Credentials come from environment variables only. Desktop apps may not
 inherit variables set in an interactive shell, so check that they reach the proxy:
 an upstream whose `bearer_token_env_var` is unset reports that by name in
 `omnodex_status`.
+
+### Signing in to remote upstreams
+
+Remote servers that use OAuth (Plane, for example) need no token in the config:
+
+```bash
+omnodex auth login plane      # opens a browser, stores the sign-in
+omnodex auth status           # who is signed in, and when access expires
+omnodex auth logout plane     # forgets the sign-in
+```
+
+The proxy follows the MCP authorization flow: it finds the server's authorization
+server from its protected resource metadata, uses PKCE (S256) and a resource
+indicator, and identifies itself with a published client metadata document, falling
+back to dynamic client registration for servers that do not accept one. The browser
+returns to a short-lived receiver on `127.0.0.1`.
+
+- **Never at startup.** The proxy does not start a sign-in while it starts. An
+  upstream with no usable sign-in is `needs_auth` until someone signs in.
+- **From the agent.** The `omnodex_auth` tool returns a sign-in URL for an upstream in
+  `needs_auth`. Open it in a browser on the machine running the proxy. When the sign-in
+  finishes the upstream connects by itself; no restart is needed. The tool never
+  returns tokens.
+- **Refresh.** Access tokens are refreshed shortly before they expire and again if the
+  server answers 401. If the server refuses the refresh, the upstream returns to
+  `needs_auth`.
+- **Storage.** Tokens are kept in `$OMNODEX_HOME/upstream-tokens.json` (default
+  `~/.omnodex/`), readable only by your user on macOS and Linux. They are never written
+  to the event log, `omnodex_status` or stderr. Changing an upstream's `url` discards
+  its stored sign-in.
 
 ---
 
@@ -297,7 +328,7 @@ and `session.ended` events; all sessions share one set of upstream connections.
 
 Upstreams connect in parallel and independently. A slow, failing or crashed upstream
 never affects the others or the built-in tools (`omnodex_status`, `omnodex_connect`,
-`omnodex_connection_status`).
+`omnodex_connection_status`, `omnodex_auth`).
 
 - **Known tools.** The proxy remembers each upstream's tool list between runs, in
   `$OMNODEX_HOME/proxy-tool-cache/` (one file per upstream config entry, tool
@@ -335,7 +366,8 @@ never affects the others or the built-in tools (`omnodex_status`, `omnodex_conne
   retrying, or has stopped retrying, with its last error.
 - **Rejected credentials.** An HTTP upstream that answers 401 or 403, while
   connecting or on a later call, moves to `needs_auth` and is not retried on a timer,
-  since only new credentials can fix it.
+  since only new credentials can fix it. For OAuth upstreams, sign in with
+  `omnodex auth login <name>` or the `omnodex_auth` tool.
 - **Lost sessions.** When a remote server no longer recognizes the session (HTTP 404),
   the proxy starts a new session and retries the call once.
 - **Timeouts and cancellation.** Each tool call is limited to `tool_timeout_sec`

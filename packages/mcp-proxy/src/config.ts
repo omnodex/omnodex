@@ -95,6 +95,27 @@ const HttpUpstreamSchema = z.object({
    * not sent.
    */
   env_http_headers: z.record(HeaderNameSchema, EnvVarNameSchema).optional(),
+  /**
+   * OAuth sign-in for servers that need it. On by default for an upstream
+   * with no bearer_token_env_var or Authorization header; false turns it off.
+   * Sign in with `omnodex auth login <name>`; the proxy never signs in on
+   * its own at startup.
+   */
+  oauth: z
+    .union([
+      z.boolean(),
+      z.object({
+        /** Scopes to request, space separated. Defaults to what the server advertises. */
+        scope: z.string().optional(),
+        /** A client id registered with the server, used instead of metadata documents and registration. */
+        client_id: z.string().min(1).optional(),
+        /** Overrides the Omnodex client metadata document URL. */
+        client_metadata_url: z.string().url().optional(),
+        /** Loopback port for the sign-in redirect. */
+        callback_port: z.number().int().min(1024).max(65535).optional(),
+      }),
+    ])
+    .optional(),
   name_override: z.string().optional(),
   redact_parameters: z.boolean().optional(),
   /** Per-call limit for this upstream's tools, in seconds. Default 60. */
@@ -206,6 +227,30 @@ export function resolveUpstreamEnv(
     resolved[key] = interpolateEnvVar(value);
   }
   return resolved;
+}
+
+export interface OAuthSettings {
+  scope?: string;
+  client_id?: string;
+  client_metadata_url?: string;
+  callback_port?: number;
+}
+
+/**
+ * The OAuth settings for an HTTP upstream, or undefined when it does not use
+ * OAuth: turned off, or given a token or Authorization header another way.
+ */
+export function oauthSettings(server: HttpUpstream): OAuthSettings | undefined {
+  if (server.oauth === false) return undefined;
+  if (server.oauth === undefined || server.oauth === true) {
+    const headerNames = [
+      ...Object.keys(server.http_headers ?? {}),
+      ...Object.keys(server.env_http_headers ?? {}),
+    ].map((n) => n.toLowerCase());
+    if (server.bearer_token_env_var || headerNames.includes("authorization")) return undefined;
+    return {};
+  }
+  return server.oauth;
 }
 
 /** Request headers for an HTTP upstream, and the values to keep out of logs. */

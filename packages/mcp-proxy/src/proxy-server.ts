@@ -44,6 +44,7 @@ import { callToolWithEvents } from "./event-emitter.js";
 import type { ProxyGuardrails } from "./guardrails.js";
 import { type ProxyConfig } from "./config.js";
 import { handleConnect, checkConnectionStatus } from "./connect-tool.js";
+import { AUTH_TOOL, handleAuth } from "./auth-tool.js";
 import { RESUME_TOOL, captureHome, captureStatus, handleResume } from "./capture-tool.js";
 import {
   asPlatform,
@@ -268,7 +269,7 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
     // A client that explicitly refreshes has received these tools after all.
     for (const tool of listed) missingFromInitialList.delete(tool.serverName);
     const tools = listed.map((t) => t.definition);
-    return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, RESUME_TOOL, ...tools] };
+    return { tools: [STATUS_TOOL, CONNECT_TOOL, CONNECTION_STATUS_TOOL, RESUME_TOOL, AUTH_TOOL, ...tools] };
   });
 
   // ── tools/call ────────────────────────────────────────────────────────────
@@ -322,6 +323,15 @@ export async function runProxyServer(opts: ProxyServerOptions): Promise<void> {
       return {
         content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         isError: result.status === "invalid",
+      };
+    }
+
+    // Handle built-in omnodex_auth tool
+    if (prefixedName === AUTH_TOOL.name) {
+      const result = await handleAuth(args, pool);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        isError: !["sign_in_url", "already_connected", "nothing_to_sign_in", "choose_upstream"].includes(result.status),
       };
     }
 

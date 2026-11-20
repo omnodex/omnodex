@@ -63,6 +63,14 @@ export const COMMAND_OPTIONS: Record<string, CommandOptions> = {
       status: { usage: "status", description: "Show configured upstream servers." },
     },
   },
+  auth: {
+    usage: "auth login <upstream> | status | logout <upstream>", description: "Sign in to remote MCP servers that use OAuth, listed in omnodex-proxy.json. Tokens stay on this machine and are never printed.",
+    subcommands: {
+      login: { usage: "login <upstream> [--no-browser]", description: "Sign in through your browser and store the result.", flags: ["--no-browser"] },
+      status: { usage: "status", description: "Show which remote servers are signed in." },
+      logout: { usage: "logout <upstream>", description: "Forget the stored sign-in for a server." },
+    },
+  },
   license: {
     usage: "license [clear]", description: "Show the current license tier and features.", values: ["--token", "--api"],
     subcommands: { clear: { usage: "clear", description: "Remove the cached license." } },
