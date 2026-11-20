@@ -58,6 +58,14 @@ const CLIENT_PLATFORMS: Readonly<Record<string, PlatformKind>> = {
   "claude-code": "claude-code",
   "codex-mcp-client": "codex",
   "antigravity-client": "antigravity",
+  // Names as the clients send them in initialize, per the community index of
+  // MCP clients (mcp-client-capabilities): the Copilot CLI, VS Code (whose
+  // agent mode is Copilot, written with spaces or hyphens), Cursor, OpenCode.
+  "github-copilot-developer": "copilot",
+  "visual studio code": "copilot",
+  "visual-studio-code": "copilot",
+  "cursor-vscode": "cursor",
+  opencode: "opencode",
 };
 
 export function platformForClient(name: string | undefined): PlatformKind | undefined {

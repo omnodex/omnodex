@@ -79,7 +79,9 @@ export function runtimeLabel(s: LabelledSession | null | undefined): string {
 
 /** Short names for the interceptors that observed one merged call. */
 export function sourcesLabel(sources: readonly string[]): string {
-  return sources.map((src) => (src === "mcp-proxy" ? "MCP Proxy" : `${interceptorLabel(src)} hook`)).join(" + ");
+  return sources
+    .map((src) => (src === "mcp-proxy" ? "MCP Proxy" : src === "opencode-plugin" ? interceptorLabel(src) : `${interceptorLabel(src)} hook`))
+    .join(" + ");
 }
 
 /** A session id short enough for a list: "sess_" ids keep 17 characters, others 12. */

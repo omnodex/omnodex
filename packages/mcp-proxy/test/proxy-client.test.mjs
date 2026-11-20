@@ -104,4 +104,9 @@ test("platform helpers accept only known values", () => {
   assert.equal(asPlatform(undefined), undefined);
   assert.equal(platformForClient("Claude-Code"), "claude-code");
   assert.equal(platformForClient("claude-ai"), undefined, "the desktop app is ambiguous; its launcher says which");
+  assert.equal(platformForClient("github-copilot-developer"), "copilot");
+  assert.equal(platformForClient("Visual Studio Code"), "copilot");
+  assert.equal(platformForClient("visual-studio-code"), "copilot");
+  assert.equal(platformForClient("cursor-vscode"), "cursor");
+  assert.equal(platformForClient("OpenCode"), "opencode");
 });
