@@ -65,9 +65,24 @@ const NOT_PROSE =
 const SQL_CLIENT = "(?:psql|mysql|mariadb|sqlite3|sqlcmd|usql|pgcli|mycli)";
 const DROP_DB = "\\bDROP\\s+(?:DATABASE|SCHEMA)\\b";
 
+// Connection options consume their next argument, even when it is named
+// "drop". Other flags (including attached values) consume only one word.
+const MYSQLADMIN_VALUE_OPTION = "(?:-[uhS]|--(?:user|host|port|socket|protocol|connect-timeout|defaults-file|defaults-extra-file|defaults-group-suffix))";
+const SHELL_ARGUMENT = "(?:\"[^\"\\n]*\"|'[^'\\n]*'|[^\\s;&|\"']+)";
+const MYSQLADMIN_OPTION = "(?:" + MYSQLADMIN_VALUE_OPTION + "\\s+" + SHELL_ARGUMENT +
+  // Matching is case-insensitive: -P takes a numeric port, while -p alone
+  // asks for a password and must still allow the following drop command.
+  "|-p\\s+\\d+|(?!" + MYSQLADMIN_VALUE_OPTION + "(?=\\s|$))-[^\\s;&|]+)";
+
+// Only global options may precede compose. A container named "compose" in
+// docker run is not the Compose subcommand.
+const CONTAINER_VALUE_OPTION = "(?:-[Hc]|--(?:context|host|connection|url|config|log-level))";
+const CONTAINER_OPTION = "(?:" + CONTAINER_VALUE_OPTION + "\\s+" + SHELL_ARGUMENT +
+  "|(?!" + CONTAINER_VALUE_OPTION + "(?=\\s|$))-[^\\s;&|]+)";
+
 export const RULE_THREAT_DESTRUCTIVE_COMMAND: RuleDefinition = {
   rule_id: "RULE_THREAT_DESTRUCTIVE_COMMAND",
-  version: "1.1.0",
+  version: "1.1.1",
   tier: "community",
   event_types: ["tool.invoked"],
   conditions: [
@@ -114,11 +129,11 @@ export const RULE_THREAT_DESTRUCTIVE_COMMAND: RuleDefinition = {
         // "down" removes volumes only with -v or --volumes (also in a
         // cluster of short flags such as -tv).
         {
-          regex: NOT_PROSE + "\\b(?:docker|podman)(?:-|\\s+)compose\\b[^\\n;&|]*\\sdown\\b[^\\n;&|]*\\s(?:--volumes\\b|-[a-zA-Z]*v[a-zA-Z]*(?=\\s|$))",
+          regex: NOT_PROSE + "\\b(?:docker|podman)(?:-|\\s+(?:" + CONTAINER_OPTION + "\\s+)*)compose\\b[^\\n;&|]*\\sdown\\b[^\\n;&|]*\\s(?:--volumes\\b|-[a-zA-Z]*v[a-zA-Z]*(?=\\s|$))",
           type: "compose-down-volumes",
         },
         {
-          regex: NOT_PROSE + "\\b(?:dropdb|mysqladmin\\s+(?:-\\S+\\s+)*drop)\\s",
+          regex: NOT_PROSE + "\\b(?:dropdb|mysqladmin\\s+(?:" + MYSQLADMIN_OPTION + "\\s+)*drop)\\s",
           type: "database-drop",
         },
         // DROP DATABASE or SCHEMA run through a client: on its command line,
