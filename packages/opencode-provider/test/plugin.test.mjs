@@ -147,3 +147,49 @@ test("the every-project file passes the user-scope marker to the launcher", asyn
   await settle(hooks);
   assert.ok((await sent()).length > 0);
 });
+
+test("disposal flushes a completed run's queued result and ends its root exactly once", async (t) => {
+  const { hooks, sent } = await setup(t);
+  await hooks["chat.message"]({ sessionID: "run" }, { parts: [{ type: "text", text: "say hi" }] });
+  await hooks["tool.execute.before"]({ tool: "bash", sessionID: "run", callID: "call" }, { args: { command: "echo hi" } });
+  await hooks["tool.execute.after"]({ tool: "bash", sessionID: "run", callID: "call" }, { output: "hi" });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "run" } } });
+  await Promise.all([hooks.dispose(), hooks.dispose()]);
+  assert.deepEqual((await sent()).map((e) => e.event), ["session.start", "prompt", "tool.before", "tool.after", "session.end"]);
+});
+
+test("an interactive root stays open across idle and a continued prompt until disposal", async (t) => {
+  const { hooks, sent } = await setup(t);
+  for (const text of ["first prompt", "continued prompt"]) {
+    await hooks["chat.message"]({ sessionID: "interactive" }, { parts: [{ type: "text", text }] });
+    await hooks.event({ event: { type: "session.idle", properties: { sessionID: "interactive" } } });
+    await settle(hooks);
+    assert.equal((await sent()).filter((e) => e.event === "session.end").length, 0);
+  }
+  await hooks.dispose();
+  const root = (await sent()).filter((e) => e.session_id === "interactive");
+  assert.deepEqual(root.map((e) => e.event), ["session.start", "prompt", "prompt", "session.end"]);
+});
+
+test("deletion and disposal end each observed root once and never end child or unknown sessions", async (t) => {
+  const { hooks, sent } = await setup(t);
+  for (const info of [{ id: "deleted" }, { id: "active" }, { id: "child", parentID: "active" }]) {
+    await hooks.event({ event: { type: "session.created", properties: { info } } });
+  }
+  for (const id of ["deleted", "deleted", "child", "unknown"]) {
+    await hooks.event({ event: { type: "session.deleted", properties: { info: { id } } } });
+  }
+  await hooks.dispose();
+  await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "active" } } } });
+  await hooks.dispose();
+  assert.deepEqual((await sent()).filter((e) => e.event === "session.end").map((e) => e.session_id), ["deleted", "active"]);
+});
+
+test("a guardrails-blocked run records its failure before disposal ends the root", async (t) => {
+  const { hooks, sent } = await setup(t, { mode: "deny" });
+  await assert.rejects(hooks["tool.execute.before"]({ tool: "read", sessionID: "denied", callID: "blocked" }, { args: { filePath: "/home/case/repo/.env" } }), /blocked by test/);
+  await hooks.event({ event: { type: "message.part.updated", properties: { part: { type: "tool", sessionID: "denied", callID: "blocked", tool: "read", state: { status: "error", input: { filePath: "/home/case/repo/.env" }, error: "blocked by test" } } } } });
+  await hooks.event({ event: { type: "session.idle", properties: { sessionID: "denied" } } });
+  await hooks.dispose();
+  assert.deepEqual((await sent()).map((e) => e.event), ["session.start", "tool.before", "tool.error", "session.end"]);
+});

@@ -18,7 +18,9 @@
  * the user's call: a missing launcher, a crash, a timeout and an answer that
  * is not JSON all mean "no decision". Events are sent one after another, so a
  * session start and a prompt are recorded before the first tool call is judged.
- * Only the before-hook waits for the launcher; everything else is queued.
+ * The before-hook waits for the launcher; disposal drains the queue before
+ * OpenCode shuts down. An idle root can resume, so only deletion or disposal
+ * ends it.
  *
  * Envelope fields: event (session.start, session.end, prompt, tool.before,
  * tool.after, tool.error, subagent.start, subagent.stop), session_id (the
@@ -111,6 +113,7 @@ export const OmnodexPlugin = async function (input) {
   var directory = (input && (input.directory || input.worktree)) || process.cwd();
   var parents = new Map();
   var started = new Set();
+  var ended = new Set();
   var starts = new Map();
   var finished = new Set();
   var chain = Promise.resolve();
@@ -137,8 +140,22 @@ export const OmnodexPlugin = async function (input) {
     started.add(root);
     enqueue(envelope("session.start", root));
   }
+  function endSession(sessionId) {
+    if (!started.has(sessionId) || parents.has(sessionId) || ended.has(sessionId)) return;
+    ended.add(sessionId);
+    enqueue(envelope("session.end", sessionId, { reason: "completed" }));
+  }
 
   return {
+    // OpenCode awaits this hook when its project instance shuts down, including
+    // after a non-interactive run. Do not end a root at idle between prompts.
+    dispose: async function () {
+      try {
+        started.forEach(function (id) { endSession(id); });
+        await chain;
+      } catch (e) {}
+    },
+
     event: async function (arg) {
       try {
         var ev = arg && arg.event;
@@ -157,7 +174,7 @@ export const OmnodexPlugin = async function (input) {
         } else if (ev.type === "session.idle" && p.sessionID && parents.has(p.sessionID)) {
           enqueue(envelope("subagent.stop", p.sessionID));
         } else if (ev.type === "session.deleted" && p.info && p.info.id && !p.info.parentID) {
-          enqueue(envelope("session.end", p.info.id, { reason: "completed" }));
+          endSession(p.info.id);
         } else if (ev.type === "message.part.updated" && p.part && p.part.type === "tool" && p.part.state && p.part.state.status === "error") {
           if (finished.has(p.part.callID)) return;
           finished.add(p.part.callID);
