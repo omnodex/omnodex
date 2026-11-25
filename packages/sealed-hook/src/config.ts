@@ -99,12 +99,15 @@ function readJson(file: string): Record<string, unknown> | null {
  *
  * A project's file comes with whatever repository the agent is working in, so
  * it is trusted least. It never replaces the host's own file, and it cannot
- * name the server: a repository must not be able to choose where the ingest
- * token and the events are sent.
+ * name the server or supply the token: a repository must not be able to choose
+ * where the host's token goes, or whose account its events are filed under.
+ *
+ * An explicit path counts only when it is absolute. A relative one would be
+ * read from the project directory.
  */
 function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record<string, unknown> {
   const own: string[] = [];
-  if (isSet(env[ENV_NAMES.config])) own.push(env[ENV_NAMES.config]!);
+  if (isSet(env[ENV_NAMES.config]) && path.isAbsolute(env[ENV_NAMES.config]!)) own.push(env[ENV_NAMES.config]!);
   own.push(path.join(home, "ingest.json"));
   for (const file of own) {
     const found = readJson(file);
@@ -113,7 +116,7 @@ function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record
   for (const dir of projectDirs) {
     const found = readJson(path.join(dir, ".omnodex", "ingest.json"));
     if (found) {
-      const { api_base: _ignored, ...rest } = found;
+      const { api_base: _server, ingest_token: _token, ...rest } = found;
       return rest;
     }
   }

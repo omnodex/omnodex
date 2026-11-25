@@ -44,6 +44,16 @@ function usable(value: string | undefined): value is string {
 }
 
 /**
+ * The Omnodex home a hook call reads settings from: OMNODEX_HOME when it is an
+ * absolute path, else ~/.omnodex. A relative value would be read from the
+ * project directory.
+ */
+export function sealedHome(env: Record<string, string | undefined>): string {
+  const named = env.OMNODEX_HOME;
+  return usable(named) && path.isAbsolute(named) ? named : path.join(os.homedir(), ".omnodex");
+}
+
+/**
  * Handles one hook call and returns the text to print. Never throws, and
  * captures nothing unless the provider is known, the host passes its gate and
  * the settings are complete.
@@ -54,7 +64,7 @@ export async function runSealedHook(options: RunOptions): Promise<string> {
   const setup = providerSetup(provider, options.eventName);
   const quiet = setup ? setup.stdout(options.eventName) : "{}";
   try {
-    const home = options.home ?? (usable(options.env.OMNODEX_HOME) ? options.env.OMNODEX_HOME : path.join(os.homedir(), ".omnodex"));
+    const home = options.home ?? sealedHome(options.env);
     if (!setup || !shouldCapture(provider, options.env, fs.existsSync(path.join(home, HOST_MARKER_FILE)))) return quiet;
 
     let payload: unknown;

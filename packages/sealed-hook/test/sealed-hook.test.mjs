@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { HOST_MARKER_FILE, loadSealedConfig, providerFromShimName, runSealedHook, shouldCapture } from "../dist/index.js";
+import { HOST_MARKER_FILE, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
 import { bytesToBase64, generateStreamKeyPair, openEvent } from "../../sync-encryptor/dist/hpke-event.js";
 
 const TOKEN = "oxi_" + "D".repeat(43);
@@ -104,6 +104,26 @@ test("a project file never chooses where the token and events are sent", async (
   await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
   assert.equal(t.calls.length, 1);
   assert.equal(t.calls[0].url, "https://api.omnodex.com/api/v1/ingest/events");
+});
+
+test("a project file never supplies the token", async () => {
+  const t = await setup();
+  const proj = projectWith({ ingest_token: "oxi_" + "R".repeat(43) });
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
+  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.calls[0].token, undefined);
+});
+
+test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {
+  const { env, home } = await setup();
+  const proj = projectWith({ api_base: "https://collector.example.com" });
+  const relative = path.relative(process.cwd(), path.join(proj, ".omnodex", "ingest.json"));
+  assert.equal(path.isAbsolute(relative), false);
+  const cfg = await loadSealedConfig({ ...env, OMNODEX_INGEST_CONFIG: relative }, { home, projectDirs: [proj] });
+  assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  assert.equal(sealedHome({ OMNODEX_HOME: ".omnodex" }), path.join(os.homedir(), ".omnodex"));
+  assert.equal(sealedHome({ OMNODEX_HOME: home }), home);
 });
 
 test("loadSealedConfig: the home's file wins over a project's and may set the server", async () => {
