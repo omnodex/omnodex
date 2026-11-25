@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { HOST_MARKER_FILE, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
+import { HOST_MARKER_FILE, lastIngestWarning, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
 import { bytesToBase64, generateStreamKeyPair, openEvent } from "../../sync-encryptor/dist/hpke-event.js";
 
 const TOKEN = "oxi_" + "D".repeat(43);
@@ -146,6 +146,55 @@ test("any one host setting keeps the project file out, so the two never mix", as
   // Nor is an unreadable home file replaced.
   fs.writeFileSync(path.join(home, "ingest.json"), "not json");
   assert.equal(await load({}), null);
+});
+
+const warnings = (home) => {
+  const log = path.join(home, "ingest", "warnings.log");
+  return fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+};
+
+test("MUST_FIRE: an ignored project file warns once per session, not per event", async () => {
+  const t = await setup();
+  const cwd = projectWith(await otherKeys());
+  for (const payload of [CLAUDE_PRE, CLAUDE_PRE, CLAUDE_STOP]) await t.run("claude-code", { ...payload, cwd });
+  assert.equal(warnings(t.home).length, 1);
+  assert.equal(
+    lastIngestWarning(t.home).message,
+    `Omnodex ignored the ingest settings in ${path.join(cwd, ".omnodex", "ingest.json")} because this host has its own. ` +
+      `To change them, set OMNODEX_INGEST_PUBLIC_KEY and OMNODEX_INGEST_SOURCE_ID in the environment, or put the settings in ${path.join(t.home, "ingest.json")}.`,
+  );
+  await t.run("claude-code", { ...CLAUDE_PRE, session_id: "c2", cwd });
+  assert.equal(warnings(t.home).length, 2);
+});
+
+test("MUST_FIRE: a token on the host with the key only in the project says nothing is recorded", async () => {
+  const t = await setup();
+  const cwd = projectWith(await otherKeys());
+  const env = { OMNODEX_SEALED: "1", OMNODEX_INGEST_TOKEN: TOKEN };
+  assert.equal(await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env }), "");
+  await t.run("claude-code", { ...CLAUDE_STOP, cwd }, { env });
+  assert.equal(t.calls.length, 0);
+  assert.equal(warnings(t.home).length, 1);
+  assert.match(lastIngestWarning(t.home).message, /^Omnodex is not recording: it ignored the ingest settings in /);
+});
+
+test("MUST_NOT_FIRE: no warning without an ignored project file or on a host that does not capture", async () => {
+  const t = await setup();
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-proj-"));
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd: plain });
+  const cwd = projectWith(await otherKeys());
+  // The project file is the one in use.
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env: { OMNODEX_SEALED: "1" } });
+  // A machine that does not capture.
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env: { ...t.env, OMNODEX_SEALED: "0" } });
+  // Run from the directory that holds the host's own file.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-user-"));
+  const home = path.join(base, ".omnodex");
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, "ingest.json"), JSON.stringify(await otherKeys()));
+  await runSealedHook({ provider: "claude-code", stdin: JSON.stringify({ ...CLAUDE_PRE, cwd: base }), env: { OMNODEX_SEALED: "1" }, home, post: async () => ({ status: 202 }) });
+  assert.deepEqual(warnings(t.home), []);
+  assert.deepEqual(warnings(home), []);
 });
 
 test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {

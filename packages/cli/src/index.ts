@@ -166,6 +166,7 @@ import {
 } from "./launcher-template.js";
 import type { LauncherPlatform } from "./launcher-template.js";
 import { PLUGIN_PINS } from "./plugin-pins.js";
+import { lastIngestWarning } from "@omnodex/sealed-hook";
 import { DEFAULT_EPHEMERAL_TARGETS, EPHEMERAL_SHIMS, installEphemeral, isEphemeralTarget, type EphemeralTarget } from "./ephemeral-install.js";
 import { SURFACE_PLUGIN, downloadsBaseUrl, hasPlugin, installPlugin, pluginDir, resolveBundle, uninstallPlugin, type PluginTarget } from "./plugins.js";
 import { PLATFORMS, availablePlatforms, isPlatformAvailable, notYetSupported } from "./platforms.js";
@@ -2600,6 +2601,7 @@ async function cmdStatus(_args: string[]): Promise<void> {
   );
 
   await printCaptureHealth(paths.home);
+  printIngestWarning(paths.home);
   await printLauncherHealth(paths.home);
   await printAutoSyncHealth(paths.home);
   await printLivePushHealth(paths.home);
@@ -2982,6 +2984,12 @@ async function printCaptureHealth(omnodexHome: string): Promise<void> {
   const mode = await currentMode(omnodexHome).catch(() => "monitor");
   const module = ` (${describeGuardrails(await loadGuardrailsModule(omnodexHome))})`;
   console.log(`[status] enforcement:  ${mode}${module}`);
+}
+
+/** The latest project settings file that sealed capture ignored here. */
+function printIngestWarning(omnodexHome: string): void {
+  const last = lastIngestWarning(omnodexHome);
+  if (last) console.log(`[status] ingest:       warning (${last.at}): ${last.message}`);
 }
 
 /**
