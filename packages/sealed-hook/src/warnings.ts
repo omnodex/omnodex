@@ -20,9 +20,13 @@ const LOG = "warnings.log";
 const SEEN = "warned";
 const MAX_LOG_BYTES = 64 * 1024;
 
+/** C0 and C1 controls, line and paragraph separators, and bidirectional marks. */
+const UNSAFE_IN_PATH = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g;
+
 export function ignoredProjectWarning(file: string, home: string, recording: boolean): string {
-  // The path comes from the repository: keep it on one line.
-  const shown = file.replace(/[\u0000-\u001f\u007f]/g, "?");
+  // The path comes from the repository: keep it on one line, with nothing a
+  // terminal would act on or that reorders the text around it.
+  const shown = file.replace(UNSAFE_IN_PATH, "?");
   const what = recording
     ? `Omnodex ignored the ingest settings in ${shown} because this host has its own.`
     : `Omnodex is not recording: it ignored the ingest settings in ${shown} because this host has its own, and those are incomplete or invalid.`;

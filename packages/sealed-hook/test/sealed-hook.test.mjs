@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { HOST_MARKER_FILE, lastIngestWarning, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
+import { HOST_MARKER_FILE, ignoredProjectWarning, lastIngestWarning, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
 import { bytesToBase64, generateStreamKeyPair, openEvent } from "../../sync-encryptor/dist/hpke-event.js";
 
 const TOKEN = "oxi_" + "D".repeat(43);
@@ -195,6 +195,12 @@ test("MUST_NOT_FIRE: no warning without an ignored project file or on a host tha
   await runSealedHook({ provider: "claude-code", stdin: JSON.stringify({ ...CLAUDE_PRE, cwd: base }), env: { OMNODEX_SEALED: "1" }, home, post: async () => ({ status: 202 }) });
   assert.deepEqual(warnings(t.home), []);
   assert.deepEqual(warnings(home), []);
+});
+
+test("the warning shows no control or bidirectional characters from a project path", () => {
+  const unsafe = ["\u001b", "\n", "\u007f", "\u009b", "\u061c", "\u200f", "\u2028", "\u202e", "\u2066"];
+  const message = ignoredProjectWarning(`/home/case/a${unsafe.join("")}b caf\u00e9`, "/home/case/.omnodex", true);
+  assert.ok(message.includes(`/home/case/a${"?".repeat(unsafe.length)}b caf\u00e9 because`));
 });
 
 test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {
