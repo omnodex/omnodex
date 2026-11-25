@@ -33,7 +33,7 @@ Environment variables, or a JSON file, or both (variables win):
 | `OMNODEX_INGEST_REDACT=1` | `redact_parameters` | Replace tool parameter values before sealing |
 | `OMNODEX_INGEST_CONFIG` | | Path to the JSON file |
 
-The JSON file is read from `OMNODEX_INGEST_CONFIG`, then `.omnodex/ingest.json` in the project, then `~/.omnodex/ingest.json`. A public key and source id are safe to commit; keep the token out of the repository.
+The JSON file is read from `OMNODEX_INGEST_CONFIG`, then `ingest.json` in the Omnodex home (`~/.omnodex`), then `.omnodex/ingest.json` in the project; the first one found is used. A project's file cannot set `api_base`, so a repository cannot choose where the token and events are sent: set `OMNODEX_INGEST_API_BASE` or use the home's file for another server. A public key and source id are safe to commit; keep the token out of the repository.
 
 ## Build
 

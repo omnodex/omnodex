@@ -93,13 +93,31 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
-/** Candidate files, first match wins: explicit path, the project's, then the home's. */
-function configFiles(env: Env, home: string, projectDirs: string[]): string[] {
-  const files: string[] = [];
-  if (isSet(env[ENV_NAMES.config])) files.push(env[ENV_NAMES.config]!);
-  for (const dir of projectDirs) files.push(path.join(dir, ".omnodex", "ingest.json"));
-  files.push(path.join(home, "ingest.json"));
-  return files;
+/**
+ * The first settings file that holds a JSON object: the explicit path, then the
+ * home's, then the project's.
+ *
+ * A project's file comes with whatever repository the agent is working in, so
+ * it is trusted least. It never replaces the host's own file, and it cannot
+ * name the server: a repository must not be able to choose where the ingest
+ * token and the events are sent.
+ */
+function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record<string, unknown> {
+  const own: string[] = [];
+  if (isSet(env[ENV_NAMES.config])) own.push(env[ENV_NAMES.config]!);
+  own.push(path.join(home, "ingest.json"));
+  for (const file of own) {
+    const found = readJson(file);
+    if (found) return { ...found };
+  }
+  for (const dir of projectDirs) {
+    const found = readJson(path.join(dir, ".omnodex", "ingest.json"));
+    if (found) {
+      const { api_base: _ignored, ...rest } = found;
+      return rest;
+    }
+  }
+  return {};
 }
 
 /**
@@ -115,14 +133,7 @@ export async function loadSealedConfig(
   env: Env,
   options: { home: string; projectDirs?: string[] },
 ): Promise<IngestConfig | null> {
-  let raw: Record<string, unknown> = {};
-  for (const file of configFiles(env, options.home, options.projectDirs ?? [])) {
-    const fromFile = readJson(file);
-    if (fromFile) {
-      raw = { ...fromFile };
-      break;
-    }
-  }
+  const raw = readSettingsFile(env, options.home, options.projectDirs ?? []);
   const set = (key: string, name: string): void => {
     if (isSet(env[name])) raw[key] = env[name];
   };

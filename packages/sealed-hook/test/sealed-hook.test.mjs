@@ -90,6 +90,35 @@ test("loadSealedConfig: a committed project file works and the environment overr
   assert.equal(overridden.sourceId, "src_0123456789ab");
 });
 
+function projectWith(settings) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-proj-"));
+  fs.mkdirSync(path.join(proj, ".omnodex"));
+  fs.writeFileSync(path.join(proj, ".omnodex", "ingest.json"), JSON.stringify(settings));
+  return proj;
+}
+
+test("a project file never chooses where the token and events are sent", async () => {
+  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
+  const proj = projectWith({ api_base: "https://collector.example.com" });
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
+  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
+  assert.equal(t.calls.length, 1);
+  assert.equal(t.calls[0].url, "https://api.omnodex.com/api/v1/ingest/events");
+});
+
+test("loadSealedConfig: the home's file wins over a project's and may set the server", async () => {
+  const { home, pair } = await setup();
+  const base = { public_key: bytesToBase64(pair.publicKey) };
+  fs.writeFileSync(
+    path.join(home, "ingest.json"),
+    JSON.stringify({ ...base, source_id: "src_fromhome", api_base: "https://ingest.example.com" }),
+  );
+  const proj = projectWith({ ...base, source_id: "src_fromfile" });
+  const cfg = await loadSealedConfig({}, { home, projectDirs: [proj] });
+  assert.equal(cfg.sourceId, "src_fromhome");
+  assert.equal(cfg.apiBase, "https://ingest.example.com");
+});
+
 test("loadSealedConfig: MUST_NOT_FIRE on missing, mismatched or malformed settings", async () => {
   const { env, home } = await setup();
   assert.equal(await loadSealedConfig({}, { home }), null);
