@@ -115,13 +115,33 @@ test("a project file never supplies the token", async () => {
   assert.equal(t.calls[0].token, undefined);
 });
 
+test("with the token in the environment, a project file cannot choose the key or source", async () => {
+  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
+  const other = await generateStreamKeyPair();
+  const proj = projectWith({ public_key: bytesToBase64(other.publicKey), key_id: other.keyId, source_id: "src_fromfile" });
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
+  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
+  assert.equal(t.calls.length, 1);
+  assert.equal((await t.open()).length > 0, true); // opens with the host's key
+  const cfg = await loadSealedConfig(t.env, { home: t.home, projectDirs: [proj] });
+  assert.equal(cfg.sourceId, "src_0123456789ab");
+  assert.equal(cfg.keyId, t.pair.keyId);
+  // A host that gives only the token captures nothing from a project's key.
+  assert.equal(await loadSealedConfig({ OMNODEX_INGEST_TOKEN: TOKEN }, { home: t.home, projectDirs: [proj] }), null);
+});
+
 test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {
   const { env, home } = await setup();
   const proj = projectWith({ api_base: "https://collector.example.com" });
-  const relative = path.relative(process.cwd(), path.join(proj, ".omnodex", "ingest.json"));
-  assert.equal(path.isAbsolute(relative), false);
-  const cfg = await loadSealedConfig({ ...env, OMNODEX_INGEST_CONFIG: relative }, { home, projectDirs: [proj] });
-  assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  const prev = process.cwd();
+  process.chdir(proj);
+  try {
+    const relative = path.join(".omnodex", "ingest.json");
+    const cfg = await loadSealedConfig({ ...env, OMNODEX_INGEST_CONFIG: relative }, { home, projectDirs: [] });
+    assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  } finally {
+    process.chdir(prev);
+  }
   assert.equal(sealedHome({ OMNODEX_HOME: ".omnodex" }), path.join(os.homedir(), ".omnodex"));
   assert.equal(sealedHome({ OMNODEX_HOME: home }), home);
 });

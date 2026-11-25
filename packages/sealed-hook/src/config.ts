@@ -101,6 +101,10 @@ function readJson(file: string): Record<string, unknown> | null {
  * it is trusted least. It never replaces the host's own file, and it cannot
  * name the server or supply the token: a repository must not be able to choose
  * where the host's token goes, or whose account its events are filed under.
+ * When the environment holds the token, it cannot name the source or the
+ * sealing key either, or a repository could make the host record events that
+ * its owner cannot read. Without a token on the host (a proxy attaches it),
+ * a committed project file is how those are given.
  *
  * An explicit path counts only when it is absolute. A relative one would be
  * read from the project directory.
@@ -117,7 +121,9 @@ function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record
     const found = readJson(path.join(dir, ".omnodex", "ingest.json"));
     if (found) {
       const { api_base: _server, ingest_token: _token, ...rest } = found;
-      return rest;
+      if (!isSet(env[ENV_NAMES.token])) return rest;
+      const { public_key: _key, key_id: _keyId, source_id: _source, ...others } = rest;
+      return others;
     }
   }
   return {};
