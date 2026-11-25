@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import { HOST_MARKER_FILE, loadSealedConfig, providerFromShimName, runSealedHook, shouldCapture } from "../dist/index.js";
+import { HOST_MARKER_FILE, ignoredProjectWarning, lastIngestWarning, loadSealedConfig, providerFromShimName, runSealedHook, sealedHome, shouldCapture } from "../dist/index.js";
 import { bytesToBase64, generateStreamKeyPair, openEvent } from "../../sync-encryptor/dist/hpke-event.js";
 
 const TOKEN = "oxi_" + "D".repeat(43);
@@ -88,6 +88,148 @@ test("loadSealedConfig: a committed project file works and the environment overr
   assert.equal(fromFile.sourceId, "src_fromfile");
   const overridden = await loadSealedConfig(env, { home, projectDirs: [proj] });
   assert.equal(overridden.sourceId, "src_0123456789ab");
+});
+
+function projectWith(settings) {
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-proj-"));
+  fs.mkdirSync(path.join(proj, ".omnodex"));
+  fs.writeFileSync(path.join(proj, ".omnodex", "ingest.json"), JSON.stringify(settings));
+  return proj;
+}
+
+async function otherKeys(extra = {}) {
+  const other = await generateStreamKeyPair();
+  return { public_key: bytesToBase64(other.publicKey), key_id: other.keyId, source_id: "src_fromfile", ...extra };
+}
+
+const HOSTILE = { api_base: "https://collector.example.com", ingest_token: "oxi_" + "R".repeat(43), redact_parameters: true, version: 2 };
+
+test("on a host with no settings, a project file gives only the key and source", async () => {
+  const { home } = await setup();
+  const keys = await otherKeys();
+  const cfg = await loadSealedConfig({}, { home, projectDirs: [projectWith({ ...keys, ...HOSTILE })] });
+  assert.equal(cfg.sourceId, "src_fromfile");
+  assert.equal(cfg.keyId, keys.key_id);
+  assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  assert.equal(cfg.ingestToken, undefined);
+  assert.equal(cfg.redactParameters, false);
+});
+
+test("a host with token, key and source captures with its own, whatever the project file says", async () => {
+  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
+  for (const settings of [{ version: 2 }, await otherKeys(HOSTILE)]) {
+    const proj = projectWith(settings);
+    await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
+    await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
+  }
+  assert.equal(t.calls.length, 2);
+  for (const c of t.calls) {
+    assert.equal(c.url, "https://api.omnodex.com/api/v1/ingest/events");
+    assert.equal(c.token, TOKEN);
+  }
+  assert.ok((await t.open()).length > 0); // opens with the host's key
+});
+
+test("any one host setting keeps the project file out, so the two never mix", async () => {
+  const { env, home, pair } = await setup();
+  const proj = projectWith(await otherKeys());
+  const load = (e) => loadSealedConfig(e, { home, projectDirs: [proj] });
+  // Proxy host with its key and source in the environment.
+  const cfg = await load(env);
+  assert.equal(cfg.keyId, pair.keyId);
+  assert.equal(cfg.sourceId, "src_0123456789ab");
+  // A partial host set is not completed from the project.
+  assert.equal(await load({ OMNODEX_INGEST_PUBLIC_KEY: env.OMNODEX_INGEST_PUBLIC_KEY }), null);
+  assert.equal(await load({ OMNODEX_INGEST_KEY_ID: pair.keyId }), null);
+  assert.equal(await load({ OMNODEX_INGEST_SOURCE_ID: "src_0123456789ab" }), null);
+  assert.equal(await load({ OMNODEX_INGEST_TOKEN: TOKEN }), null);
+  // Nor is an unreadable home file replaced.
+  fs.writeFileSync(path.join(home, "ingest.json"), "not json");
+  assert.equal(await load({}), null);
+});
+
+const warnings = (home) => {
+  const log = path.join(home, "ingest", "warnings.log");
+  return fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+};
+
+test("MUST_FIRE: an ignored project file warns once per session, not per event", async () => {
+  const t = await setup();
+  const cwd = projectWith(await otherKeys());
+  for (const payload of [CLAUDE_PRE, CLAUDE_PRE, CLAUDE_STOP]) await t.run("claude-code", { ...payload, cwd });
+  assert.equal(warnings(t.home).length, 1);
+  assert.equal(
+    lastIngestWarning(t.home).message,
+    `Omnodex ignored the ingest settings in ${path.join(cwd, ".omnodex", "ingest.json")} because this host has its own. ` +
+      `To change them, set OMNODEX_INGEST_PUBLIC_KEY and OMNODEX_INGEST_SOURCE_ID in the environment, or put the settings in ${path.join(t.home, "ingest.json")}.`,
+  );
+  await t.run("claude-code", { ...CLAUDE_PRE, session_id: "c2", cwd });
+  assert.equal(warnings(t.home).length, 2);
+});
+
+test("MUST_FIRE: a token on the host with the key only in the project says nothing is recorded", async () => {
+  const t = await setup();
+  const cwd = projectWith(await otherKeys());
+  const env = { OMNODEX_SEALED: "1", OMNODEX_INGEST_TOKEN: TOKEN };
+  assert.equal(await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env }), "");
+  await t.run("claude-code", { ...CLAUDE_STOP, cwd }, { env });
+  assert.equal(t.calls.length, 0);
+  assert.equal(warnings(t.home).length, 1);
+  assert.match(lastIngestWarning(t.home).message, /^Omnodex is not recording: it ignored the ingest settings in /);
+});
+
+test("MUST_NOT_FIRE: no warning without an ignored project file or on a host that does not capture", async () => {
+  const t = await setup();
+  const plain = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-proj-"));
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd: plain });
+  const cwd = projectWith(await otherKeys());
+  // The project file is the one in use.
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env: { OMNODEX_SEALED: "1" } });
+  // A machine that does not capture.
+  await t.run("claude-code", { ...CLAUDE_PRE, cwd }, { env: { ...t.env, OMNODEX_SEALED: "0" } });
+  // Run from the directory that holds the host's own file.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "omnodex-user-"));
+  const home = path.join(base, ".omnodex");
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, "ingest.json"), JSON.stringify(await otherKeys()));
+  await runSealedHook({ provider: "claude-code", stdin: JSON.stringify({ ...CLAUDE_PRE, cwd: base }), env: { OMNODEX_SEALED: "1" }, home, post: async () => ({ status: 202 }) });
+  assert.deepEqual(warnings(t.home), []);
+  assert.deepEqual(warnings(home), []);
+});
+
+test("the warning shows no control or bidirectional characters from a project path", () => {
+  const unsafe = ["\u001b", "\n", "\u007f", "\u009b", "\u061c", "\u200f", "\u2028", "\u202e", "\u2066"];
+  const message = ignoredProjectWarning(`/home/case/a${unsafe.join("")}b caf\u00e9`, "/home/case/.omnodex", true);
+  assert.ok(message.includes(`/home/case/a${"?".repeat(unsafe.length)}b caf\u00e9 because`));
+});
+
+test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {
+  const { env, home } = await setup();
+  const proj = projectWith({ api_base: "https://collector.example.com" });
+  const prev = process.cwd();
+  process.chdir(proj);
+  try {
+    const relative = path.join(".omnodex", "ingest.json");
+    const cfg = await loadSealedConfig({ ...env, OMNODEX_INGEST_CONFIG: relative }, { home, projectDirs: [] });
+    assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  } finally {
+    process.chdir(prev);
+  }
+  assert.equal(sealedHome({ OMNODEX_HOME: ".omnodex" }), path.join(os.homedir(), ".omnodex"));
+  assert.equal(sealedHome({ OMNODEX_HOME: home }), home);
+});
+
+test("loadSealedConfig: the home's file wins over a project's and may set the server", async () => {
+  const { home, pair } = await setup();
+  const base = { public_key: bytesToBase64(pair.publicKey) };
+  fs.writeFileSync(
+    path.join(home, "ingest.json"),
+    JSON.stringify({ ...base, source_id: "src_fromhome", api_base: "https://ingest.example.com" }),
+  );
+  const proj = projectWith({ ...base, source_id: "src_fromfile" });
+  const cfg = await loadSealedConfig({}, { home, projectDirs: [proj] });
+  assert.equal(cfg.sourceId, "src_fromhome");
+  assert.equal(cfg.apiBase, "https://ingest.example.com");
 });
 
 test("loadSealedConfig: MUST_NOT_FIRE on missing, mismatched or malformed settings", async () => {

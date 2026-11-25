@@ -33,7 +33,13 @@ Environment variables, or a JSON file, or both (variables win):
 | `OMNODEX_INGEST_REDACT=1` | `redact_parameters` | Replace tool parameter values before sealing |
 | `OMNODEX_INGEST_CONFIG` | | Path to the JSON file |
 
-The JSON file is read from `OMNODEX_INGEST_CONFIG`, then `.omnodex/ingest.json` in the project, then `~/.omnodex/ingest.json`. A public key and source id are safe to commit; keep the token out of the repository.
+The JSON file is read from `OMNODEX_INGEST_CONFIG`, then `ingest.json` in the Omnodex home (`~/.omnodex`); the first one found is used. `OMNODEX_INGEST_CONFIG` and `OMNODEX_HOME` must be absolute paths; relative values are ignored.
+
+A project can commit `.omnodex/ingest.json` for a host with no settings of its own, such as one where a proxy attaches the token. It is read only when neither file above exists and none of `OMNODEX_INGEST_TOKEN`, `OMNODEX_INGEST_PUBLIC_KEY`, `OMNODEX_INGEST_KEY_ID` or `OMNODEX_INGEST_SOURCE_ID` is set, and it can give only `public_key`, `key_id` and `source_id`. Every other field is ignored. A public key and source id are safe to commit; keep the token out of the repository.
+
+When a project's file is there but ignored, the hook leaves one warning per session in `ingest/warnings.log` under the Omnodex home, and `omnodex status` shows the latest on a host with the CLI.
+
+On such a proxy host the repository is trusted to name the key and source: whoever controls the repository decides what the events are sealed to, which can leave them unreadable to you. Set the key and source in the environment or the home's file to close that. A repository's own agent settings and hooks run with the agent and are outside what these rules can protect.
 
 ## Build
 

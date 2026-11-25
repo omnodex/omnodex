@@ -21,9 +21,11 @@ import {
   type Poster,
 } from "@omnodex/hooks-provider";
 import { providerSetup } from "./adapters.js";
-import { HOST_MARKER_FILE, isSealedProvider, loadSealedConfig, shouldCapture, type SealedProvider } from "./config.js";
+import { HOST_MARKER_FILE, ignoredProjectFile, isSealedProvider, loadSealedConfig, shouldCapture, type SealedProvider } from "./config.js";
+import { ignoredProjectWarning, recordIngestWarning } from "./warnings.js";
 
 export * from "./config.js";
+export * from "./warnings.js";
 export { providerSetup } from "./adapters.js";
 
 export interface RunOptions {
@@ -44,6 +46,25 @@ function usable(value: string | undefined): value is string {
 }
 
 /**
+ * The Omnodex home a hook call reads settings from: OMNODEX_HOME when it is an
+ * absolute path, else ~/.omnodex. A relative value would be read from the
+ * project directory.
+ */
+export function sealedHome(env: Record<string, string | undefined>): string {
+  const named = env.OMNODEX_HOME;
+  return usable(named) && path.isAbsolute(named) ? named : path.join(os.homedir(), ".omnodex");
+}
+
+/** The session a payload belongs to; each agent names it differently. */
+function sessionKey(payload: object): string {
+  const p = payload as Record<string, unknown>;
+  for (const name of ["session_id", "sessionId", "conversation_id", "conversationId"]) {
+    if (typeof p[name] === "string" && p[name]) return p[name] as string;
+  }
+  return "unknown";
+}
+
+/**
  * Handles one hook call and returns the text to print. Never throws, and
  * captures nothing unless the provider is known, the host passes its gate and
  * the settings are complete.
@@ -54,7 +75,7 @@ export async function runSealedHook(options: RunOptions): Promise<string> {
   const setup = providerSetup(provider, options.eventName);
   const quiet = setup ? setup.stdout(options.eventName) : "{}";
   try {
-    const home = options.home ?? (usable(options.env.OMNODEX_HOME) ? options.env.OMNODEX_HOME : path.join(os.homedir(), ".omnodex"));
+    const home = options.home ?? sealedHome(options.env);
     if (!setup || !shouldCapture(provider, options.env, fs.existsSync(path.join(home, HOST_MARKER_FILE)))) return quiet;
 
     let payload: unknown;
@@ -69,6 +90,11 @@ export async function runSealedHook(options: RunOptions): Promise<string> {
       (d): d is string => typeof d === "string" && d.length > 0,
     );
     const config = await loadSealedConfig(options.env, { home, projectDirs: dirs });
+    const ignored = ignoredProjectFile(options.env, home, dirs);
+    if (ignored) {
+      const message = ignoredProjectWarning(ignored, home, config !== null);
+      recordIngestWarning(home, sessionKey(payload), message, options.now?.() ?? Date.now());
+    }
     if (!config) return quiet;
 
     await handleHookPayload(payload as { hook_event_name?: unknown }, config, {

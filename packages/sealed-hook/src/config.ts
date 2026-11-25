@@ -93,13 +93,76 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
-/** Candidate files, first match wins: explicit path, the project's, then the home's. */
-function configFiles(env: Env, home: string, projectDirs: string[]): string[] {
+/** The only fields a project's settings file can give. */
+const PROJECT_FIELDS = ["public_key", "key_id", "source_id"] as const;
+
+/** Environment variables that mean the host has settings of its own. */
+const HOST_SETTINGS = [ENV_NAMES.token, ENV_NAMES.publicKey, ENV_NAMES.keyId, ENV_NAMES.sourceId] as const;
+
+/** The host's own settings files, in the order they are read. */
+function hostFiles(env: Env, home: string): string[] {
   const files: string[] = [];
-  if (isSet(env[ENV_NAMES.config])) files.push(env[ENV_NAMES.config]!);
-  for (const dir of projectDirs) files.push(path.join(dir, ".omnodex", "ingest.json"));
+  if (isSet(env[ENV_NAMES.config]) && path.isAbsolute(env[ENV_NAMES.config]!)) files.push(env[ENV_NAMES.config]!);
   files.push(path.join(home, "ingest.json"));
   return files;
+}
+
+/** A host file that is there but unreadable still counts: it is the host's. */
+function hasHostSettings(env: Env, own: string[]): boolean {
+  return own.some((file) => fs.existsSync(file)) || HOST_SETTINGS.some((name) => isSet(env[name]));
+}
+
+function realPath(file: string): string {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
+}
+
+/**
+ * The project settings file this host is not reading because it has settings
+ * of its own, or null when there is none.
+ */
+export function ignoredProjectFile(env: Env, home: string, projectDirs: string[]): string | null {
+  const own = hostFiles(env, home);
+  if (!hasHostSettings(env, own)) return null;
+  // Run from the home directory, the "project" file is the host's own.
+  const hostPaths = new Set(own.map(realPath));
+  for (const dir of projectDirs) {
+    const file = path.join(dir, ".omnodex", "ingest.json");
+    if (fs.existsSync(file) && !hostPaths.has(realPath(file))) return file;
+  }
+  return null;
+}
+
+/**
+ * The settings file to start from: the explicit path, else the home's, else
+ * what a project's file may give.
+ *
+ * A project's file comes with whatever repository the agent is working in, so
+ * it is trusted least. It is read only on a host with no settings of its own:
+ * no explicit or home file, and no token, key or source in the environment.
+ * Even then it gives only the public key, key id and source id. A repository
+ * therefore cannot choose the server or the token, and cannot replace or break
+ * the settings a host has. What it is for is a committed file on a host where
+ * a proxy attaches the token.
+ *
+ * An explicit path counts only when it is absolute. A relative one would be
+ * read from the project directory.
+ */
+function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record<string, unknown> {
+  const own = hostFiles(env, home);
+  for (const file of own) {
+    const found = readJson(file);
+    if (found) return { ...found };
+  }
+  if (hasHostSettings(env, own)) return {};
+  for (const dir of projectDirs) {
+    const found = readJson(path.join(dir, ".omnodex", "ingest.json"));
+    if (found) return Object.fromEntries(PROJECT_FIELDS.filter((f) => found[f] !== undefined).map((f) => [f, found[f]]));
+  }
+  return {};
 }
 
 /**
@@ -115,14 +178,7 @@ export async function loadSealedConfig(
   env: Env,
   options: { home: string; projectDirs?: string[] },
 ): Promise<IngestConfig | null> {
-  let raw: Record<string, unknown> = {};
-  for (const file of configFiles(env, options.home, options.projectDirs ?? [])) {
-    const fromFile = readJson(file);
-    if (fromFile) {
-      raw = { ...fromFile };
-      break;
-    }
-  }
+  const raw = readSettingsFile(env, options.home, options.projectDirs ?? []);
   const set = (key: string, name: string): void => {
     if (isSet(env[name])) raw[key] = env[name];
   };
