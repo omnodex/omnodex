@@ -97,37 +97,55 @@ function projectWith(settings) {
   return proj;
 }
 
-test("a project file never chooses where the token and events are sent", async () => {
-  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
-  const proj = projectWith({ api_base: "https://collector.example.com" });
-  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
-  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
-  assert.equal(t.calls.length, 1);
-  assert.equal(t.calls[0].url, "https://api.omnodex.com/api/v1/ingest/events");
-});
-
-test("a project file never supplies the token", async () => {
-  const t = await setup();
-  const proj = projectWith({ ingest_token: "oxi_" + "R".repeat(43) });
-  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
-  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
-  assert.equal(t.calls.length, 1);
-  assert.equal(t.calls[0].token, undefined);
-});
-
-test("with the token in the environment, a project file cannot choose the key or source", async () => {
-  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
+async function otherKeys(extra = {}) {
   const other = await generateStreamKeyPair();
-  const proj = projectWith({ public_key: bytesToBase64(other.publicKey), key_id: other.keyId, source_id: "src_fromfile" });
-  await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
-  await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
-  assert.equal(t.calls.length, 1);
-  assert.equal((await t.open()).length > 0, true); // opens with the host's key
-  const cfg = await loadSealedConfig(t.env, { home: t.home, projectDirs: [proj] });
+  return { public_key: bytesToBase64(other.publicKey), key_id: other.keyId, source_id: "src_fromfile", ...extra };
+}
+
+const HOSTILE = { api_base: "https://collector.example.com", ingest_token: "oxi_" + "R".repeat(43), redact_parameters: true, version: 2 };
+
+test("on a host with no settings, a project file gives only the key and source", async () => {
+  const { home } = await setup();
+  const keys = await otherKeys();
+  const cfg = await loadSealedConfig({}, { home, projectDirs: [projectWith({ ...keys, ...HOSTILE })] });
+  assert.equal(cfg.sourceId, "src_fromfile");
+  assert.equal(cfg.keyId, keys.key_id);
+  assert.equal(cfg.apiBase, "https://api.omnodex.com");
+  assert.equal(cfg.ingestToken, undefined);
+  assert.equal(cfg.redactParameters, false);
+});
+
+test("a host with token, key and source captures with its own, whatever the project file says", async () => {
+  const t = await setup({ OMNODEX_INGEST_TOKEN: TOKEN });
+  for (const settings of [{ version: 2 }, await otherKeys(HOSTILE)]) {
+    const proj = projectWith(settings);
+    await t.run("claude-code", { ...CLAUDE_PRE, cwd: proj });
+    await t.run("claude-code", { ...CLAUDE_STOP, cwd: proj });
+  }
+  assert.equal(t.calls.length, 2);
+  for (const c of t.calls) {
+    assert.equal(c.url, "https://api.omnodex.com/api/v1/ingest/events");
+    assert.equal(c.token, TOKEN);
+  }
+  assert.ok((await t.open()).length > 0); // opens with the host's key
+});
+
+test("any one host setting keeps the project file out, so the two never mix", async () => {
+  const { env, home, pair } = await setup();
+  const proj = projectWith(await otherKeys());
+  const load = (e) => loadSealedConfig(e, { home, projectDirs: [proj] });
+  // Proxy host with its key and source in the environment.
+  const cfg = await load(env);
+  assert.equal(cfg.keyId, pair.keyId);
   assert.equal(cfg.sourceId, "src_0123456789ab");
-  assert.equal(cfg.keyId, t.pair.keyId);
-  // A host that gives only the token captures nothing from a project's key.
-  assert.equal(await loadSealedConfig({ OMNODEX_INGEST_TOKEN: TOKEN }, { home: t.home, projectDirs: [proj] }), null);
+  // A partial host set is not completed from the project.
+  assert.equal(await load({ OMNODEX_INGEST_PUBLIC_KEY: env.OMNODEX_INGEST_PUBLIC_KEY }), null);
+  assert.equal(await load({ OMNODEX_INGEST_KEY_ID: pair.keyId }), null);
+  assert.equal(await load({ OMNODEX_INGEST_SOURCE_ID: "src_0123456789ab" }), null);
+  assert.equal(await load({ OMNODEX_INGEST_TOKEN: TOKEN }), null);
+  // Nor is an unreadable home file replaced.
+  fs.writeFileSync(path.join(home, "ingest.json"), "not json");
+  assert.equal(await load({}), null);
 });
 
 test("relative OMNODEX_INGEST_CONFIG and OMNODEX_HOME are ignored", async () => {

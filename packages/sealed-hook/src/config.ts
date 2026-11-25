@@ -93,18 +93,23 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
+/** The only fields a project's settings file can give. */
+const PROJECT_FIELDS = ["public_key", "key_id", "source_id"] as const;
+
+/** Environment variables that mean the host has settings of its own. */
+const HOST_SETTINGS = [ENV_NAMES.token, ENV_NAMES.publicKey, ENV_NAMES.keyId, ENV_NAMES.sourceId] as const;
+
 /**
- * The first settings file that holds a JSON object: the explicit path, then the
- * home's, then the project's.
+ * The settings file to start from: the explicit path, else the home's, else
+ * what a project's file may give.
  *
  * A project's file comes with whatever repository the agent is working in, so
- * it is trusted least. It never replaces the host's own file, and it cannot
- * name the server or supply the token: a repository must not be able to choose
- * where the host's token goes, or whose account its events are filed under.
- * When the environment holds the token, it cannot name the source or the
- * sealing key either, or a repository could make the host record events that
- * its owner cannot read. Without a token on the host (a proxy attaches it),
- * a committed project file is how those are given.
+ * it is trusted least. It is read only on a host with no settings of its own:
+ * no explicit or home file, and no token, key or source in the environment.
+ * Even then it gives only the public key, key id and source id. A repository
+ * therefore cannot choose the server or the token, and cannot replace or break
+ * the settings a host has. What it is for is a committed file on a host where
+ * a proxy attaches the token.
  *
  * An explicit path counts only when it is absolute. A relative one would be
  * read from the project directory.
@@ -117,14 +122,11 @@ function readSettingsFile(env: Env, home: string, projectDirs: string[]): Record
     const found = readJson(file);
     if (found) return { ...found };
   }
+  // A host file that is there but unreadable is still the host's: no project settings.
+  if (own.some((file) => fs.existsSync(file)) || HOST_SETTINGS.some((name) => isSet(env[name]))) return {};
   for (const dir of projectDirs) {
     const found = readJson(path.join(dir, ".omnodex", "ingest.json"));
-    if (found) {
-      const { api_base: _server, ingest_token: _token, ...rest } = found;
-      if (!isSet(env[ENV_NAMES.token])) return rest;
-      const { public_key: _key, key_id: _keyId, source_id: _source, ...others } = rest;
-      return others;
-    }
+    if (found) return Object.fromEntries(PROJECT_FIELDS.filter((f) => found[f] !== undefined).map((f) => [f, found[f]]));
   }
   return {};
 }
